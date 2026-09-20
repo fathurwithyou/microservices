@@ -7,6 +7,6 @@ RUN cd services/pvmbg && go build -trimpath -ldflags='-s -w' -o /out/pvmbg ./cmd
 FROM alpine:3.22
 RUN addgroup -S app && adduser -S -G app app
 COPY --from=build /out/pvmbg /usr/local/bin/pvmbg
-USER app
+USER 10001:10001
 EXPOSE 8082
 ENTRYPOINT ["/usr/local/bin/pvmbg"]

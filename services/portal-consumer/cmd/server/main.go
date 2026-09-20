@@ -24,14 +24,23 @@ const (
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg := config.Load()
-	consumer, err := rabbitmq.New(cfg.RabbitURL, queueName, serviceName, logger)
-	if err != nil {
-		logger.Error("broker connection failed", "service", serviceName, "error", err)
-		return
-	}
-	defer consumer.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	var consumer *rabbitmq.Consumer
+	for {
+		candidate, err := rabbitmq.New(cfg.RabbitURL, queueName, serviceName, logger)
+		if err == nil {
+			consumer = candidate
+			break
+		}
+		logger.Error("broker connection failed", "service", serviceName, "error", err)
+		select {
+		case <-time.After(2 * time.Second):
+		case <-ctx.Done():
+			return
+		}
+	}
+	defer consumer.Close()
 	healthServer := httptransport.NewHealthServer(cfg.HealthPort)
 	go func() {
 		if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

@@ -7,6 +7,6 @@ RUN cd services/bmkg && go build -trimpath -ldflags='-s -w' -o /out/bmkg ./cmd/s
 FROM alpine:3.22
 RUN addgroup -S app && adduser -S -G app app
 COPY --from=build /out/bmkg /usr/local/bin/bmkg
-USER app
+USER 10001:10001
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/bmkg"]

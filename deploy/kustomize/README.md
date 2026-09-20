@@ -13,6 +13,15 @@ make k3d-deploy
 
 `k3d-deploy` builds and imports all application images, including `portal-consumer`. The local overlay exposes Client API through `localhost:8080` using NodePort `30080`, waits for PostgreSQL and all Deployments, and creates `bnpb-secrets` from `K3S_ENV_FILE` (default `.env`).
 
+Only stateless workloads are intended to scale manually in M1:
+
+```sh
+K3D_SCALE_SERVICE=client-api K3D_REPLICAS=2 make k3d-scale
+K3D_SCALE_SERVICE=auth K3D_REPLICAS=2 make k3d-scale
+```
+
+The allowed deployments are `client-api`, `auth`, `dashboard-consumer`, `notifier-consumer`, and `portal-consumer`. Keep BMKG, PVMBG, Aggregator polling, PostgreSQL, and RabbitMQ at one replica unless their state/ownership design is extended explicitly.
+
 PostgreSQL is a single persistent StatefulSet. Its PVC keeps `aggregator_db` across pod restarts. The Aggregator pod runs ordered init containers that wait for PostgreSQL, execute the ConfigMap bootstrap SQL, run migrations, and seed `volcano_reference` plus initial source status rows. The bootstrap also creates the separate `auth` role and `auth_db` database.
 
 RabbitMQ also uses a PVC so durable queues and persistent messages survive a pod restart. No database or broker port is exposed outside the cluster.

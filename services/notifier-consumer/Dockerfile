@@ -7,6 +7,6 @@ RUN cd services/notifier-consumer && go build -trimpath -ldflags='-s -w' -o /out
 FROM alpine:3.22
 RUN addgroup -S app && adduser -S -G app app
 COPY --from=build /out/notifier-consumer /usr/local/bin/notifier-consumer
-USER app
+USER 10001:10001
 EXPOSE 8084
 ENTRYPOINT ["/usr/local/bin/notifier-consumer"]

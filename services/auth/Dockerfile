@@ -7,6 +7,6 @@ RUN cd services/auth && go build -trimpath -ldflags='-s -w' -o /out/auth ./cmd/s
 FROM alpine:3.22
 RUN addgroup -S app && adduser -S -G app app
 COPY --from=build /out/auth /usr/local/bin/auth
-USER app
+USER 10001:10001
 EXPOSE 9091
 ENTRYPOINT ["/usr/local/bin/auth"]

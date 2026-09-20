@@ -7,6 +7,6 @@ RUN cd services/aggregator && go build -trimpath -ldflags='-s -w' -o /out/aggreg
 FROM alpine:3.22
 RUN addgroup -S app && adduser -S -G app app
 COPY --from=build /out/aggregator /usr/local/bin/aggregator
-USER app
+USER 10001:10001
 EXPOSE 8090 9090
 ENTRYPOINT ["/usr/local/bin/aggregator"]

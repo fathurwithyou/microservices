@@ -1,11 +1,13 @@
-.PHONY: help tools generate test lint build compose-up compose-down k3d-up k3d-deploy k3d-down k3s-deploy test-contract test-integration test-e2e test-load migrate-up migrate-down migrate-status seed
+.PHONY: help tools generate test lint build compose-up compose-down k3d-up k3d-deploy k3d-scale k3d-down k3s-deploy test-contract test-integration test-e2e test-load migrate-up migrate-down migrate-status seed
 
 K3D_CLUSTER ?= bnpb-m1
+K3D_HOST_PORT ?= 8080
 K3D_IMAGE_PREFIX ?= bnpb-m1
 K3S_NAMESPACE ?= bnpb-m1
 K3S_ENV_FILE ?= .env
 IMAGE_REGISTRY ?= ghcr.io/fathurwithyou
 K3D_SERVICES := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer
+K3D_SCALABLE_DEPLOYMENTS := client-api auth dashboard-consumer notifier-consumer portal-consumer
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' Makefile | sed 's/:.*## / - /'
@@ -49,7 +51,7 @@ k3d-up: ## Create the local K3d cluster when it does not already exist
 	@if k3d cluster list | awk 'NR > 1 && $$1 == "$(K3D_CLUSTER)" { found = 1 } END { exit !found }'; then \
 		echo "K3d cluster $(K3D_CLUSTER) already exists"; \
 	else \
-		k3d cluster create $(K3D_CLUSTER) --agents 2 --port '8080:30080@loadbalancer' --wait; \
+		k3d cluster create $(K3D_CLUSTER) --agents 2 --port '$(K3D_HOST_PORT):30080@loadbalancer' --wait; \
 	fi
 
 k3d-deploy: k3d-up ## Build local images and apply the Kustomize local overlay
@@ -61,6 +63,13 @@ k3d-deploy: k3d-up ## Build local images and apply the Kustomize local overlay
 	@kubectl apply -k deploy/kustomize/overlays/local
 	@kubectl -n $(K3S_NAMESPACE) rollout status statefulset/postgres --timeout=180s
 	@kubectl -n $(K3S_NAMESPACE) rollout status deployment --all --timeout=180s
+
+k3d-scale: ## Scale one stateless deployment; use K3D_SCALE_SERVICE and K3D_REPLICAS
+	@test -n "$(K3D_SCALE_SERVICE)" || (echo "K3D_SCALE_SERVICE is required" >&2; exit 1)
+	@case " $(K3D_SCALABLE_DEPLOYMENTS) " in *" $(K3D_SCALE_SERVICE) "*) ;; *) echo "unsupported scalable deployment: $(K3D_SCALE_SERVICE); allowed: $(K3D_SCALABLE_DEPLOYMENTS)" >&2; exit 1;; esac
+	@test "$(K3D_REPLICAS)" -ge 1 || (echo "K3D_REPLICAS must be >= 1" >&2; exit 1)
+	@kubectl -n $(K3S_NAMESPACE) scale deployment/$(K3D_SCALE_SERVICE) --replicas=$(K3D_REPLICAS)
+	@kubectl -n $(K3S_NAMESPACE) rollout status deployment/$(K3D_SCALE_SERVICE) --timeout=180s
 
 k3s-deploy: ## Apply the remote Kustomize overlay using IMAGE_REGISTRY and K3S_ENV_FILE
 	@test -n "$(IMAGE_REGISTRY)" || (echo "IMAGE_REGISTRY is required" >&2; exit 1)

@@ -7,6 +7,6 @@ RUN cd services/client-api && go build -trimpath -ldflags='-s -w' -o /out/client
 FROM alpine:3.22
 RUN addgroup -S app && adduser -S -G app app
 COPY --from=build /out/client-api /usr/local/bin/client-api
-USER app
+USER 10001:10001
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/client-api"]
