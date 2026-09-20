@@ -2,8 +2,11 @@ package rabbitmq
 
 import (
 	"context"
-	"github.com/rabbitmq/amqp091-go"
+	"errors"
+	"fmt"
 	"log/slog"
+
+	"github.com/rabbitmq/amqp091-go"
 )
 
 const (
@@ -12,9 +15,20 @@ const (
 )
 
 type Process func([]byte, string, bool) error
+
+var ErrDeliveryChannelClosed = errors.New("rabbitmq delivery channel closed")
+
+type deliveryChannel interface {
+	Consume(string, string, bool, bool, bool, bool, amqp091.Table) (<-chan amqp091.Delivery, error)
+	ExchangeDeclare(string, string, bool, bool, bool, bool, amqp091.Table) error
+	QueueDeclare(string, bool, bool, bool, bool, amqp091.Table) (amqp091.Queue, error)
+	QueueBind(string, string, string, bool, amqp091.Table) error
+	Close() error
+}
+
 type Consumer struct {
 	connection     *amqp091.Connection
-	channel        *amqp091.Channel
+	channel        deliveryChannel
 	queue, service string
 	logger         *slog.Logger
 }
@@ -36,15 +50,17 @@ func New(url, queue, service string, logger *slog.Logger) (*Consumer, error) {
 	}
 	return consumer, nil
 }
-func (c *Consumer) Run(ctx context.Context, process Process) {
+func (c *Consumer) Run(ctx context.Context, process Process) error {
 	deliveries, err := c.channel.Consume(c.queue, c.service, false, false, false, false, nil)
 	if err != nil {
-		c.logger.Error("consumer registration failed", "service", c.service, "error", err)
-		return
+		return fmt.Errorf("register consumer: %w", err)
 	}
 	for {
 		select {
-		case delivery := <-deliveries:
+		case delivery, ok := <-deliveries:
+			if !ok {
+				return ErrDeliveryChannelClosed
+			}
 			if delivery.Body == nil {
 				continue
 			}
@@ -55,7 +71,7 @@ func (c *Consumer) Run(ctx context.Context, process Process) {
 			}
 			_ = delivery.Ack(false)
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		}
 	}
 }

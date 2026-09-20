@@ -26,21 +26,6 @@ func main() {
 	cfg := config.Load()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	var consumer *rabbitmq.Consumer
-	for {
-		candidate, err := rabbitmq.New(cfg.RabbitURL, queueName, serviceName, logger)
-		if err == nil {
-			consumer = candidate
-			break
-		}
-		logger.Error("broker connection failed", "service", serviceName, "error", err)
-		select {
-		case <-time.After(2 * time.Second):
-		case <-ctx.Done():
-			return
-		}
-	}
-	defer consumer.Close()
 	healthServer := httptransport.NewHealthServer(cfg.HealthPort)
 	go func() {
 		if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -48,7 +33,29 @@ func main() {
 			stop()
 		}
 	}()
-	consumer.Run(ctx, application.NewProcessor(serviceName, logger).Process)
+
+	for {
+		consumer, err := rabbitmq.New(cfg.RabbitURL, queueName, serviceName, logger)
+		if err != nil {
+			logger.Error("broker connection failed", "service", serviceName, "error", err)
+			select {
+			case <-time.After(2 * time.Second):
+				continue
+			case <-ctx.Done():
+				break
+			}
+		}
+		if ctx.Err() != nil {
+			break
+		}
+
+		runErr := consumer.Run(ctx, application.NewProcessor(serviceName, logger).Process)
+		_ = consumer.Close()
+		if ctx.Err() != nil {
+			break
+		}
+		logger.Error("consumer stopped; reconnecting", "service", serviceName, "error", runErr)
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = healthServer.Shutdown(shutdownCtx)

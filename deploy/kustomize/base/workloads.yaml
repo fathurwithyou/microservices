@@ -202,8 +202,22 @@ spec:
           env:
             - { name: RABBITMQ_DEFAULT_USER, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: RABBITMQ_USER } } }
             - { name: RABBITMQ_DEFAULT_PASS, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: RABBITMQ_PASSWORD } } }
-          readinessProbe: { exec: { command: [rabbitmq-diagnostics, -q, ping] }, initialDelaySeconds: 10 }
-          livenessProbe: { exec: { command: [rabbitmq-diagnostics, -q, ping] }, periodSeconds: 10 }
+          startupProbe:
+            exec: { command: [rabbitmq-diagnostics, -q, ping] }
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            exec: { command: [rabbitmq-diagnostics, -q, ping] }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec: { command: [rabbitmq-diagnostics, -q, ping] }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
       volumes:
         - name: rabbitmq-data
           persistentVolumeClaim: { claimName: rabbitmq-data }
