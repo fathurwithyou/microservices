@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package bnpb.aggregator;
+
+import "events/hazard_event.proto";
+
+option go_package = "github.com/fathurwithyou/microservices/contracts/gen/go/aggregator;aggregatorpb";
+
+service Aggregator {
+  rpc ListHazards(ListHazardsRequest) returns (ListHazardsResponse);
+  rpc GetHazard(GetHazardRequest) returns (bnpb.events.HazardEvent);
+  rpc GetSourceStatus(GetSourceStatusRequest) returns (bnpb.events.SourceStatus);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message ListHazardsRequest {
+  bnpb.events.Source source = 1;
+  bnpb.events.HazardType hazard_type = 2;
+  bnpb.events.Severity severity = 3;
+  int32 page_size = 4;
+  string page_token = 5;
+  bool raw = 6;
+}
+
+message ListHazardsResponse {
+  repeated bnpb.events.HazardEvent hazards = 1;
+  string next_page_token = 2;
+}
+
+message GetHazardRequest { string hazard_id = 1; bool raw = 2; }
+message GetSourceStatusRequest { bnpb.events.Source source = 1; }
+message HealthCheckRequest {}
+message HealthCheckResponse { string status = 1; }

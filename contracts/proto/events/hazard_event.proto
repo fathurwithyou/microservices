@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package bnpb.events;
+
+option go_package = "github.com/fathurwithyou/microservices/contracts/gen/go/events;eventspb";
+
+enum Source {
+  SOURCE_UNSPECIFIED = 0;
+  SOURCE_BMKG = 1;
+  SOURCE_PVMBG = 2;
+}
+
+enum HazardType {
+  HAZARD_TYPE_UNSPECIFIED = 0;
+  HAZARD_TYPE_SEISMIC = 1;
+  HAZARD_TYPE_VOLCANIC = 2;
+}
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_NORMAL = 1;
+  SEVERITY_WASPADA = 2;
+  SEVERITY_SIAGA = 3;
+  SEVERITY_AWAS = 4;
+}
+
+message HazardEvent {
+  string hazard_id = 1;
+  Source source = 2;
+  string source_ref_id = 3;
+  HazardType hazard_type = 4;
+  Severity severity = 5;
+  string area_name = 6;
+  double latitude = 7;
+  double longitude = 8;
+  string occurred_at = 9;
+  string ingested_at = 10;
+  map<string, string> attributes = 11;
+}
+
+message SourceStatus {
+  Source source = 1;
+  string status = 2;
+  string last_success_at = 3;
+  string stale_since = 4;
+  string last_error = 5;
+}

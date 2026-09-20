@@ -1,0 +1,13 @@
+go 1.26.0
+
+use (
+	./contracts
+	./services/bmkg
+	./services/pvmbg
+	./services/aggregator
+	./services/auth
+	./services/client-api
+	./services/dashboard-consumer
+	./services/notifier-consumer
+	./services/portal-consumer
+)

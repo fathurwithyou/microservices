@@ -1,0 +1,76 @@
+# Environment
+.env
+
+# Binaries and distribution
+.bin/
+bin/
+dist/
+
+# Test and coverage
+coverage.out
+*.test
+
+# OS files
+.DS_Store
+
+# Go build artifacts
+*.exe
+
+# Docker
+.dockerinit
+Dockerfile.local
+
+# Generated protobuf Go code
+# Generated protobuf code is committed because services import these contracts.
+
+# Go module cache
+vendor/
+
+# Docker compose
+.docker/compose/
+
+# Kustomize
+deploy/kustomize/overlays/local/.kustomize/
+deploy/kustomize/overlays/remote/.kustomize/
+
+# k3d
+.k3d/
+
+# Temporary test environments
+tests/e2e/.env*
+tests/e2e/.env_example
+
+# Build matrices
+k3d-image-import-*
+
+# Local runtime evidence
+*.sqlite
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation: keep README files, exclude plans/assignment notes from commits.
+*.md
+!README.md
+
+# Makefile derived
+.make/
+
+# Temporary
+/tmp/*
+!/tmp/README.md
+
+# Swagger/OpenAPI
+openapi.json
+swagger.json
+
+# k6 load test data
+k6-*
+
+# Docker volumes and data
+pgdata/
+rabbitmq_data/
