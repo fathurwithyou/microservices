@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: bnpb-m1
+resources:
+  - ../../base
+patches:
+  - path: client-api-nodeport.yaml
+images:
+  - name: bnpb-m1/bmkg
+    newName: bnpb-m1/bmkg
+    newTag: local
+  - name: bnpb-m1/pvmbg
+    newName: bnpb-m1/pvmbg
+    newTag: local
+  - name: bnpb-m1/aggregator
+    newName: bnpb-m1/aggregator
+    newTag: local
+  - name: bnpb-m1/auth
+    newName: bnpb-m1/auth
+    newTag: local
+  - name: bnpb-m1/client-api
+    newName: bnpb-m1/client-api
+    newTag: local
+  - name: bnpb-m1/dashboard-consumer
+    newName: bnpb-m1/dashboard-consumer
+    newTag: local
+  - name: bnpb-m1/notifier-consumer
+    newName: bnpb-m1/notifier-consumer
+    newTag: local
+  - name: bnpb-m1/portal-consumer
+    newName: bnpb-m1/portal-consumer
+    newTag: local

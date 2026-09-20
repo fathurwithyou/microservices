@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-bootstrap
+data:
+  bootstrap.sql: |-
+    \set ON_ERROR_STOP on
+
+    SELECT format('CREATE ROLE auth LOGIN PASSWORD %L', :'auth_password')
+    WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'auth')
+    \gexec
+
+    ALTER ROLE auth LOGIN PASSWORD :'auth_password';
+
+    SELECT format('CREATE DATABASE auth_db OWNER auth')
+    WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'auth_db')
+    \gexec
+
+    CREATE TABLE IF NOT EXISTS volcano_reference (
+      volcano_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      latitude DOUBLE PRECISION NOT NULL,
+      longitude DOUBLE PRECISION NOT NULL
+    );
+
+    INSERT INTO volcano_reference (volcano_id, name, latitude, longitude)
+    VALUES
+      ('merapi', 'Gunung Merapi', -7.54, 110.44),
+      ('semeru', 'Gunung Semeru', -8.11, 112.92),
+      ('anak_krakatau', 'Anak Krakatau', -6.10, 105.42)
+    ON CONFLICT (volcano_id) DO NOTHING;

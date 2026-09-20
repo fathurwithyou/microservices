@@ -1,0 +1,150 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD}
+      POSTGRES_DB: postgres
+      AGGREGATOR_DB_PASSWORD: ${AGGREGATOR_DB_PASSWORD:?set AGGREGATOR_DB_PASSWORD}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:?set AUTH_DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sh:/docker-entrypoint-initdb.d/00-init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: { context: ., dockerfile: services/aggregator/Dockerfile }
+    command: ["migrate", "up"]
+    environment:
+      STORE_DRIVER: postgres
+      AGGREGATOR_DATABASE_URL: "postgres://aggregator:${AGGREGATOR_DB_PASSWORD:?set AGGREGATOR_DB_PASSWORD}@postgres:5432/aggregator_db?sslmode=disable"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?set RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  bmkg:
+    build: { context: ., dockerfile: services/bmkg/Dockerfile }
+    environment:
+      BMKG_PORT: 8081
+      BMKG_API_KEY: ${BMKG_API_KEY:?set BMKG_API_KEY}
+      BMKG_DELAY: ${BMKG_DELAY:-100ms}
+      NEW_EVENT_INTERVAL: ${NEW_EVENT_INTERVAL:-10s}
+      SEED_COUNT: ${SEED_COUNT:-20}
+    ports: ["${BMKG_HOST_PORT:-8081}:8081"]
+
+  pvmbg:
+    build: { context: ., dockerfile: services/pvmbg/Dockerfile }
+    environment:
+      PVMBG_PORT: 8082
+      PVMBG_TOKEN: ${PVMBG_TOKEN:?set PVMBG_TOKEN}
+      PVMBG_ADMIN_KEY: ${PVMBG_ADMIN_KEY:?set PVMBG_ADMIN_KEY}
+      PVMBG_MIN_DELAY: ${PVMBG_MIN_DELAY:-500ms}
+      PVMBG_MAX_DELAY: ${PVMBG_MAX_DELAY:-3s}
+      NEW_EVENT_INTERVAL: ${NEW_EVENT_INTERVAL:-10s}
+      SEED_COUNT: ${SEED_COUNT:-20}
+    ports: ["${PVMBG_HOST_PORT:-8082}:8082"]
+
+  aggregator:
+    build: { context: ., dockerfile: services/aggregator/Dockerfile }
+    environment:
+      AGGREGATOR_GRPC_PORT: 9090
+      AGGREGATOR_HTTP_PORT: 8090
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN}
+      BMKG_URL: ${BMKG_URL:-http://bmkg:8081}
+      BMKG_API_KEY: ${BMKG_API_KEY:?set BMKG_API_KEY}
+      PVMBG_URL: ${PVMBG_URL:-http://pvmbg:8082}
+      PVMBG_TOKEN: ${PVMBG_TOKEN:?set PVMBG_TOKEN}
+      POLL_INTERVAL: ${POLL_INTERVAL:-3s}
+      OUTBOX_POLL_INTERVAL: ${OUTBOX_POLL_INTERVAL:-500ms}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-5s}
+      STORE_DRIVER: postgres
+      AGGREGATOR_DATABASE_URL: "postgres://aggregator:${AGGREGATOR_DB_PASSWORD:?set AGGREGATOR_DB_PASSWORD}@postgres:5432/aggregator_db?sslmode=disable"
+      RABBITMQ_URL: "amqp://${RABBITMQ_USER:?set RABBITMQ_USER}:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD}@rabbitmq:5672/"
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+      bmkg: { condition: service_started }
+      pvmbg: { condition: service_started }
+    ports: ["${AGGREGATOR_HTTP_HOST_PORT:-8090}:8090", "${AGGREGATOR_GRPC_HOST_PORT:-9090}:9090"]
+
+  auth:
+    build: { context: ., dockerfile: services/auth/Dockerfile }
+    environment:
+      AUTH_GRPC_PORT: 9091
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN}
+      AUTH_DATABASE_URL: ${AUTH_DATABASE_URL:?set AUTH_DATABASE_URL}
+      AUTH_DATABASE_WAIT: ${AUTH_DATABASE_WAIT:-60s}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-60s}
+      MEDIA_CLIENT_SECRET: ${MEDIA_CLIENT_SECRET:?set MEDIA_CLIENT_SECRET}
+      FIELD_TEAM_CLIENT_SECRET: ${FIELD_TEAM_CLIENT_SECRET:?set FIELD_TEAM_CLIENT_SECRET}
+      BNPB_OPS_CLIENT_SECRET: ${BNPB_OPS_CLIENT_SECRET:?set BNPB_OPS_CLIENT_SECRET}
+    ports: ["${AUTH_GRPC_HOST_PORT:-9091}:9091"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  client-api:
+    build: { context: ., dockerfile: services/client-api/Dockerfile }
+    environment:
+      CLIENT_API_PORT: 8080
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN}
+      AGGREGATOR_GRPC_ADDR: ${AGGREGATOR_GRPC_ADDR:-aggregator:9090}
+      AUTH_GRPC_ADDR: ${AUTH_GRPC_ADDR:-auth:9091}
+      MAX_INFLIGHT_REQUESTS: ${MAX_INFLIGHT_REQUESTS:-64}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-5s}
+    depends_on:
+      aggregator: { condition: service_started }
+      auth: { condition: service_started }
+    ports: ["${CLIENT_API_HOST_PORT:-8080}:8080"]
+
+  dashboard-consumer:
+    build: { context: ., dockerfile: services/dashboard-consumer/Dockerfile }
+    environment:
+      RABBITMQ_URL: "amqp://${RABBITMQ_USER:?set RABBITMQ_USER}:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD}@rabbitmq:5672/"
+      CONSUMER_HEALTH_PORT: 8083
+    depends_on: { rabbitmq: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8083/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+  notifier-consumer:
+    build: { context: ., dockerfile: services/notifier-consumer/Dockerfile }
+    environment:
+      RABBITMQ_URL: "amqp://${RABBITMQ_USER:?set RABBITMQ_USER}:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD}@rabbitmq:5672/"
+      CONSUMER_HEALTH_PORT: 8084
+    depends_on: { rabbitmq: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8084/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+  portal-consumer:
+    build: { context: ., dockerfile: services/portal-consumer/Dockerfile }
+    environment:
+      RABBITMQ_URL: "amqp://${RABBITMQ_USER:?set RABBITMQ_USER}:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD}@rabbitmq:5672/"
+      CONSUMER_HEALTH_PORT: 8085
+    profiles: [portal]
+    depends_on: { rabbitmq: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8085/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+volumes:
+  postgres-data:
