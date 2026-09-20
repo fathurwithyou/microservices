@@ -7,6 +7,7 @@ K3S_NAMESPACE ?= bnpb-m1
 K3S_ENV_FILE ?= .env
 IMAGE_REGISTRY ?= ghcr.io/fathurwithyou
 K3D_SERVICES := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer
+K3D_DEPLOYMENTS := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer rabbitmq
 K3D_SCALABLE_DEPLOYMENTS := client-api auth dashboard-consumer notifier-consumer portal-consumer
 
 help:
@@ -62,7 +63,8 @@ k3d-deploy: k3d-up ## Build local images and apply the Kustomize local overlay
 	@k3d image import -c $(K3D_CLUSTER) $(foreach service,$(K3D_SERVICES),$(K3D_IMAGE_PREFIX)/$(service):local)
 	@kubectl apply -k deploy/kustomize/overlays/local
 	@kubectl -n $(K3S_NAMESPACE) rollout status statefulset/postgres --timeout=180s
-	@kubectl -n $(K3S_NAMESPACE) rollout status deployment --all --timeout=180s
+	@for deployment in $(K3D_DEPLOYMENTS); do kubectl -n $(K3S_NAMESPACE) rollout restart deployment/$$deployment; done
+	@for deployment in $(K3D_DEPLOYMENTS); do kubectl -n $(K3S_NAMESPACE) rollout status deployment/$$deployment --timeout=180s || exit $$?; done
 
 k3d-scale: ## Scale one stateless deployment; use K3D_SCALE_SERVICE and K3D_REPLICAS
 	@test -n "$(K3D_SCALE_SERVICE)" || (echo "K3D_SCALE_SERVICE is required" >&2; exit 1)
@@ -78,7 +80,8 @@ k3s-deploy: ## Apply the remote Kustomize overlay using IMAGE_REGISTRY and K3S_E
 	@kubectl -n $(K3S_NAMESPACE) create secret generic bnpb-secrets --from-env-file=$(K3S_ENV_FILE) --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl kustomize deploy/kustomize/overlays/remote | sed 's#ghcr.io/fathurwithyou#$(IMAGE_REGISTRY)#g' | kubectl apply -f -
 	@kubectl -n $(K3S_NAMESPACE) rollout status statefulset/postgres --timeout=180s
-	@kubectl -n $(K3S_NAMESPACE) rollout status deployment --all --timeout=180s
+	@for deployment in $(K3D_DEPLOYMENTS); do kubectl -n $(K3S_NAMESPACE) rollout restart deployment/$$deployment; done
+	@for deployment in $(K3D_DEPLOYMENTS); do kubectl -n $(K3S_NAMESPACE) rollout status deployment/$$deployment --timeout=180s || exit $$?; done
 
 k3d-down: ## Delete the local K3d cluster
 	@k3d cluster delete $(K3D_CLUSTER)

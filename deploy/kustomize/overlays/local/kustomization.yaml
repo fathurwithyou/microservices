@@ -4,7 +4,18 @@ namespace: bnpb-m1
 resources:
   - ../../base
 patches:
-  - path: client-api-nodeport.yaml
+  - target:
+      group: ""
+      version: v1
+      kind: Service
+      name: client-api
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30080
 images:
   - name: bnpb-m1/bmkg
     newName: bnpb-m1/bmkg
