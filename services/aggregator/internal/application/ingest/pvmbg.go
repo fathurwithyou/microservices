@@ -38,5 +38,5 @@ func (p *Poller) persistAndEnqueue(ctx context.Context, event domain.HazardEvent
 	if err != nil {
 		return err
 	}
-	return p.store.PersistHazardAndEnqueue(ctx, event, domain.OutboxMessage{HazardID: event.HazardID, CorrelationID: correlationID, RoutingKey: eventmessage.RoutingKey, Payload: payload})
+	return p.repository.PersistHazardAndEnqueue(ctx, event, domain.OutboxMessage{HazardID: event.HazardID, CorrelationID: correlationID, RoutingKey: eventmessage.RoutingKey, Payload: payload})
 }

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fathurwithyou/microservices/services/pvmbg/internal/store"
+	"github.com/fathurwithyou/microservices/services/pvmbg/internal/state"
 )
 
 func TestVolcanicReportsRequireBearerToken(t *testing.T) {
-	router := NewRouter(store.New(0, 0, 2), "pvmbg-token", "admin-key", slog.Default())
+	router := NewRouter(RouterConfig{State: state.New(0, 0, 2), Token: "pvmbg-token", AdminKey: "admin-key", Logger: slog.Default()})
 	request := httptest.NewRequest(http.MethodGet, "/volcanic-reports", nil)
 	response := httptest.NewRecorder()
 
@@ -23,7 +23,7 @@ func TestVolcanicReportsRequireBearerToken(t *testing.T) {
 }
 
 func TestSchemaVersionAddsConfidenceLevel(t *testing.T) {
-	router := NewRouter(store.New(0, 0, 2), "pvmbg-token", "admin-key", slog.Default())
+	router := NewRouter(RouterConfig{State: state.New(0, 0, 2), Token: "pvmbg-token", AdminKey: "admin-key", Logger: slog.Default()})
 	adminRequest := httptest.NewRequest(http.MethodPost, "/admin/schema-version", strings.NewReader(`{"enabled":true}`))
 	adminRequest.Header.Set("X-PVMBG-Admin-Key", "admin-key")
 	adminRequest.Header.Set("Content-Type", "application/json")

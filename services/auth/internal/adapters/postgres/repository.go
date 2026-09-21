@@ -15,19 +15,19 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type Store struct {
+type Repository struct {
 	pool *pgxpool.Pool
 }
 
-func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+func NewRepository(pool *pgxpool.Pool) *Repository {
+	return &Repository{pool: pool}
 }
 
-func (s *Store) Ping(ctx context.Context) error {
+func (s *Repository) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }
 
-func (s *Store) EnsureClients(ctx context.Context, clients map[string]domain.Client) error {
+func (s *Repository) EnsureClients(ctx context.Context, clients map[string]domain.Client) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin client seed transaction: %w", err)
@@ -66,7 +66,7 @@ SET secret_hash = EXCLUDED.secret_hash,
 	return nil
 }
 
-func (s *Store) AuthenticateClient(ctx context.Context, clientID, secret string) (domain.Client, error) {
+func (s *Repository) AuthenticateClient(ctx context.Context, clientID, secret string) (domain.Client, error) {
 	var storedHash []byte
 	var scopesJSON []byte
 	if err := s.pool.QueryRow(ctx, `
@@ -88,7 +88,7 @@ WHERE client_id = $1`, clientID).Scan(&storedHash, &scopesJSON); err != nil {
 	return domain.Client{ID: clientID, Scopes: scopes}, nil
 }
 
-func (s *Store) PersistTokenPair(ctx context.Context, access domain.AccessToken, refresh domain.RefreshToken) error {
+func (s *Repository) PersistTokenPair(ctx context.Context, access domain.AccessToken, refresh domain.RefreshToken) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin token pair transaction: %w", err)
@@ -107,7 +107,7 @@ func (s *Store) PersistTokenPair(ctx context.Context, access domain.AccessToken,
 	return nil
 }
 
-func (s *Store) ValidateAccessToken(ctx context.Context, tokenHash []byte, now time.Time) (domain.AccessToken, error) {
+func (s *Repository) ValidateAccessToken(ctx context.Context, tokenHash []byte, now time.Time) (domain.AccessToken, error) {
 	var token domain.AccessToken
 	var scopesJSON []byte
 	if err := s.pool.QueryRow(ctx, `
@@ -128,7 +128,7 @@ WHERE token_hash = $1
 	return token, nil
 }
 
-func (s *Store) RotateRefreshToken(ctx context.Context, oldHash []byte, access domain.AccessToken, refresh domain.RefreshToken) (domain.TokenOwner, error) {
+func (s *Repository) RotateRefreshToken(ctx context.Context, oldHash []byte, access domain.AccessToken, refresh domain.RefreshToken) (domain.TokenOwner, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.TokenOwner{}, fmt.Errorf("begin refresh rotation transaction: %w", err)

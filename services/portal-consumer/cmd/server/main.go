@@ -35,7 +35,7 @@ func main() {
 	}()
 
 	for {
-		consumer, err := rabbitmq.New(cfg.RabbitURL, queueName, serviceName, logger)
+		consumer, err := rabbitmq.New(rabbitmq.ConsumerConfig{URL: cfg.RabbitURL, Queue: queueName, Service: serviceName, Logger: logger})
 		if err != nil {
 			logger.Error("broker connection failed", "service", serviceName, "error", err)
 			select {

@@ -33,8 +33,15 @@ type Consumer struct {
 	logger         *slog.Logger
 }
 
-func New(url, queue, service string, logger *slog.Logger) (*Consumer, error) {
-	connection, err := amqp091.Dial(url)
+type ConsumerConfig struct {
+	URL     string
+	Queue   string
+	Service string
+	Logger  *slog.Logger
+}
+
+func New(cfg ConsumerConfig) (*Consumer, error) {
+	connection, err := amqp091.Dial(cfg.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +50,7 @@ func New(url, queue, service string, logger *slog.Logger) (*Consumer, error) {
 		_ = connection.Close()
 		return nil, err
 	}
-	consumer := &Consumer{connection: connection, channel: channel, queue: queue, service: service, logger: logger}
+	consumer := &Consumer{connection: connection, channel: channel, queue: cfg.Queue, service: cfg.Service, logger: cfg.Logger}
 	if err := consumer.declare(); err != nil {
 		_ = consumer.Close()
 		return nil, err

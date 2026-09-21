@@ -4,15 +4,15 @@ import (
 	"context"
 	"time"
 
-	"github.com/fathurwithyou/microservices/services/pvmbg/internal/store"
+	"github.com/fathurwithyou/microservices/services/pvmbg/internal/state"
 )
 
 type ReportProducer struct {
-	state    *store.Runtime
+	state    *state.Runtime
 	interval time.Duration
 }
 
-func NewReportProducer(state *store.Runtime, interval time.Duration) *ReportProducer {
+func NewReportProducer(state *state.Runtime, interval time.Duration) *ReportProducer {
 	return &ReportProducer{state: state, interval: interval}
 }
 

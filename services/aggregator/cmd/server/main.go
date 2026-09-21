@@ -67,13 +67,13 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	store, closeStore, err := newStore(ctx, cfg, *wait)
+	persistence, closePersistence, err := newPersistence(ctx, cfg, *wait)
 	if err != nil {
 		logger.Error("storage initialization failed", "service", "aggregator", "error", err)
 		return 1
 	}
-	defer closeStore()
-	volcanoes, err := store.LoadVolcanoReferences(ctx)
+	defer closePersistence()
+	volcanoes, err := persistence.LoadVolcanoReferences(ctx)
 	if err != nil {
 		logger.Error("volcano reference loading failed", "service", "aggregator", "error", err)
 		return 1
@@ -88,17 +88,17 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		return 1
 	}
 	defer publisher.Close()
-	poller := applicationingest.NewPoller(
-		store,
-		sources.New(cfg.BMKGURL, "bmkg", "X-BMKG-Key", cfg.BMKGKey, cfg.RequestTimeout, logger),
-		sources.New(cfg.PVMBGURL, "pvmbg", "Authorization", "Bearer "+cfg.PVMBGToken, cfg.RequestTimeout, logger),
-		cfg.PollInterval,
-		cfg.RequestTimeout,
-		logger,
-		volcanoes,
-	)
-	outboxWorker := outbox.NewWorker(store, publisher, cfg.OutboxPollInterval, logger)
-	queries := hazards.NewQueries(store)
+	poller := applicationingest.NewPoller(applicationingest.PollerConfig{
+		Repository: persistence,
+		BMKG:       sources.New(sources.ClientConfig{BaseURL: cfg.BMKGURL, Name: "bmkg", Header: "X-BMKG-Key", Value: cfg.BMKGKey, Timeout: cfg.RequestTimeout, Logger: logger}),
+		PVMBG:      sources.New(sources.ClientConfig{BaseURL: cfg.PVMBGURL, Name: "pvmbg", Header: "Authorization", Value: "Bearer " + cfg.PVMBGToken, Timeout: cfg.RequestTimeout, Logger: logger}),
+		Interval:   cfg.PollInterval,
+		Timeout:    cfg.RequestTimeout,
+		Logger:     logger,
+		Volcanoes:  volcanoes,
+	})
+	outboxWorker := outbox.NewWorker(outbox.WorkerConfig{Repository: persistence, Publisher: publisher, Interval: cfg.OutboxPollInterval, Logger: logger})
+	queries := hazards.NewQueries(persistence)
 
 	grpcListener, err := net.Listen("tcp", ":"+cfg.GRPCPort)
 	if err != nil {
@@ -235,26 +235,26 @@ func isMemoryDriver() bool {
 	return driver == "memory"
 }
 
-type applicationStore interface {
+type persistence interface {
 	hazards.Repository
-	applicationingest.Store
-	outbox.Store
+	applicationingest.Repository
+	outbox.Repository
 	LoadVolcanoReferences(context.Context) (map[string]domain.VolcanoReference, error)
 }
 
-func newStore(ctx context.Context, cfg config.Config, wait time.Duration) (applicationStore, func(), error) {
+func newPersistence(ctx context.Context, cfg config.Config, wait time.Duration) (persistence, func(), error) {
 	switch strings.ToLower(cfg.StoreDriver) {
 	case "postgres":
 		if cfg.DatabaseURL == "" {
 			return nil, nil, errors.New("AGGREGATOR_DATABASE_URL is required when STORE_DRIVER=postgres")
 		}
-		postgresStore, err := postgres.NewWithWait(ctx, cfg.DatabaseURL, wait)
+		postgresRepository, err := postgres.NewRepositoryWithWait(ctx, cfg.DatabaseURL, wait)
 		if err != nil {
 			return nil, nil, fmt.Errorf("connect PostgreSQL: %w", err)
 		}
-		return postgresStore, postgresStore.Close, nil
+		return postgresRepository, postgresRepository.Close, nil
 	case "memory":
-		return memory.New(), func() {}, nil
+		return memory.NewRepository(), func() {}, nil
 	default:
 		return nil, nil, fmt.Errorf("unsupported STORE_DRIVER %q", cfg.StoreDriver)
 	}

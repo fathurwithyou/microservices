@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type Store struct {
+type Repository struct {
 	mu          sync.RWMutex
 	events      map[string]domain.HazardEvent
 	bySource    map[string]string
@@ -26,8 +26,8 @@ type Store struct {
 	nextID      int64
 }
 
-func New() *Store {
-	return &Store{
+func NewRepository() *Repository {
+	return &Repository{
 		events:      make(map[string]domain.HazardEvent),
 		bySource:    make(map[string]string),
 		status:      make(map[domain.Source]domain.SourceStatus),
@@ -39,7 +39,7 @@ func New() *Store {
 	}
 }
 
-func (s *Store) PersistHazardAndEnqueue(_ context.Context, event domain.HazardEvent, message domain.OutboxMessage) error {
+func (s *Repository) PersistHazardAndEnqueue(_ context.Context, event domain.HazardEvent, message domain.OutboxMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	event = clone(event)
@@ -67,7 +67,7 @@ func unchanged(existing, incoming domain.HazardEvent) bool {
 	return existing.Severity == incoming.Severity && reflect.DeepEqual(existing.Attributes, incoming.Attributes)
 }
 
-func (s *Store) GetHazard(_ context.Context, id string) (domain.HazardEvent, error) {
+func (s *Repository) GetHazard(_ context.Context, id string) (domain.HazardEvent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	event, ok := s.events[id]
@@ -77,7 +77,7 @@ func (s *Store) GetHazard(_ context.Context, id string) (domain.HazardEvent, err
 	return clone(event), nil
 }
 
-func (s *Store) ListHazards(_ context.Context, filter hazards.ListFilter) ([]domain.HazardEvent, error) {
+func (s *Repository) ListHazards(_ context.Context, filter hazards.ListFilter) ([]domain.HazardEvent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	items := make([]domain.HazardEvent, 0, len(s.events))
@@ -107,14 +107,14 @@ func (s *Store) ListHazards(_ context.Context, filter hazards.ListFilter) ([]dom
 	return items[start:end], nil
 }
 
-func (s *Store) SetSourceStatus(_ context.Context, status domain.SourceStatus) error {
+func (s *Repository) SetSourceStatus(_ context.Context, status domain.SourceStatus) error {
 	s.mu.Lock()
 	s.status[status.Source] = status
 	s.mu.Unlock()
 	return nil
 }
 
-func (s *Store) GetSourceStatus(_ context.Context, source domain.Source) (domain.SourceStatus, error) {
+func (s *Repository) GetSourceStatus(_ context.Context, source domain.Source) (domain.SourceStatus, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	status, ok := s.status[source]
@@ -124,13 +124,13 @@ func (s *Store) GetSourceStatus(_ context.Context, source domain.Source) (domain
 	return status, nil
 }
 
-func (s *Store) GetPollCursor(_ context.Context, source domain.Source) (time.Time, error) {
+func (s *Repository) GetPollCursor(_ context.Context, source domain.Source) (time.Time, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.cursors[source], nil
 }
 
-func (s *Store) AdvancePollCursor(_ context.Context, source domain.Source, cursor time.Time) error {
+func (s *Repository) AdvancePollCursor(_ context.Context, source domain.Source, cursor time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if cursor.After(s.cursors[source]) {
@@ -139,13 +139,13 @@ func (s *Store) AdvancePollCursor(_ context.Context, source domain.Source, curso
 	return nil
 }
 
-func (s *Store) LoadVolcanoReferences(_ context.Context) (map[string]domain.VolcanoReference, error) {
+func (s *Repository) LoadVolcanoReferences(_ context.Context) (map[string]domain.VolcanoReference, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return cloneVolcanoes(s.volcanoes), nil
 }
 
-func (s *Store) ClaimPendingOutbox(_ context.Context, limit int, leaseDuration time.Duration) ([]domain.OutboxMessage, error) {
+func (s *Repository) ClaimPendingOutbox(_ context.Context, limit int, leaseDuration time.Duration) ([]domain.OutboxMessage, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -172,7 +172,7 @@ func (s *Store) ClaimPendingOutbox(_ context.Context, limit int, leaseDuration t
 	return items, nil
 }
 
-func (s *Store) MarkOutboxPublished(_ context.Context, id int64, leaseToken string) error {
+func (s *Repository) MarkOutboxPublished(_ context.Context, id int64, leaseToken string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	message, ok := s.outbox[id]
@@ -185,7 +185,7 @@ func (s *Store) MarkOutboxPublished(_ context.Context, id int64, leaseToken stri
 	return nil
 }
 
-func (s *Store) ReleaseOutbox(_ context.Context, id int64, leaseToken string, nextAttempt time.Time) error {
+func (s *Repository) ReleaseOutbox(_ context.Context, id int64, leaseToken string, nextAttempt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	message, ok := s.outbox[id]

@@ -13,7 +13,7 @@ var (
 	ErrInvalidToken       = errors.New("invalid token")
 )
 
-type TokenStore interface {
+type TokenRepository interface {
 	Ping(context.Context) error
 	EnsureClients(context.Context, map[string]domain.Client) error
 	AuthenticateClient(context.Context, string, string) (domain.Client, error)

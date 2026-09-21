@@ -9,8 +9,8 @@ import (
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/config"
 )
 
-func TestNewStoreRequiresDatabaseURLForPostgres(t *testing.T) {
-	store, closeStore, err := newStore(context.Background(), config.Config{StoreDriver: "postgres"}, time.Minute)
+func TestNewPersistenceRequiresDatabaseURLForPostgres(t *testing.T) {
+	store, closeStore, err := newPersistence(context.Background(), config.Config{StoreDriver: "postgres"}, time.Minute)
 	if err == nil {
 		t.Fatal("expected missing database URL to fail")
 	}
@@ -19,8 +19,8 @@ func TestNewStoreRequiresDatabaseURLForPostgres(t *testing.T) {
 	}
 }
 
-func TestNewStoreAllowsExplicitMemoryDriver(t *testing.T) {
-	store, closeStore, err := newStore(context.Background(), config.Config{StoreDriver: "memory"}, time.Minute)
+func TestNewPersistenceAllowsExplicitMemoryDriver(t *testing.T) {
+	store, closeStore, err := newPersistence(context.Background(), config.Config{StoreDriver: "memory"}, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

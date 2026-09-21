@@ -5,22 +5,29 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/fathurwithyou/microservices/services/bmkg/internal/store"
+	"github.com/fathurwithyou/microservices/services/bmkg/internal/state"
 	"github.com/gin-gonic/gin"
 )
 
-func NewRouter(store *store.Memory, apiKey string, responseDelay time.Duration, logger *slog.Logger) *gin.Engine {
-	handler := handler{store: store, responseDelay: responseDelay, logger: logger}
+type RouterConfig struct {
+	State         *state.Memory
+	APIKey        string
+	ResponseDelay time.Duration
+	Logger        *slog.Logger
+}
+
+func NewRouter(cfg RouterConfig) *gin.Engine {
+	handler := handler{state: cfg.State, responseDelay: cfg.ResponseDelay, logger: cfg.Logger}
 	router := gin.New()
-	router.Use(correlationMiddleware(), recoveryMiddleware(logger), requestLogMiddleware(logger))
+	router.Use(correlationMiddleware(), recoveryMiddleware(cfg.Logger), requestLogMiddleware(cfg.Logger))
 	router.GET("/health", handler.health)
-	router.GET("/seismic-events", requireAPIKey(apiKey), handler.seismicEvents)
-	router.GET("/tsunami-warnings", requireAPIKey(apiKey), handler.tsunamiWarnings)
+	router.GET("/seismic-events", requireAPIKey(cfg.APIKey), handler.seismicEvents)
+	router.GET("/tsunami-warnings", requireAPIKey(cfg.APIKey), handler.tsunamiWarnings)
 	return router
 }
 
 type handler struct {
-	store         *store.Memory
+	state         *state.Memory
 	responseDelay time.Duration
 	logger        *slog.Logger
 }

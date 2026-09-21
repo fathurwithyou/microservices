@@ -19,7 +19,7 @@ func (p *Poller) runSource(ctx context.Context, source domain.Source, poll pollF
 
 	for {
 		if !loaded {
-			loadedCursor, err := p.store.GetPollCursor(ctx, source)
+			loadedCursor, err := p.repository.GetPollCursor(ctx, source)
 			if err != nil {
 				p.logger.Error("poll cursor load failed", "component", "poller", "source", source, "error", err)
 				select {
@@ -33,7 +33,7 @@ func (p *Poller) runSource(ctx context.Context, source domain.Source, poll pollF
 			if cursor.IsZero() {
 				cursor = time.Now().UTC().Add(-24 * time.Hour)
 			}
-			if status, statusErr := p.store.GetSourceStatus(ctx, source); statusErr != nil {
+			if status, statusErr := p.repository.GetSourceStatus(ctx, source); statusErr != nil {
 				p.logger.Error("source status load failed", "component", "poller", "source", source, "error", statusErr)
 			} else if status.LastSuccessAt != nil {
 				lastSuccess = *status.LastSuccessAt
@@ -49,7 +49,7 @@ func (p *Poller) runSource(ctx context.Context, source domain.Source, poll pollF
 
 		if err != nil {
 			p.markStale(ctx, source, lastSuccess, time.Now().UTC(), correlationID, err)
-		} else if err := p.store.AdvancePollCursor(ctx, source, batchUpperBound); err != nil {
+		} else if err := p.repository.AdvancePollCursor(ctx, source, batchUpperBound); err != nil {
 			p.markStale(ctx, source, lastSuccess, time.Now().UTC(), correlationID, err)
 			p.logger.Error("poll cursor advance failed", "component", "poller", "source", source, "correlation_id", correlationID, "error", err)
 		} else {
@@ -72,7 +72,7 @@ func (p *Poller) markStale(ctx context.Context, source domain.Source, lastSucces
 		staleSince = now
 	}
 	status := domain.SourceStatus{Source: source, Status: "stale", StaleSince: &staleSince, LastError: pollErr.Error()}
-	if err := p.store.SetSourceStatus(ctx, status); err != nil {
+	if err := p.repository.SetSourceStatus(ctx, status); err != nil {
 		p.logger.Error("source status update failed", "component", "poller", "source", source, "error", err)
 	}
 	p.logger.Error("poll failed", "component", "poller", "source", source, "correlation_id", correlationID, "error", pollErr)
@@ -80,7 +80,7 @@ func (p *Poller) markStale(ctx context.Context, source domain.Source, lastSucces
 
 func (p *Poller) markHealthy(ctx context.Context, source domain.Source, now time.Time) {
 	status := domain.SourceStatus{Source: source, Status: "healthy", LastSuccessAt: &now}
-	if err := p.store.SetSourceStatus(ctx, status); err != nil {
+	if err := p.repository.SetSourceStatus(ctx, status); err != nil {
 		p.logger.Error("source status update failed", "component", "poller", "source", source, "error", err)
 	}
 }

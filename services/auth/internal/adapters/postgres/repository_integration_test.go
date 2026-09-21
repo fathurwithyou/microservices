@@ -29,7 +29,7 @@ func TestStorePersistsCredentialsAndRotatesRefreshToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := New(pool)
+	store := NewRepository(pool)
 	clientID := fmt.Sprintf("auth-test-%d", time.Now().UnixNano())
 	client := domain.Client{ID: clientID, Secret: "test-secret", Scopes: []string{"hazard:read:raw"}}
 	t.Cleanup(func() {

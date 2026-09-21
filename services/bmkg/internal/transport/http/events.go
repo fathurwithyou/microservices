@@ -12,13 +12,13 @@ func (h handler) seismicEvents(c *gin.Context) {
 		return
 	}
 	started := time.Now()
-	c.JSON(http.StatusOK, h.store.EventsSince(parseSince(c.Query("since"))))
+	c.JSON(http.StatusOK, h.state.EventsSince(parseSince(c.Query("since"))))
 	h.logResponse(c, "seismic-events", started)
 }
 
 func (h handler) tsunamiWarnings(c *gin.Context) {
 	started := time.Now()
-	c.JSON(http.StatusOK, h.store.WarningsSince(parseSince(c.Query("since"))))
+	c.JSON(http.StatusOK, h.state.WarningsSince(parseSince(c.Query("since"))))
 	h.logResponse(c, "tsunami-warnings", started)
 }
 

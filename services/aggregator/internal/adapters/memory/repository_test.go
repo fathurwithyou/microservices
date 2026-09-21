@@ -10,7 +10,7 @@ import (
 )
 
 func TestStorePreventsDuplicateSourceRecord(t *testing.T) {
-	store := New()
+	store := NewRepository()
 	event := domain.HazardEvent{HazardID: "h-1", Source: domain.SourceBMKG, SourceRefID: "source-1", HazardType: domain.HazardSeismic, Severity: domain.SeverityNormal, OccurredAt: time.Now(), Attributes: map[string]any{"magnitude": 5.1}}
 	message := domain.OutboxMessage{HazardID: event.HazardID, CorrelationID: "test", RoutingKey: "hazard.event", Payload: []byte("event")}
 	if err := store.PersistHazardAndEnqueue(context.Background(), event, message); err != nil {
@@ -32,7 +32,7 @@ func TestStorePreventsDuplicateSourceRecord(t *testing.T) {
 }
 
 func TestStoreAdvancesPollCursorMonotonically(t *testing.T) {
-	store := New()
+	store := NewRepository()
 	first := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
 	second := first.Add(time.Minute)
 
@@ -52,7 +52,7 @@ func TestStoreAdvancesPollCursorMonotonically(t *testing.T) {
 }
 
 func TestStoreLoadsVolcanoReferenceCache(t *testing.T) {
-	store := New()
+	store := NewRepository()
 	references, err := store.LoadVolcanoReferences(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestStoreLoadsVolcanoReferenceCache(t *testing.T) {
 }
 
 func TestStoreOutboxLeasePreventsConcurrentClaim(t *testing.T) {
-	store := New()
+	store := NewRepository()
 	event := domain.HazardEvent{HazardID: "h-lease", Source: domain.SourceBMKG, SourceRefID: "source-lease", HazardType: domain.HazardSeismic, Severity: domain.SeverityNormal, OccurredAt: time.Now(), Attributes: map[string]any{}}
 	message := domain.OutboxMessage{HazardID: event.HazardID, CorrelationID: "test", RoutingKey: "hazard.event", Payload: []byte("event")}
 	if err := store.PersistHazardAndEnqueue(context.Background(), event, message); err != nil {
@@ -106,7 +106,7 @@ func TestStoreOutboxLeasePreventsConcurrentClaim(t *testing.T) {
 }
 
 func TestStoreLeaseExpiresAndCanBeClaimedAgain(t *testing.T) {
-	store := New()
+	store := NewRepository()
 	event := domain.HazardEvent{HazardID: "h-lease", Source: domain.SourcePVMBG, SourceRefID: "r-lease", HazardType: domain.HazardVolcanic, Severity: domain.SeverityWaspada, OccurredAt: time.Now().UTC()}
 	message := domain.OutboxMessage{HazardID: event.HazardID, CorrelationID: "test", RoutingKey: "hazard.event", Payload: []byte("event")}
 	if err := store.PersistHazardAndEnqueue(context.Background(), event, message); err != nil {

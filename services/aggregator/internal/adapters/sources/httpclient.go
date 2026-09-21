@@ -18,8 +18,17 @@ type Client struct {
 	logger  *slog.Logger
 }
 
-func New(baseURL, name, header, value string, timeout time.Duration, logger *slog.Logger) *Client {
-	return &Client{baseURL: baseURL, name: name, header: header, value: value, client: &http.Client{Timeout: timeout}, logger: logger}
+type ClientConfig struct {
+	BaseURL string
+	Name    string
+	Header  string
+	Value   string
+	Timeout time.Duration
+	Logger  *slog.Logger
+}
+
+func New(cfg ClientConfig) *Client {
+	return &Client{baseURL: cfg.BaseURL, name: cfg.Name, header: cfg.Header, value: cfg.Value, client: &http.Client{Timeout: cfg.Timeout}, logger: cfg.Logger}
 }
 
 func (c *Client) Get(ctx context.Context, path, correlationID string) ([]map[string]json.RawMessage, error) {

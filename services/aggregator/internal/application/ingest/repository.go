@@ -7,7 +7,7 @@ import (
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 )
 
-type Store interface {
+type Repository interface {
 	PersistHazardAndEnqueue(context.Context, domain.HazardEvent, domain.OutboxMessage) error
 	SetSourceStatus(context.Context, domain.SourceStatus) error
 	GetSourceStatus(context.Context, domain.Source) (domain.SourceStatus, error)

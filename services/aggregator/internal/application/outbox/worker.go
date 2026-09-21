@@ -9,10 +9,17 @@ import (
 )
 
 type Worker struct {
-	store     Store
-	publisher ports.Publisher
-	interval  time.Duration
-	logger    *slog.Logger
+	repository Repository
+	publisher  ports.Publisher
+	interval   time.Duration
+	logger     *slog.Logger
+}
+
+type WorkerConfig struct {
+	Repository Repository
+	Publisher  ports.Publisher
+	Interval   time.Duration
+	Logger     *slog.Logger
 }
 
 const (
@@ -22,8 +29,8 @@ const (
 	outboxRetryMaximum  = 30 * time.Second
 )
 
-func NewWorker(store Store, publisher ports.Publisher, interval time.Duration, logger *slog.Logger) *Worker {
-	return &Worker{store: store, publisher: publisher, interval: interval, logger: logger}
+func NewWorker(cfg WorkerConfig) *Worker {
+	return &Worker{repository: cfg.Repository, publisher: cfg.Publisher, interval: cfg.Interval, logger: cfg.Logger}
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -40,7 +47,7 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 func (w *Worker) dispatchPending(ctx context.Context) {
-	messages, err := w.store.ClaimPendingOutbox(ctx, outboxBatchSize, outboxLeaseDuration)
+	messages, err := w.repository.ClaimPendingOutbox(ctx, outboxBatchSize, outboxLeaseDuration)
 	if err != nil {
 		w.logger.Error("outbox claim failed", "component", "outbox", "error", err)
 		return
@@ -49,12 +56,12 @@ func (w *Worker) dispatchPending(ctx context.Context) {
 		if err := w.publisher.Publish(ctx, message); err != nil {
 			w.logger.Error("outbox publish failed", "component", "outbox", "message_id", message.ID, "event_id", message.HazardID, "error", err)
 			nextAttempt := time.Now().UTC().Add(retryDelay(message.Attempts))
-			if releaseErr := w.store.ReleaseOutbox(ctx, message.ID, message.LeaseToken, nextAttempt); releaseErr != nil {
+			if releaseErr := w.repository.ReleaseOutbox(ctx, message.ID, message.LeaseToken, nextAttempt); releaseErr != nil {
 				w.logger.Error("outbox lease release failed", "component", "outbox", "message_id", message.ID, "error", releaseErr)
 			}
 			continue
 		}
-		if err := w.store.MarkOutboxPublished(ctx, message.ID, message.LeaseToken); err != nil {
+		if err := w.repository.MarkOutboxPublished(ctx, message.ID, message.LeaseToken); err != nil {
 			w.logger.Error("outbox publish acknowledgement failed", "component", "outbox", "message_id", message.ID, "error", err)
 		}
 	}

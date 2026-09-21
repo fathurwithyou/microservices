@@ -20,21 +20,21 @@ var (
 )
 
 type TokenManager struct {
-	store     ports.TokenStore
-	accessTTL time.Duration
-	now       func() time.Time
+	repository ports.TokenRepository
+	accessTTL  time.Duration
+	now        func() time.Time
 }
 
-func NewTokenManager(accessTTL time.Duration, store ports.TokenStore) *TokenManager {
-	return &TokenManager{store: store, accessTTL: accessTTL, now: time.Now}
+func NewTokenManager(accessTTL time.Duration, repository ports.TokenRepository) *TokenManager {
+	return &TokenManager{repository: repository, accessTTL: accessTTL, now: time.Now}
 }
 
 func (m *TokenManager) SeedClients(ctx context.Context, clients map[string]domain.Client) error {
-	return m.store.EnsureClients(ctx, clients)
+	return m.repository.EnsureClients(ctx, clients)
 }
 
 func (m *TokenManager) Issue(ctx context.Context, clientID, secret string) (string, string, time.Time, []string, error) {
-	client, err := m.store.AuthenticateClient(ctx, clientID, secret)
+	client, err := m.repository.AuthenticateClient(ctx, clientID, secret)
 	if errors.Is(err, ports.ErrInvalidCredentials) {
 		return "", "", time.Time{}, nil, ErrInvalidCredentials
 	}
@@ -46,7 +46,7 @@ func (m *TokenManager) Issue(ctx context.Context, clientID, secret string) (stri
 	if err != nil {
 		return "", "", time.Time{}, nil, err
 	}
-	if err := m.store.PersistTokenPair(ctx, access, refresh); err != nil {
+	if err := m.repository.PersistTokenPair(ctx, access, refresh); err != nil {
 		return "", "", time.Time{}, nil, fmt.Errorf("persist issued token pair: %w", err)
 	}
 	return accessValue, refreshValue, access.ExpiresAt, append([]string(nil), client.Scopes...), nil
@@ -57,7 +57,7 @@ func (m *TokenManager) Refresh(ctx context.Context, value string) (string, strin
 	if err != nil {
 		return "", "", time.Time{}, "", nil, err
 	}
-	owner, err := m.store.RotateRefreshToken(ctx, hash(value), access, refresh)
+	owner, err := m.repository.RotateRefreshToken(ctx, hash(value), access, refresh)
 	if errors.Is(err, ports.ErrInvalidToken) {
 		return "", "", time.Time{}, "", nil, ErrInvalidRefreshToken
 	}
@@ -68,7 +68,7 @@ func (m *TokenManager) Refresh(ctx context.Context, value string) (string, strin
 }
 
 func (m *TokenManager) Validate(ctx context.Context, value string) (string, []string, time.Time, error) {
-	session, err := m.store.ValidateAccessToken(ctx, hash(value), m.now())
+	session, err := m.repository.ValidateAccessToken(ctx, hash(value), m.now())
 	if errors.Is(err, ports.ErrInvalidToken) {
 		return "", nil, time.Time{}, ErrInvalidAccessToken
 	}
@@ -79,7 +79,7 @@ func (m *TokenManager) Validate(ctx context.Context, value string) (string, []st
 }
 
 func (m *TokenManager) Health(ctx context.Context) error {
-	return m.store.Ping(ctx)
+	return m.repository.Ping(ctx)
 }
 
 func (m *TokenManager) newTokenPair(clientID string, scopes []string) (domain.AccessToken, domain.RefreshToken, string, string, error) {

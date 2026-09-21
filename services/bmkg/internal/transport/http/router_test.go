@@ -6,11 +6,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/fathurwithyou/microservices/services/bmkg/internal/store"
+	"github.com/fathurwithyou/microservices/services/bmkg/internal/state"
 )
 
 func TestSeismicEventsRequireBMKGCredential(t *testing.T) {
-	router := NewRouter(store.New(2), "bmkg-key", 0, slog.Default())
+	router := NewRouter(RouterConfig{State: state.New(2), APIKey: "bmkg-key", Logger: slog.Default()})
 	request := httptest.NewRequest(http.MethodGet, "/seismic-events", nil)
 	response := httptest.NewRecorder()
 
@@ -22,7 +22,7 @@ func TestSeismicEventsRequireBMKGCredential(t *testing.T) {
 }
 
 func TestSeismicEventsReturnSeededData(t *testing.T) {
-	router := NewRouter(store.New(2), "bmkg-key", 0, slog.Default())
+	router := NewRouter(RouterConfig{State: state.New(2), APIKey: "bmkg-key", Logger: slog.Default()})
 	request := httptest.NewRequest(http.MethodGet, "/seismic-events", nil)
 	request.Header.Set("X-BMKG-Key", "bmkg-key")
 	response := httptest.NewRecorder()

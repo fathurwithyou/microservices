@@ -16,15 +16,15 @@ import (
 
 const defaultWait = 60 * time.Second
 
-type Store struct{ pool *pgxpool.Pool }
+type Repository struct{ pool *pgxpool.Pool }
 
-func New(ctx context.Context, databaseURL string) (*Store, error) {
-	return NewWithWait(ctx, databaseURL, defaultWait)
+func NewRepository(ctx context.Context, databaseURL string) (*Repository, error) {
+	return NewRepositoryWithWait(ctx, databaseURL, defaultWait)
 }
 
-func NewFromPool(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+func NewRepositoryFromPool(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
 
-func NewWithWait(ctx context.Context, databaseURL string, wait time.Duration) (*Store, error) {
+func NewRepositoryWithWait(ctx context.Context, databaseURL string, wait time.Duration) (*Repository, error) {
 	if err := Up(ctx, databaseURL, wait); err != nil {
 		return nil, err
 	}
@@ -36,11 +36,11 @@ func NewWithWait(ctx context.Context, databaseURL string, wait time.Duration) (*
 		pool.Close()
 		return nil, fmt.Errorf("seed canonical reference data: %w", err)
 	}
-	return &Store{pool: pool}, nil
+	return &Repository{pool: pool}, nil
 }
-func (s *Store) Close() { s.pool.Close() }
+func (s *Repository) Close() { s.pool.Close() }
 
-func (s *Store) PersistHazardAndEnqueue(ctx context.Context, event domain.HazardEvent, message domain.OutboxMessage) error {
+func (s *Repository) PersistHazardAndEnqueue(ctx context.Context, event domain.HazardEvent, message domain.OutboxMessage) error {
 	attributes, err := json.Marshal(event.Attributes)
 	if err != nil {
 		return err
@@ -65,12 +65,12 @@ func (s *Store) PersistHazardAndEnqueue(ctx context.Context, event domain.Hazard
 	return tx.Commit(ctx)
 }
 
-func (s *Store) GetHazard(ctx context.Context, id string) (domain.HazardEvent, error) {
+func (s *Repository) GetHazard(ctx context.Context, id string) (domain.HazardEvent, error) {
 	row := s.pool.QueryRow(ctx, `SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes FROM hazard_events WHERE hazard_id=$1`, id)
 	return scan(row)
 }
 
-func (s *Store) ListHazards(ctx context.Context, filter hazards.ListFilter) ([]domain.HazardEvent, error) {
+func (s *Repository) ListHazards(ctx context.Context, filter hazards.ListFilter) ([]domain.HazardEvent, error) {
 	query := `SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes FROM hazard_events WHERE 1=1`
 	args := make([]any, 0, 4)
 	if filter.Source != "" {
@@ -103,11 +103,11 @@ func (s *Store) ListHazards(ctx context.Context, filter hazards.ListFilter) ([]d
 	return items, rows.Err()
 }
 
-func (s *Store) SetSourceStatus(ctx context.Context, status domain.SourceStatus) error {
+func (s *Repository) SetSourceStatus(ctx context.Context, status domain.SourceStatus) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO source_status (source,status,last_success_at,stale_since,last_error) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (source) DO UPDATE SET status=EXCLUDED.status,last_success_at=EXCLUDED.last_success_at,stale_since=EXCLUDED.stale_since,last_error=EXCLUDED.last_error`, status.Source, status.Status, status.LastSuccessAt, status.StaleSince, status.LastError)
 	return err
 }
-func (s *Store) GetSourceStatus(ctx context.Context, source domain.Source) (domain.SourceStatus, error) {
+func (s *Repository) GetSourceStatus(ctx context.Context, source domain.Source) (domain.SourceStatus, error) {
 	var result domain.SourceStatus
 	err := s.pool.QueryRow(ctx, `SELECT source,status,last_success_at,stale_since,last_error FROM source_status WHERE source=$1`, source).Scan(&result.Source, &result.Status, &result.LastSuccessAt, &result.StaleSince, &result.LastError)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -119,7 +119,7 @@ func (s *Store) GetSourceStatus(ctx context.Context, source domain.Source) (doma
 	return result, nil
 }
 
-func (s *Store) GetPollCursor(ctx context.Context, source domain.Source) (time.Time, error) {
+func (s *Repository) GetPollCursor(ctx context.Context, source domain.Source) (time.Time, error) {
 	var cursor time.Time
 	err := s.pool.QueryRow(ctx, `SELECT cursor_at FROM poll_cursors WHERE source=$1`, source).Scan(&cursor)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -128,7 +128,7 @@ func (s *Store) GetPollCursor(ctx context.Context, source domain.Source) (time.T
 	return cursor, err
 }
 
-func (s *Store) AdvancePollCursor(ctx context.Context, source domain.Source, cursor time.Time) error {
+func (s *Repository) AdvancePollCursor(ctx context.Context, source domain.Source, cursor time.Time) error {
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO poll_cursors (source, cursor_at)
 VALUES ($1, $2)
@@ -138,7 +138,7 @@ WHERE poll_cursors.cursor_at < EXCLUDED.cursor_at`, source, cursor)
 	return err
 }
 
-func (s *Store) LoadVolcanoReferences(ctx context.Context) (map[string]domain.VolcanoReference, error) {
+func (s *Repository) LoadVolcanoReferences(ctx context.Context) (map[string]domain.VolcanoReference, error) {
 	rows, err := s.pool.Query(ctx, `SELECT volcano_id, name, latitude, longitude FROM volcano_reference ORDER BY volcano_id`)
 	if err != nil {
 		return nil, err
@@ -156,7 +156,7 @@ func (s *Store) LoadVolcanoReferences(ctx context.Context) (map[string]domain.Vo
 	return references, rows.Err()
 }
 
-func (s *Store) ClaimPendingOutbox(ctx context.Context, limit int, leaseDuration time.Duration) ([]domain.OutboxMessage, error) {
+func (s *Repository) ClaimPendingOutbox(ctx context.Context, limit int, leaseDuration time.Duration) ([]domain.OutboxMessage, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -196,7 +196,7 @@ RETURNING messages.message_id, messages.hazard_id, messages.correlation_id, mess
 	return messages, rows.Err()
 }
 
-func (s *Store) MarkOutboxPublished(ctx context.Context, id int64, leaseToken string) error {
+func (s *Repository) MarkOutboxPublished(ctx context.Context, id int64, leaseToken string) error {
 	result, err := s.pool.Exec(ctx, `UPDATE outbox_messages SET published_at = now(), lease_until = NULL, lease_token = NULL WHERE message_id = $1 AND published_at IS NULL AND lease_token = $2`, id, leaseToken)
 	if err != nil {
 		return err
@@ -207,7 +207,7 @@ func (s *Store) MarkOutboxPublished(ctx context.Context, id int64, leaseToken st
 	return nil
 }
 
-func (s *Store) ReleaseOutbox(ctx context.Context, id int64, leaseToken string, nextAttempt time.Time) error {
+func (s *Repository) ReleaseOutbox(ctx context.Context, id int64, leaseToken string, nextAttempt time.Time) error {
 	result, err := s.pool.Exec(ctx, `UPDATE outbox_messages SET available_at = $3, lease_until = NULL, lease_token = NULL WHERE message_id = $1 AND published_at IS NULL AND lease_token = $2`, id, leaseToken, nextAttempt)
 	if err != nil {
 		return err

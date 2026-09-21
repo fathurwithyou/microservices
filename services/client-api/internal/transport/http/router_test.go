@@ -15,7 +15,7 @@ import (
 )
 
 func TestMediaScopeCannotRequestRawHazards(t *testing.T) {
-	router := NewRouter(application.NewAPI(summaryAuth{}, unusedAggregator{}), 1, time.Second, slog.Default())
+	router := NewRouter(RouterConfig{API: application.NewAPI(summaryAuth{}, unusedAggregator{}), MaxInflight: 1, Timeout: time.Second, Logger: slog.Default()})
 	request := httptest.NewRequest(http.MethodGet, "/hazards?raw=true", nil)
 	request.Header.Set("Authorization", "Bearer media-token")
 	response := httptest.NewRecorder()

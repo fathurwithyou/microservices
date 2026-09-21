@@ -33,7 +33,7 @@ func main() {
 	api := application.NewAPI(clients.Auth, clients.Aggregator)
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           httptransport.NewRouter(api, cfg.MaxInflightRequests, cfg.RequestTimeout, logger),
+		Handler:           httptransport.NewRouter(httptransport.RouterConfig{API: api, MaxInflight: cfg.MaxInflightRequests, Timeout: cfg.RequestTimeout, Logger: logger}),
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

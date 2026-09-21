@@ -11,17 +11,27 @@ import (
 )
 
 type Poller struct {
-	store     Store
-	bmkg      ports.SourceClient
-	pvmbg     ports.SourceClient
-	interval  time.Duration
-	timeout   time.Duration
-	logger    *slog.Logger
-	volcanoes map[string]domain.VolcanoReference
+	repository Repository
+	bmkg       ports.SourceClient
+	pvmbg      ports.SourceClient
+	interval   time.Duration
+	timeout    time.Duration
+	logger     *slog.Logger
+	volcanoes  map[string]domain.VolcanoReference
 }
 
-func NewPoller(store Store, bmkg, pvmbg ports.SourceClient, interval, timeout time.Duration, logger *slog.Logger, volcanoes map[string]domain.VolcanoReference) *Poller {
-	return &Poller{store: store, bmkg: bmkg, pvmbg: pvmbg, interval: interval, timeout: timeout, logger: logger, volcanoes: cloneVolcanoes(volcanoes)}
+type PollerConfig struct {
+	Repository Repository
+	BMKG       ports.SourceClient
+	PVMBG      ports.SourceClient
+	Interval   time.Duration
+	Timeout    time.Duration
+	Logger     *slog.Logger
+	Volcanoes  map[string]domain.VolcanoReference
+}
+
+func NewPoller(cfg PollerConfig) *Poller {
+	return &Poller{repository: cfg.Repository, bmkg: cfg.BMKG, pvmbg: cfg.PVMBG, interval: cfg.Interval, timeout: cfg.Timeout, logger: cfg.Logger, volcanoes: cloneVolcanoes(cfg.Volcanoes)}
 }
 
 func (p *Poller) Run(ctx context.Context) {

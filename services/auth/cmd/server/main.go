@@ -34,12 +34,12 @@ func main() {
 		logger.Error("auth database migration failed", "service", "auth", "error", err)
 		os.Exit(1)
 	}
-	authStore := postgres.New(pool)
-	if err := authStore.EnsureClients(ctx, cfg.Clients); err != nil {
+	authRepository := postgres.NewRepository(pool)
+	if err := authRepository.EnsureClients(ctx, cfg.Clients); err != nil {
 		logger.Error("auth client persistence failed", "service", "auth", "error", err)
 		os.Exit(1)
 	}
-	manager := application.NewTokenManager(cfg.AccessTokenTTL, authStore)
+	manager := application.NewTokenManager(cfg.AccessTokenTTL, authRepository)
 
 	listener, err := net.Listen("tcp", ":"+cfg.GRPCPort)
 	if err != nil {

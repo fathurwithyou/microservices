@@ -12,7 +12,7 @@ import (
 
 	"github.com/fathurwithyou/microservices/services/pvmbg/internal/application"
 	"github.com/fathurwithyou/microservices/services/pvmbg/internal/config"
-	"github.com/fathurwithyou/microservices/services/pvmbg/internal/store"
+	"github.com/fathurwithyou/microservices/services/pvmbg/internal/state"
 	httptransport "github.com/fathurwithyou/microservices/services/pvmbg/internal/transport/http"
 )
 
@@ -24,11 +24,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	state := store.New(cfg.MinDelay, cfg.MaxDelay, cfg.SeedCount)
+	state := state.New(cfg.MinDelay, cfg.MaxDelay, cfg.SeedCount)
 	producer := application.NewReportProducer(state, cfg.NewReportInterval)
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           httptransport.NewRouter(state, cfg.Token, cfg.AdminKey, logger),
+		Handler:           httptransport.NewRouter(httptransport.RouterConfig{State: state, Token: cfg.Token, AdminKey: cfg.AdminKey, Logger: logger}),
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       5 * time.Second,
 		WriteTimeout:      10 * time.Second,

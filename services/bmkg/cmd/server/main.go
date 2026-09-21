@@ -12,7 +12,7 @@ import (
 
 	"github.com/fathurwithyou/microservices/services/bmkg/internal/application"
 	"github.com/fathurwithyou/microservices/services/bmkg/internal/config"
-	"github.com/fathurwithyou/microservices/services/bmkg/internal/store"
+	"github.com/fathurwithyou/microservices/services/bmkg/internal/state"
 	httptransport "github.com/fathurwithyou/microservices/services/bmkg/internal/transport/http"
 )
 
@@ -24,11 +24,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	data := store.New(cfg.SeedCount)
-	producer := application.NewEventProducer(data, cfg.NewEventInterval)
+	state := state.New(cfg.SeedCount)
+	producer := application.NewEventProducer(state, cfg.NewEventInterval)
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           httptransport.NewRouter(data, cfg.APIKey, cfg.ResponseDelay, logger),
+		Handler:           httptransport.NewRouter(httptransport.RouterConfig{State: state, APIKey: cfg.APIKey, ResponseDelay: cfg.ResponseDelay, Logger: logger}),
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       5 * time.Second,
 		WriteTimeout:      5 * time.Second,

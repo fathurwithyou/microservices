@@ -4,16 +4,16 @@ import (
 	"context"
 	"time"
 
-	"github.com/fathurwithyou/microservices/services/bmkg/internal/store"
+	"github.com/fathurwithyou/microservices/services/bmkg/internal/state"
 )
 
 type EventProducer struct {
-	store    *store.Memory
+	state    *state.Memory
 	interval time.Duration
 }
 
-func NewEventProducer(store *store.Memory, interval time.Duration) *EventProducer {
-	return &EventProducer{store: store, interval: interval}
+func NewEventProducer(state *state.Memory, interval time.Duration) *EventProducer {
+	return &EventProducer{state: state, interval: interval}
 }
 
 func (p *EventProducer) Run(ctx context.Context) {
@@ -22,7 +22,7 @@ func (p *EventProducer) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			p.store.AppendEvent()
+			p.state.AppendEvent()
 		case <-ctx.Done():
 			return
 		}

@@ -9,13 +9,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func NewRouter(api *application.API, maxInflight int, timeout time.Duration, logger *slog.Logger) *gin.Engine {
-	if maxInflight < 1 {
-		maxInflight = 1
+type RouterConfig struct {
+	API         *application.API
+	MaxInflight int
+	Timeout     time.Duration
+	Logger      *slog.Logger
+}
+
+func NewRouter(cfg RouterConfig) *gin.Engine {
+	if cfg.MaxInflight < 1 {
+		cfg.MaxInflight = 1
 	}
-	handler := handler{api: api, timeout: timeout}
+	handler := handler{api: cfg.API, timeout: cfg.Timeout}
 	router := gin.New()
-	router.Use(correlationMiddleware(), recoveryMiddleware(logger), requestLimitMiddleware(make(chan struct{}, maxInflight)), requestLogMiddleware(logger))
+	router.Use(correlationMiddleware(), recoveryMiddleware(cfg.Logger), requestLimitMiddleware(make(chan struct{}, cfg.MaxInflight)), requestLogMiddleware(cfg.Logger))
 	router.GET("/health", health)
 	router.POST("/auth/token", handler.issueToken)
 	router.POST("/auth/refresh", handler.refreshToken)
