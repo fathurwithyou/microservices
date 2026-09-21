@@ -6,7 +6,6 @@ import (
 	aggregatorpb "github.com/fathurwithyou/microservices/contracts/gen/go/aggregator"
 	eventspb "github.com/fathurwithyou/microservices/contracts/gen/go/events"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/hazards"
-	"github.com/fathurwithyou/microservices/services/aggregator/internal/ports"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -21,7 +20,7 @@ func newQueryHandler(queries *hazards.Queries) *queryHandler {
 }
 
 func (h *queryHandler) ListHazards(ctx context.Context, request *aggregatorpb.ListHazardsRequest) (*aggregatorpb.ListHazardsResponse, error) {
-	items, err := h.queries.List(ctx, ports.ListFilter{Source: sourceFromProto(request.GetSource()), HazardType: hazardTypeFromProto(request.GetHazardType()), Severity: severityFromProto(request.GetSeverity()), PageSize: int(request.GetPageSize()), PageToken: request.GetPageToken()})
+	items, err := h.queries.List(ctx, hazards.ListFilter{Source: sourceFromProto(request.GetSource()), HazardType: hazardTypeFromProto(request.GetHazardType()), Severity: severityFromProto(request.GetSeverity()), PageSize: int(request.GetPageSize()), PageToken: request.GetPageToken()})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

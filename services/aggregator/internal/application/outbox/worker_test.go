@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/adapters/memory"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
-	"github.com/fathurwithyou/microservices/services/aggregator/internal/store/memory"
 )
 
 type recordingPublisher struct {

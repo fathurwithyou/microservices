@@ -9,7 +9,7 @@ import (
 )
 
 type Worker struct {
-	store     ports.Store
+	store     Store
 	publisher ports.Publisher
 	interval  time.Duration
 	logger    *slog.Logger
@@ -22,7 +22,7 @@ const (
 	outboxRetryMaximum  = 30 * time.Second
 )
 
-func NewWorker(store ports.Store, publisher ports.Publisher, interval time.Duration, logger *slog.Logger) *Worker {
+func NewWorker(store Store, publisher ports.Publisher, interval time.Duration, logger *slog.Logger) *Worker {
 	return &Worker{store: store, publisher: publisher, interval: interval, logger: logger}
 }
 

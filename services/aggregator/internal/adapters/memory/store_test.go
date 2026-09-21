@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/hazards"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
-	"github.com/fathurwithyou/microservices/services/aggregator/internal/ports"
 )
 
 func TestStorePreventsDuplicateSourceRecord(t *testing.T) {
@@ -22,7 +22,7 @@ func TestStorePreventsDuplicateSourceRecord(t *testing.T) {
 	if err := store.PersistHazardAndEnqueue(context.Background(), event, message); err != nil {
 		t.Fatal(err)
 	}
-	items, err := store.ListHazards(context.Background(), ports.ListFilter{})
+	items, err := store.ListHazards(context.Background(), hazards.ListFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

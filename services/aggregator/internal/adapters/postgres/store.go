@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/hazards"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
-	"github.com/fathurwithyou/microservices/services/aggregator/internal/ports"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -70,7 +70,7 @@ func (s *Store) GetHazard(ctx context.Context, id string) (domain.HazardEvent, e
 	return scan(row)
 }
 
-func (s *Store) ListHazards(ctx context.Context, filter ports.ListFilter) ([]domain.HazardEvent, error) {
+func (s *Store) ListHazards(ctx context.Context, filter hazards.ListFilter) ([]domain.HazardEvent, error) {
 	query := `SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes FROM hazard_events WHERE 1=1`
 	args := make([]any, 0, 4)
 	if filter.Source != "" {

@@ -14,15 +14,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/adapters/memory"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/adapters/postgres"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/adapters/rabbitmq"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/adapters/sources"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/hazards"
+	applicationingest "github.com/fathurwithyou/microservices/services/aggregator/internal/application/ingest"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/outbox"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/config"
-	"github.com/fathurwithyou/microservices/services/aggregator/internal/ingest"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/ports"
-	"github.com/fathurwithyou/microservices/services/aggregator/internal/store/memory"
 	grpctransport "github.com/fathurwithyou/microservices/services/aggregator/internal/transport/grpc"
 	httptransport "github.com/fathurwithyou/microservices/services/aggregator/internal/transport/http"
 )
@@ -87,7 +88,7 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		return 1
 	}
 	defer publisher.Close()
-	poller := ingest.NewPoller(
+	poller := applicationingest.NewPoller(
 		store,
 		sources.New(cfg.BMKGURL, "bmkg", "X-BMKG-Key", cfg.BMKGKey, cfg.RequestTimeout, logger),
 		sources.New(cfg.PVMBGURL, "pvmbg", "Authorization", "Bearer "+cfg.PVMBGToken, cfg.RequestTimeout, logger),
@@ -234,7 +235,14 @@ func isMemoryDriver() bool {
 	return driver == "memory"
 }
 
-func newStore(ctx context.Context, cfg config.Config, wait time.Duration) (ports.Store, func(), error) {
+type applicationStore interface {
+	hazards.Repository
+	applicationingest.Store
+	outbox.Store
+	LoadVolcanoReferences(context.Context) (map[string]domain.VolcanoReference, error)
+}
+
+func newStore(ctx context.Context, cfg config.Config, wait time.Duration) (applicationStore, func(), error) {
 	switch strings.ToLower(cfg.StoreDriver) {
 	case "postgres":
 		if cfg.DatabaseURL == "" {

@@ -11,7 +11,7 @@ import (
 )
 
 type Poller struct {
-	store     ports.Store
+	store     Store
 	bmkg      ports.SourceClient
 	pvmbg     ports.SourceClient
 	interval  time.Duration
@@ -20,7 +20,7 @@ type Poller struct {
 	volcanoes map[string]domain.VolcanoReference
 }
 
-func NewPoller(store ports.Store, bmkg, pvmbg ports.SourceClient, interval, timeout time.Duration, logger *slog.Logger, volcanoes map[string]domain.VolcanoReference) *Poller {
+func NewPoller(store Store, bmkg, pvmbg ports.SourceClient, interval, timeout time.Duration, logger *slog.Logger, volcanoes map[string]domain.VolcanoReference) *Poller {
 	return &Poller{store: store, bmkg: bmkg, pvmbg: pvmbg, interval: interval, timeout: timeout, logger: logger, volcanoes: cloneVolcanoes(volcanoes)}
 }
 

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/hazards"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
-	"github.com/fathurwithyou/microservices/services/aggregator/internal/ports"
 	"github.com/google/uuid"
 )
 
@@ -77,7 +77,7 @@ func (s *Store) GetHazard(_ context.Context, id string) (domain.HazardEvent, err
 	return clone(event), nil
 }
 
-func (s *Store) ListHazards(_ context.Context, filter ports.ListFilter) ([]domain.HazardEvent, error) {
+func (s *Store) ListHazards(_ context.Context, filter hazards.ListFilter) ([]domain.HazardEvent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	items := make([]domain.HazardEvent, 0, len(s.events))
