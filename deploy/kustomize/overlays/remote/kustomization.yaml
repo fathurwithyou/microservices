@@ -30,3 +30,9 @@ images:
   - name: bnpb-m1/portal-consumer
     newName: ghcr.io/fathurwithyou/microservices/portal-consumer
     newTag: latest
+  - name: bnpb-m1/demo-api
+    newName: ghcr.io/fathurwithyou/microservices/demo-api
+    newTag: latest
+  - name: bnpb-m1/demo-console
+    newName: ghcr.io/fathurwithyou/microservices/demo-console
+    newTag: latest

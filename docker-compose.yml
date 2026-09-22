@@ -146,5 +146,37 @@ services:
       timeout: 2s
       retries: 10
 
+  demo-api:
+    profiles: [demo]
+    build: { context: ., dockerfile: services/demo-api/Dockerfile }
+    environment:
+      DEMO_API_PORT: 8086
+      PVMBG_URL: ${PVMBG_URL:-http://pvmbg:8082}
+      BMKG_URL: ${BMKG_URL:-http://bmkg:8081}
+      PVMBG_ADMIN_KEY: ${PVMBG_ADMIN_KEY:?set PVMBG_ADMIN_KEY}
+      PVMBG_TOKEN: ${PVMBG_TOKEN:?set PVMBG_TOKEN}
+      BMKG_API_KEY: ${BMKG_API_KEY:?set BMKG_API_KEY}
+      RABBITMQ_USER: ${RABBITMQ_USER:?set RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD}
+      RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL:-http://rabbitmq:15672}
+      ARTIFACTS_DIR: /artifacts
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-5s}
+    volumes:
+      - ./artifacts:/artifacts:ro
+    depends_on:
+      client-api: { condition: service_started }
+      rabbitmq: { condition: service_healthy }
+      pvmbg: { condition: service_started }
+      bmkg: { condition: service_started }
+    ports: ["${DEMO_API_HOST_PORT:-8086}:8086"]
+
+  demo-console:
+    profiles: [demo]
+    build: { context: ., dockerfile: apps/demo-console/Dockerfile }
+    depends_on:
+      demo-api: { condition: service_started }
+      client-api: { condition: service_started }
+    ports: ["${DEMO_CONSOLE_HOST_PORT:-3000}:8080"]
+
 volumes:
   postgres-data:

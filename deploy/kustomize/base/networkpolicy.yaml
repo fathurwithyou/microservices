@@ -21,3 +21,6 @@ spec:
         - { podSelector: { matchLabels: { app: aggregator } } }
         - { podSelector: { matchLabels: { app: consumer } } }
       ports: [{ protocol: TCP, port: 5672 }]
+    - from:
+        - { podSelector: { matchLabels: { app: demo-api } } }
+      ports: [{ protocol: TCP, port: 15672 }]

@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: Service
+metadata: { name: dashboard-consumer }
+spec: { selector: { consumer: dashboard }, ports: [{ name: health, port: 8083, targetPort: health }] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: notifier-consumer }
+spec: { selector: { consumer: notifier }, ports: [{ name: health, port: 8084, targetPort: health }] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: portal-consumer }
+spec: { selector: { consumer: portal }, ports: [{ name: health, port: 8085, targetPort: health }] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: demo-api }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: demo-api } }
+  template:
+    metadata: { labels: { app: demo-api } }
+    spec:
+      serviceAccountName: demo-api
+      containers:
+        - name: demo-api
+          image: bnpb-m1/demo-api:local
+          ports: [{ name: http, containerPort: 8086 }]
+          envFrom: [{ configMapRef: { name: bnpb-config } }]
+          env:
+            - { name: DEMO_API_PORT, value: "8086" }
+            - { name: PVMBG_ADMIN_KEY, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: PVMBG_ADMIN_KEY } } }
+            - { name: PVMBG_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: PVMBG_TOKEN } } }
+            - { name: BMKG_API_KEY, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: BMKG_API_KEY } } }
+            - { name: RABBITMQ_USER, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: RABBITMQ_USER } } }
+            - { name: RABBITMQ_PASSWORD, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: RABBITMQ_PASSWORD } } }
+            - { name: RABBITMQ_MANAGEMENT_URL, value: http://rabbitmq:15672 }
+            - { name: ARTIFACTS_DIR, value: /artifacts }
+          volumeMounts:
+            - { name: artifacts, mountPath: /artifacts, readOnly: true }
+          readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 2 }
+          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+      volumes:
+        - name: artifacts
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata: { name: demo-api }
+spec: { selector: { app: demo-api }, ports: [{ name: http, port: 8086, targetPort: http }] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: demo-console }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: demo-console } }
+  template:
+    metadata: { labels: { app: demo-console } }
+    spec:
+      containers:
+        - name: demo-console
+          image: bnpb-m1/demo-console:local
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /, port: http }, initialDelaySeconds: 2 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: demo-console }
+spec: { selector: { app: demo-console }, ports: [{ name: http, port: 80, targetPort: http }] }

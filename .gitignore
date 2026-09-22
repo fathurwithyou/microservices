@@ -53,9 +53,10 @@ k3d-image-import-*
 *.swp
 *.swo
 
-# Documentation: keep README files, exclude plans/assignment notes from commits.
+# Documentation: keep README and docs, exclude other notes.
 *.md
 !README.md
+!docs/*.md
 
 # Makefile derived
 .make/
@@ -70,6 +71,17 @@ swagger.json
 
 # k6 load test data
 k6-*
+
+# Demo console
+apps/demo-console/node_modules/
+apps/demo-console/dist/
+apps/demo-console/test-results/
+apps/demo-console/playwright-report/
+apps/demo-console/playwright/.cache/
+apps/demo-console/blob-report/
+
+# Generated demo/test evidence (keep directory)
+artifacts/*.json
 
 # Docker volumes and data
 pgdata/

@@ -19,6 +19,7 @@ type environment struct {
 	pvmbgAdminKey   string
 	mediaSecret     string
 	fieldTeamSecret string
+	bnpbOpsSecret   string
 }
 
 type tokenPair struct {
@@ -66,6 +67,16 @@ func TestP3IndependentCredentialsAndRefreshRotation(t *testing.T) {
 
 	mediaToken := issueToken(t, env, "media-client", env.mediaSecret)
 	get(t, env.apiBaseURL+"/hazards?raw=true", map[string]string{"Authorization": "Bearer " + mediaToken.AccessToken}, http.StatusForbidden)
+	summary := get(t, env.apiBaseURL+"/hazards", map[string]string{"Authorization": "Bearer " + mediaToken.AccessToken}, http.StatusOK)
+	if leakedRawFields(summary) {
+		t.Fatal("media summary payload leaked raw fields")
+	}
+
+	opsToken := issueToken(t, env, "bnpb-ops-client", env.bnpbOpsSecret)
+	raw := getJSON(t, env.apiBaseURL+"/hazards?raw=true&page_size=1", opsToken.AccessToken, http.StatusOK)
+	if !containsRawShape(raw) {
+		t.Fatal("bnpb-ops raw payload must include coordinates or attributes")
+	}
 
 	fieldToken := issueToken(t, env, "field-team-client", env.fieldTeamSecret)
 	time.Sleep(3 * time.Second)
@@ -91,6 +102,7 @@ func loadEnvironment(t *testing.T) environment {
 		pvmbgAdminKey:   requiredEnvironment(t, "PVMBG_ADMIN_KEY"),
 		mediaSecret:     requiredEnvironment(t, "MEDIA_CLIENT_SECRET"),
 		fieldTeamSecret: requiredEnvironment(t, "FIELD_TEAM_CLIENT_SECRET"),
+		bnpbOpsSecret:    requiredEnvironment(t, "BNPB_OPS_CLIENT_SECRET"),
 	}
 }
 
@@ -205,6 +217,52 @@ func containsAttribute(response map[string]any, name string) bool {
 		}
 		attributes, ok := hazard["attributes"].(map[string]any)
 		if ok && attributes[name] != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func leakedRawFields(response map[string]any) bool {
+	hazards, ok := response["hazards"].([]any)
+	if !ok {
+		return false
+	}
+	for _, value := range hazards {
+		hazard, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, exists := hazard["latitude"]; exists {
+			return true
+		}
+		if _, exists := hazard["longitude"]; exists {
+			return true
+		}
+		if _, exists := hazard["attributes"]; exists {
+			return true
+		}
+		if _, exists := hazard["source_ref_id"]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func containsRawShape(response map[string]any) bool {
+	hazards, ok := response["hazards"].([]any)
+	if !ok {
+		return false
+	}
+	for _, value := range hazards {
+		hazard, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, exists := hazard["latitude"]; exists {
+			return true
+		}
+		if _, exists := hazard["attributes"]; exists {
 			return true
 		}
 	}

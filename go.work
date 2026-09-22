@@ -10,4 +10,5 @@ use (
 	./services/dashboard-consumer
 	./services/notifier-consumer
 	./services/portal-consumer
+	./services/demo-api
 )

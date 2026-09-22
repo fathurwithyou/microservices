@@ -11,7 +11,7 @@ make k3d-up
 make k3d-deploy
 ```
 
-`k3d-deploy` builds and imports all application images, including `portal-consumer`. The local overlay exposes Client API through `localhost:8080` using NodePort `30080`, waits for PostgreSQL and all Deployments, and creates `bnpb-secrets` from `K3S_ENV_FILE` (default `.env`).
+`k3d-deploy` builds and imports all application images, including `portal-consumer`, `demo-api`, and `demo-console`. The local overlay exposes Client API through `localhost:8080` using NodePort `30080`, waits for PostgreSQL and all Deployments, and creates `bnpb-secrets` from `K3S_ENV_FILE` (default `.env`). Demo Console is in-cluster; port-forward `svc/demo-console` when you need the UI on K3d.
 
 Only stateless workloads are intended to scale manually in M1:
 
@@ -26,7 +26,7 @@ PostgreSQL is a single persistent StatefulSet. Its PVC keeps `aggregator_db` acr
 
 RabbitMQ also uses a PVC so durable queues and persistent messages survive a pod restart. No database or broker port is exposed outside the cluster.
 
-For a remote K3s cluster, publish the eight application images below a common registry prefix, then run:
+For a remote K3s cluster, publish the application images (including demo-api and demo-console) below a common registry prefix, then run:
 
 ```sh
 IMAGE_REGISTRY=ghcr.io/your-org K3S_ENV_FILE=.env make k3s-deploy

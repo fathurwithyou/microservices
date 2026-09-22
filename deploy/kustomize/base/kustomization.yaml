@@ -8,4 +8,5 @@ resources:
   - postgres-bootstrap.yaml
   - persistentvolumeclaims.yaml
   - workloads.yaml
+  - demo.yaml
   - networkpolicy.yaml

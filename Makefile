@@ -1,4 +1,4 @@
-.PHONY: help tools generate test lint build compose-up compose-down k3d-up k3d-deploy k3d-scale k3d-down k3s-deploy test-contract test-integration test-e2e test-load migrate-up migrate-down migrate-status seed
+.PHONY: help tools generate test lint build compose-up compose-down k3d-up k3d-deploy k3d-scale k3d-down k3s-deploy test-contract test-integration test-e2e test-load test-load-isolation frontend-test demo-up test-demo-e2e migrate-up migrate-down migrate-status seed
 
 K3D_CLUSTER ?= bnpb-m1
 K3D_HOST_PORT ?= 8080
@@ -6,8 +6,8 @@ K3D_IMAGE_PREFIX ?= bnpb-m1
 K3S_NAMESPACE ?= bnpb-m1
 K3S_ENV_FILE ?= .env
 IMAGE_REGISTRY ?= ghcr.io/fathurwithyou
-K3D_SERVICES := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer
-K3D_DEPLOYMENTS := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer rabbitmq
+K3D_SERVICES := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer demo-api
+K3D_DEPLOYMENTS := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer rabbitmq demo-api demo-console
 K3D_SCALABLE_DEPLOYMENTS := client-api auth dashboard-consumer notifier-consumer portal-consumer
 
 help:
@@ -24,12 +24,12 @@ generate: tools ## Generate protobuf Go code; requires protoc and Go protobuf pl
 
 test: ## Run all Go unit tests
 	@go test ./contracts/...
-	@for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer; do (cd $$module && go test ./...); done
+	@for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/demo-api; do (cd $$module && go test ./...); done
 
 lint: ## Run gofmt, vet, and optional staticcheck
 	@gofmt -w $$(find contracts services -name '*.go')
-	@set -e; go vet ./contracts/...; for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer; do (cd $$module && go vet ./...); done
-	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./contracts/...; for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer; do (cd $$module && staticcheck ./...); done; fi
+	@set -e; go vet ./contracts/...; for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/demo-api; do (cd $$module && go vet ./...); done
+	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./contracts/...; for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/demo-api; do (cd $$module && staticcheck ./...); done; fi
 
 build: generate ## Build every service binary
 	@mkdir -p bin
@@ -41,6 +41,7 @@ build: generate ## Build every service binary
 	@go build -o bin/dashboard-consumer ./services/dashboard-consumer/cmd/server
 	@go build -o bin/notifier-consumer ./services/notifier-consumer/cmd/server
 	@go build -o bin/portal-consumer ./services/portal-consumer/cmd/server
+	@go build -o bin/demo-api ./services/demo-api/cmd/server
 
 compose-up: ## Start all local containers; use COMPOSE_ENV_FILE to select an env file
 	@docker compose --env-file $${COMPOSE_ENV_FILE:-.env} up --build
@@ -60,7 +61,8 @@ k3d-deploy: k3d-up ## Build local images and apply the Kustomize local overlay
 	@kubectl create namespace $(K3S_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl -n $(K3S_NAMESPACE) create secret generic bnpb-secrets --from-env-file=$(K3S_ENV_FILE) --dry-run=client -o yaml | kubectl apply -f -
 	@for service in $(K3D_SERVICES); do docker build -t $(K3D_IMAGE_PREFIX)/$$service:local -f services/$$service/Dockerfile .; done
-	@k3d image import -c $(K3D_CLUSTER) $(foreach service,$(K3D_SERVICES),$(K3D_IMAGE_PREFIX)/$(service):local)
+	@docker build -t $(K3D_IMAGE_PREFIX)/demo-console:local -f apps/demo-console/Dockerfile .
+	@k3d image import -c $(K3D_CLUSTER) $(foreach service,$(K3D_SERVICES),$(K3D_IMAGE_PREFIX)/$(service):local) $(K3D_IMAGE_PREFIX)/demo-console:local
 	@kubectl apply -k deploy/kustomize/overlays/local
 	@kubectl -n $(K3S_NAMESPACE) rollout status statefulset/postgres --timeout=180s
 	@for deployment in $(K3D_DEPLOYMENTS); do kubectl -n $(K3S_NAMESPACE) rollout restart deployment/$$deployment; done
@@ -96,7 +98,22 @@ test-e2e: ## Build an isolated Compose stack and run P1-P5 end-to-end checks
 	@./scripts/test-e2e.sh
 
 test-load: ## Run authenticated k6 load test; BASE_URL and FIELD_TEAM_CLIENT_SECRET are required
-	@k6 run -e BASE_URL=$${BASE_URL:-http://localhost:8080} -e FIELD_TEAM_CLIENT_SECRET=$${FIELD_TEAM_CLIENT_SECRET:?set FIELD_TEAM_CLIENT_SECRET} tests/load/k6/sustained.js
+	@mkdir -p artifacts
+	@k6 run -e BASE_URL=$${BASE_URL:-http://localhost:8080} -e FIELD_TEAM_CLIENT_SECRET=$${FIELD_TEAM_CLIENT_SECRET:?set FIELD_TEAM_CLIENT_SECRET} -e K6_SUMMARY_PATH=$${K6_SUMMARY_PATH:-artifacts/p2-sustained.json} tests/load/k6/sustained.js
+
+test-load-isolation: ## Concurrent BMKG-only vs PVMBG load; set PVMBG_MAX_DELAY=3s before compose-up
+	@mkdir -p artifacts
+	@k6 run -e BASE_URL=$${BASE_URL:-http://localhost:8080} -e FIELD_TEAM_CLIENT_SECRET=$${FIELD_TEAM_CLIENT_SECRET:?set FIELD_TEAM_CLIENT_SECRET} -e K6_SUMMARY_PATH=$${K6_SUMMARY_PATH:-artifacts/p2-isolation.json} tests/load/k6/isolation.js
+
+frontend-test: ## Run Demo Console unit tests
+	@cd apps/demo-console && npm test
+
+demo-up: ## Start the stack including demo-api, demo-console, and portal consumer
+	@docker compose --env-file $${COMPOSE_ENV_FILE:-.env} --profile demo --profile portal up --build
+
+test-demo-e2e: ## Playwright smoke against DEMO_CONSOLE_URL (default http://127.0.0.1:3000)
+	@cd apps/demo-console && npx playwright test
+
 
 migrate-up: ## Apply pending aggregator migrations via one-shot container
 	@docker compose --env-file $${COMPOSE_ENV_FILE:-.env} run --rm aggregator migrate up
