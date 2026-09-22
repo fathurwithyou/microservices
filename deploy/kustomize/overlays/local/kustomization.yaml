@@ -41,3 +41,9 @@ images:
   - name: bnpb-m1/portal-consumer
     newName: bnpb-m1/portal-consumer
     newTag: local
+  - name: bnpb-m1/demo-api
+    newName: bnpb-m1/demo-api
+    newTag: local
+  - name: bnpb-m1/demo-console
+    newName: bnpb-m1/demo-console
+    newTag: local
