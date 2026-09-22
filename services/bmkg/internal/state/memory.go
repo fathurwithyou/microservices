@@ -1,12 +1,12 @@
 package state
 
 import (
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/fathurwithyou/microservices/services/bmkg/internal/domain"
 	"github.com/fathurwithyou/microservices/services/bmkg/internal/seed"
+	"github.com/google/uuid"
 )
 
 type Memory struct {
@@ -26,7 +26,7 @@ func (s *Memory) AppendEvent() {
 
 	now := time.Now().UTC()
 	s.events = append(s.events, domain.SeismicEvent{
-		EventID: "bmkg-seismic-" + strconv.Itoa(len(s.events)+1), Magnitude: 5.1, DepthKM: 12,
+		EventID: "bmkg-seismic-" + uuid.NewString(), Magnitude: 5.1, DepthKM: 12,
 		EpicenterLat: -7.1, EpicenterLon: 107.6, RegionName: "Jawa Barat",
 		OccurredAt: now.Format(time.RFC3339), PotentialTsunami: true,
 	})

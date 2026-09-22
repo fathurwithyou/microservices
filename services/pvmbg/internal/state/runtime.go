@@ -2,12 +2,12 @@ package state
 
 import (
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/fathurwithyou/microservices/services/pvmbg/internal/domain"
 	"github.com/fathurwithyou/microservices/services/pvmbg/internal/seed"
+	"github.com/google/uuid"
 )
 
 type Runtime struct {
@@ -29,7 +29,7 @@ func (r *Runtime) AppendReport() {
 
 	now := time.Now().UTC()
 	r.reports = append(r.reports, domain.VolcanicReport{
-		"report_id":           "pvmbg-report-" + strconv.Itoa(len(r.reports)+1),
+		"report_id":           "pvmbg-report-" + uuid.NewString(),
 		"volcano_id":          "merapi",
 		"alert_level":         "Waspada",
 		"eruption_count_24h":  1,
