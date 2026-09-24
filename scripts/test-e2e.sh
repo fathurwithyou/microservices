@@ -13,12 +13,24 @@ secret() {
 }
 
 project_name="m1e2e$(openssl rand -hex 4)"
-bmkg_host_port=18081
-pvmbg_host_port=18082
-aggregator_http_host_port=18090
-aggregator_grpc_host_port=19090
-auth_grpc_host_port=19091
-client_api_host_port=18080
+set -- $(python3 - <<'PY'
+import socket
+sockets = []
+for _ in range(6):
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sockets.append(sock)
+print(" ".join(str(sock.getsockname()[1]) for sock in sockets))
+for sock in sockets:
+    sock.close()
+PY
+)
+bmkg_host_port=${E2E_BMKG_HOST_PORT:-$1}
+pvmbg_host_port=${E2E_PVMBG_HOST_PORT:-$2}
+aggregator_http_host_port=${E2E_AGGREGATOR_HTTP_HOST_PORT:-$3}
+aggregator_grpc_host_port=${E2E_AGGREGATOR_GRPC_HOST_PORT:-$4}
+auth_grpc_host_port=${E2E_AUTH_GRPC_HOST_PORT:-$5}
+client_api_host_port=${E2E_CLIENT_API_HOST_PORT:-$6}
 aggregator_db_password=$(secret)
 auth_db_password=$(secret)
 postgres_admin_password=$(secret)
@@ -55,7 +67,7 @@ NEW_EVENT_INTERVAL=1s
 BMKG_DELAY=50ms
 PVMBG_MIN_DELAY=10ms
 PVMBG_MAX_DELAY=10ms
-ACCESS_TOKEN_TTL=2s
+ACCESS_TOKEN_TTL=${E2E_ACCESS_TOKEN_TTL:-2s}
 MAX_INFLIGHT_REQUESTS=64
 REQUEST_TIMEOUT=2s
 STORE_DRIVER=postgres
@@ -128,19 +140,31 @@ Path(r"$artifact_dir/p3-auth.json").write_text(json.dumps({
     "media raw=true returns 403",
     "media summary omits latitude/longitude/attributes",
     "bnpb-ops raw payload includes raw fields",
-    "field-team access token expires and refresh rotates"
+    "field-team access token expires after the configured TTL and refresh rotates"
   ],
+  "access_token_ttl": "$ACCESS_TOKEN_TTL",
   "pass": True
 }, indent=2), encoding="utf-8")
 PY
 
 before_schema=$(compose exec -T postgres psql -U aggregator -d aggregator_db -Atc "SELECT count(*) FROM hazard_events WHERE source = 'PVMBG' AND NOT (attributes ? 'confidence_level')")
 after_schema=$(compose exec -T postgres psql -U aggregator -d aggregator_db -Atc "SELECT count(*) FROM hazard_events WHERE source = 'PVMBG' AND attributes ? 'confidence_level'")
+bmkg_records=$(compose exec -T postgres psql -U aggregator -d aggregator_db -Atc "SELECT count(*) FROM hazard_events WHERE source = 'BMKG'")
+pvmbg_records=$(compose exec -T postgres psql -U aggregator -d aggregator_db -Atc "SELECT count(*) FROM hazard_events WHERE source = 'PVMBG'")
 [ "$before_schema" -gt 0 ]
 [ "$after_schema" -gt 0 ]
+[ "$bmkg_records" -gt 0 ]
+[ "$pvmbg_records" -gt 0 ]
 python3 - <<PY
 import json
 from pathlib import Path
+Path(r"$artifact_dir/p1-canonical-mapping.json").write_text(json.dumps({
+  "problem": "P1",
+  "go_test": "TestP1CanonicalMappingForBothSources",
+  "bmkg_hazard_events": int("$bmkg_records"),
+  "pvmbg_hazard_events": int("$pvmbg_records"),
+  "pass": True
+}, indent=2), encoding="utf-8")
 Path(r"$artifact_dir/p1-schema-evolution.json").write_text(json.dumps({
   "problem": "P1",
   "before_without_confidence_level": int("$before_schema"),
@@ -178,6 +202,37 @@ Path(r"$artifact_dir/p4-independent-rebuild.json").write_text(json.dumps({
   "aggregator_container_id_unchanged": True,
   "client_api_container_id_unchanged": True,
   "bmkg_query_after_rebuild": "200",
+  "pass": True
+}, indent=2), encoding="utf-8")
+PY
+
+if compose exec -T aggregator sh -c 'test -n "${AGGREGATOR_DATABASE_URL:-}"'; then
+  aggregator_has_canonical_store=true
+else
+  aggregator_has_canonical_store=false
+fi
+if compose exec -T client-api sh -c 'test -n "${AGGREGATOR_DATABASE_URL:-}"'; then
+  client_api_has_canonical_store=true
+else
+  client_api_has_canonical_store=false
+fi
+if compose exec -T auth sh -c 'test -n "${AGGREGATOR_DATABASE_URL:-}"'; then
+  auth_has_canonical_store=true
+else
+  auth_has_canonical_store=false
+fi
+[ "$aggregator_has_canonical_store" = true ]
+[ "$client_api_has_canonical_store" = false ]
+[ "$auth_has_canonical_store" = false ]
+python3 - <<PY
+import json
+from pathlib import Path
+Path(r"$artifact_dir/p4-storage-ownership.json").write_text(json.dumps({
+  "problem": "P4",
+  "criterion": "only Aggregator receives the Canonical Store database URL",
+  "aggregator_has_canonical_store_url": "$aggregator_has_canonical_store" == "true",
+  "client_api_has_canonical_store_url": "$client_api_has_canonical_store" == "true",
+  "auth_has_canonical_store_url": "$auth_has_canonical_store" == "true",
   "pass": True
 }, indent=2), encoding="utf-8")
 PY
@@ -234,7 +289,8 @@ Path(r"$artifact_dir/p5-fanout.json").write_text(json.dumps({
   "dashboard_processed_during_outage": True,
   "notifier_processed_after_restart": True,
   "delivery": "at-least-once via durable queue + manual ack",
-  "consumer_idempotent": True,
+  "consumer_deduplication": "in-memory by hazard_id within one process",
+  "durable_deduplication_across_restart": False,
   "pass": True
 }, indent=2), encoding="utf-8")
 PY
