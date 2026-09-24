@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -36,6 +37,67 @@ func TestP1SchemaEvolutionKeepsPVMBGHazardsValid(t *testing.T) {
 		response := getJSON(t, env.apiBaseURL+"/hazards?source=PVMBG&raw=true", fieldToken.AccessToken, http.StatusOK)
 		return containsAttribute(response, "confidence_level")
 	})
+}
+
+func TestP1CanonicalMappingForBothSources(t *testing.T) {
+	env := loadEnvironment(t)
+
+	eventually(t, 10*time.Second, func() bool {
+		fieldToken := issueToken(t, env, "field-team-client", env.fieldTeamSecret)
+		bmkg := getJSON(t, env.apiBaseURL+"/hazards?source=BMKG&raw=true&page_size=50", fieldToken.AccessToken, http.StatusOK)
+		pvmbg := getJSON(t, env.apiBaseURL+"/hazards?source=PVMBG&raw=true&page_size=50", fieldToken.AccessToken, http.StatusOK)
+		return containsCanonicalMapping(bmkg, "SOURCE_BMKG", "HAZARD_TYPE_SEISMIC", "magnitude", "depth_km", "potential_tsunami") &&
+			containsCanonicalMapping(pvmbg, "SOURCE_PVMBG", "HAZARD_TYPE_VOLCANIC", "eruption_count_24h", "ash_column_height_m")
+	})
+}
+
+func containsCanonicalMapping(response map[string]any, source, hazardType string, requiredAttributes ...string) bool {
+	hazards, ok := response["hazards"].([]any)
+	if !ok {
+		return false
+	}
+	for _, value := range hazards {
+		hazard, ok := value.(map[string]any)
+		if !ok || hazard["source"] != source || hazard["hazard_type"] != hazardType {
+			continue
+		}
+		validCanonicalFields := true
+		for _, key := range []string{"hazard_id", "source_ref_id", "area_name", "occurred_at", "ingested_at"} {
+			field, ok := hazard[key].(string)
+			if !ok || strings.TrimSpace(field) == "" {
+				validCanonicalFields = false
+				break
+			}
+		}
+		if !validCanonicalFields {
+			continue
+		}
+		severity, ok := hazard["severity"].(string)
+		if !ok || !strings.HasPrefix(severity, "SEVERITY_") || severity == "SEVERITY_UNSPECIFIED" {
+			continue
+		}
+		if _, ok := hazard["latitude"]; !ok {
+			continue
+		}
+		if _, ok := hazard["longitude"]; !ok {
+			continue
+		}
+		attributes, ok := hazard["attributes"].(map[string]any)
+		if !ok {
+			continue
+		}
+		allAttributesPresent := true
+		for _, key := range requiredAttributes {
+			if _, ok := attributes[key]; !ok {
+				allAttributesPresent = false
+				break
+			}
+		}
+		if allAttributesPresent {
+			return true
+		}
+	}
+	return false
 }
 
 func TestP2PVMBGOutageKeepsBMKGAvailable(t *testing.T) {
@@ -79,7 +141,11 @@ func TestP3IndependentCredentialsAndRefreshRotation(t *testing.T) {
 	}
 
 	fieldToken := issueToken(t, env, "field-team-client", env.fieldTeamSecret)
-	time.Sleep(3 * time.Second)
+	accessTokenTTL, err := time.ParseDuration(requiredEnvironment(t, "ACCESS_TOKEN_TTL"))
+	if err != nil {
+		t.Fatalf("parse ACCESS_TOKEN_TTL: %v", err)
+	}
+	time.Sleep(accessTokenTTL + 100*time.Millisecond)
 	get(t, env.apiBaseURL+"/hazards", map[string]string{"Authorization": "Bearer " + fieldToken.AccessToken}, http.StatusUnauthorized)
 	rotated := refreshToken(t, env, fieldToken.RefreshToken, http.StatusOK)
 	if rotated.AccessToken == "" || rotated.RefreshToken == "" || rotated.RefreshToken == fieldToken.RefreshToken {
@@ -102,7 +168,7 @@ func loadEnvironment(t *testing.T) environment {
 		pvmbgAdminKey:   requiredEnvironment(t, "PVMBG_ADMIN_KEY"),
 		mediaSecret:     requiredEnvironment(t, "MEDIA_CLIENT_SECRET"),
 		fieldTeamSecret: requiredEnvironment(t, "FIELD_TEAM_CLIENT_SECRET"),
-		bnpbOpsSecret:    requiredEnvironment(t, "BNPB_OPS_CLIENT_SECRET"),
+		bnpbOpsSecret:   requiredEnvironment(t, "BNPB_OPS_CLIENT_SECRET"),
 	}
 }
 

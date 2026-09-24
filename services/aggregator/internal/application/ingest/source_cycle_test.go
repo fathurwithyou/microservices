@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -11,6 +12,21 @@ import (
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/adapters/memory"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 )
+
+func TestWarningsByEventIDCorrelatesUsingRelatedEventID(t *testing.T) {
+	warning := map[string]json.RawMessage{
+		"warning_id":       json.RawMessage(`"warning-1"`),
+		"related_event_id": json.RawMessage(`"event-1"`),
+	}
+
+	warnings := warningsByEventID([]map[string]json.RawMessage{warning})
+	if warnings["event-1"]["warning_id"] == nil {
+		t.Fatalf("warning was not indexed by related event ID: %#v", warnings)
+	}
+	if _, indexedByWarningID := warnings["warning-1"]; indexedByWarningID {
+		t.Fatal("warning was indexed by warning ID instead of related event ID")
+	}
+}
 
 type observingRepository struct {
 	*memory.Repository
