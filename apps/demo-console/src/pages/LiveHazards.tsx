@@ -28,7 +28,7 @@ export default function LiveHazards() {
       raw,
       pageSize: 50,
     });
-    const first = response.data?.hazards[0];
+    const first = response.data?.hazards?.[0];
     const assertion = response.status === 403
       ? { ok: true, expected: "Media raw request rejected with 403", actual: `HTTP ${response.status}` }
       : response.ok && response.data
