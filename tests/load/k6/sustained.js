@@ -7,6 +7,7 @@ const unexpectedErrors = new Rate('unexpected_errors');
 const bmkgLatency = new Trend('bmkg_only_latency', true);
 
 export const options = {
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(50)', 'p(95)', 'p(99)'],
   scenarios: { sustained: { executor: 'constant-vus', vus: 50, duration: '60s' } },
   thresholds: {
     unexpected_errors: ['rate<0.01'],

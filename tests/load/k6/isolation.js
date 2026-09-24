@@ -8,6 +8,7 @@ const bmkgLatency = new Trend('bmkg_only_latency', true);
 const pvmbgLatency = new Trend('pvmbg_latency', true);
 
 export const options = {
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(50)', 'p(95)', 'p(99)'],
   scenarios: {
     bmkg_only: { executor: 'constant-vus', vus: 25, duration: '30s', exec: 'bmkgOnly' },
     pvmbg: { executor: 'constant-vus', vus: 25, duration: '30s', exec: 'pvmbgTraffic' },
