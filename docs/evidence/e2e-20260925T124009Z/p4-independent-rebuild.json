@@ -1,0 +1,11 @@
+{
+  "problem": "P4",
+  "operation": "compose up --no-deps --build pvmbg",
+  "pvmbg_container_id_before": "b35925c4cddfd15be5508548ea29b818397913c3b7de8bb4c21976bf5e615519",
+  "pvmbg_container_id_after": "86cecb7978f8f4cee8e07a03014763d569d4736e27b522dffc277b80a382c38b",
+  "aggregator_container_id_before": "a041fba24f5c4f2b16516a48b668de124d926be8cad57fc87b673c3a582ee205",
+  "aggregator_container_id_after": "a041fba24f5c4f2b16516a48b668de124d926be8cad57fc87b673c3a582ee205",
+  "client_api_container_id_before": "571b6e639d1a640dbe0920da36a6bffea0073f96a62dd39f25808d6c9eea2a9f",
+  "client_api_container_id_after": "571b6e639d1a640dbe0920da36a6bffea0073f96a62dd39f25808d6c9eea2a9f",
+  "bmkg_query_http_status_after_rebuild": 200
+}

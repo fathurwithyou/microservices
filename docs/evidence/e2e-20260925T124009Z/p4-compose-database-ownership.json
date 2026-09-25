@@ -1,0 +1,14 @@
+{
+  "problem": "P4",
+  "canonical_database_url_assigned": {
+    "aggregator": true,
+    "migrate": true,
+    "client-api": false,
+    "auth": false,
+    "bmkg": false,
+    "pvmbg": false,
+    "dashboard-consumer": false,
+    "notifier-consumer": false,
+    "portal-consumer": false
+  }
+}

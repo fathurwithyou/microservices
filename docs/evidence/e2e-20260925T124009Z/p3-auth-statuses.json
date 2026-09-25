@@ -1,0 +1,54 @@
+{
+  "access_token_ttl": "1m0s",
+  "bnpb_ops_raw_fields_present": true,
+  "elapsed_since_field_token_issue_ms": 60123,
+  "media_summary_contains_raw_fields": false,
+  "problem": "P3",
+  "refresh_pair_rotated": true,
+  "status_sequence": [
+    {
+      "step": "PVMBG credential presented to BMKG",
+      "status_code": 401
+    },
+    {
+      "step": "BMKG credential presented to PVMBG",
+      "status_code": 401
+    },
+    {
+      "step": "issue Media token",
+      "status_code": 200
+    },
+    {
+      "step": "Media requests raw hazards",
+      "status_code": 403
+    },
+    {
+      "step": "Media reads summary hazards",
+      "status_code": 200
+    },
+    {
+      "step": "issue BNPB Ops token",
+      "status_code": 200
+    },
+    {
+      "step": "BNPB Ops reads raw hazards",
+      "status_code": 200
+    },
+    {
+      "step": "issue Field Team token",
+      "status_code": 200
+    },
+    {
+      "step": "expired Field Team access token",
+      "status_code": 401
+    },
+    {
+      "step": "refresh Field Team token",
+      "status_code": 200
+    },
+    {
+      "step": "reuse rotated Field Team refresh token",
+      "status_code": 401
+    }
+  ]
+}

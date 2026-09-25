@@ -1,0 +1,12 @@
+{
+  "problem": "P2",
+  "label": "P2.2 sustained 50 VU / 60s BMKG-only",
+  "duration_s": 60.164311000000005,
+  "http_reqs": 28211,
+  "throughput_rps": 468.8992449360884,
+  "p50_ms": 4.888,
+  "p95_ms": 13.97,
+  "p99_ms": 19.915379999999995,
+  "error_rate": 0,
+  "controlled_rejections": 0
+}

@@ -1,0 +1,45 @@
+\begin{tikzpicture}[
+  >=Latex,
+  card/.style={draw=metafg!45,rounded corners=3pt,fill=white,
+    minimum width=2.55cm,minimum height=0.96cm,align=center,
+    font=\sffamily\small},
+  service/.style={card,fill=metablue!6,draw=metablue!55},
+  state/.style={card,fill=metabg},
+  flow/.style={->,line width=0.85pt,draw=metafg!75},
+  edgeword/.style={font=\sffamily\scriptsize,text=metafg!75,fill=white,inner sep=1pt},
+]
+\draw[draw=metablue!50,fill=metablue!3,rounded corners=5pt]
+  (3.10,0.45) rectangle (16.05,7.05);
+\node[anchor=west] at (3.45,6.62)
+  {\includegraphics[height=0.48cm]{assets/kube-logo.png}\enspace
+   {\sffamily\bfseries\small K3d / K3s}\quad
+   {\sffamily\footnotesize namespace bnpb-m1; satu server, dua agen}};
+
+\node[card] (host) at (1.25,5.45) {\textbf{Klien}\\host};
+\node[service] (lb) at (4.65,5.45) {\textbf{K3d LB}\\serverlb};
+\node[service] (api) at (7.75,5.45) {\textbf{Client API}\\NodePort 30080};
+
+\node[service] (auth) at (7.75,3.55) {\textbf{Auth Service}\\ClusterIP};
+\node[service] (agg) at (10.95,3.55) {\textbf{Aggregator}\\ClusterIP};
+\node[service,minimum width=3.15cm] (sources) at (14.25,3.55)
+  {\raisebox{-0.09cm}{\includegraphics[height=0.38cm]{assets/bmkg-logo.png}}\enspace
+   \raisebox{-0.08cm}{\includegraphics[height=0.36cm]{assets/pvmbg-logo.png}}\\
+   \textbf{BMKG / PVMBG}};
+
+\node[state] (postgres) at (7.75,1.48) {\textbf{PostgreSQL}\\PVC 2 GiB};
+\node[state] (rabbit) at (10.95,1.48)
+  {\raisebox{-0.10cm}{\includegraphics[height=0.39cm]{assets/rabbitmq-logo.png}}\enspace
+   \textbf{RabbitMQ}\\PVC 1 GiB};
+\node[service,minimum width=3.15cm] (consumers) at (14.25,1.48)
+  {\textbf{Tiga konsumen}\\Deployment terpisah};
+
+\draw[flow] (host.east) -- node[edgeword,above]{HTTP} (lb.west);
+\draw[flow] (lb.east) -- (api.west);
+\draw[flow] (api.south) -- (auth.north);
+\draw[flow] (api.south east) -- (agg.north west);
+\draw[flow] (auth.south) -- (postgres.north);
+\draw[flow] (agg.south west) -- (postgres.north east);
+\draw[flow] (agg.south) -- (rabbit.north);
+\draw[flow] (agg.east) -- (sources.west);
+\draw[flow] (rabbit.east) -- (consumers.west);
+\end{tikzpicture}

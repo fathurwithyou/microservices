@@ -1,0 +1,47 @@
+\begin{tikzpicture}[
+  >=Latex,
+  stage/.style={draw=metafg!45,rounded corners=3pt,fill=metabg,
+    minimum width=3.1cm,minimum height=1.25cm,text width=2.85cm,
+    align=center,font=\sffamily\footnotesize},
+  denied/.style={draw=metafg!45,rounded corners=3pt,fill=white,
+    minimum width=2.7cm,minimum height=0.92cm,text width=2.45cm,
+    align=center,font=\sffamily\footnotesize},
+  allowed/.style={draw=metablue!55,rounded corners=3pt,fill=metablue!6,
+    minimum width=3.1cm,minimum height=0.92cm,text width=2.85cm,
+    align=center,font=\sffamily\footnotesize},
+  flow/.style={->,line width=0.9pt,draw=metafg!80},
+  branch/.style={line width=0.75pt,draw=metafg!65},
+]
+\node[stage] (request) at (1.65,4.6)
+  {\textcolor{metablue}{\textbf{01}}\quad\textbf{Permintaan}\\Client API};
+\node[stage] (auth) at (5.25,4.6)
+  {\textcolor{metablue}{\textbf{02}}\quad\textbf{Validasi}\\Auth + Client API};
+\node[stage] (read) at (8.85,4.6)
+  {\textcolor{metablue}{\textbf{03}}\quad\textbf{Pembacaan}\\Aggregator};
+\node[stage] (project) at (12.45,4.6)
+  {\textcolor{metablue}{\textbf{04}}\quad\textbf{Proyeksi}\\Client API};
+\draw[flow] (request.east) -- (auth.west);
+\draw[flow] (auth.east) -- (read.west);
+\draw[flow] (read.east) -- (project.west);
+
+\node[denied] (unauthorized) at (2.0,1.65)
+  {\textbf{HTTP 401}\\Token tidak sah};
+\node[denied] (forbidden) at (5.55,1.65)
+  {\textbf{HTTP 403}\\Hak tidak cukup};
+\node[allowed] (summary) at (9.65,1.65)
+  {\textbf{Media}\\Ringkasan};
+\node[allowed] (raw) at (13.2,1.65)
+  {\textbf{Ops / Lapangan}\\Data mentah};
+
+\draw[branch] (auth.south) -- (5.25,3.05) -- (2.0,3.05);
+\draw[branch] (5.25,3.05) -- (5.55,3.05);
+\draw[flow] (2.0,3.05) -- (unauthorized.north);
+\draw[flow] (5.55,3.05) -- (forbidden.north);
+\fill[metafg!65] (5.25,3.05) circle (1.15pt);
+
+\draw[branch] (project.south) -- (12.45,3.05) -- (9.65,3.05);
+\draw[branch] (12.45,3.05) -- (13.2,3.05);
+\draw[flow] (9.65,3.05) -- (summary.north);
+\draw[flow] (13.2,3.05) -- (raw.north);
+\fill[metafg!65] (12.45,3.05) circle (1.15pt);
+\end{tikzpicture}

@@ -1,0 +1,6 @@
+{
+  "problem": "GENERAL",
+  "criterion": "X-Correlation-ID forwarded and logged",
+  "correlation_id": "b68defd2-ffb5-4e13-8c00-c4f0d40486f6",
+  "found_in_client_api_logs": true
+}

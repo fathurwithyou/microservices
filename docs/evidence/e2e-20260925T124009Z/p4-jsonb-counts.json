@@ -1,0 +1,7 @@
+{
+  "problem": "P4",
+  "observed_at_utc": "2026-09-25T12:41:25Z",
+  "before_without_confidence_level": 25,
+  "after_with_confidence_level": 65,
+  "source": "live Canonical Store count query"
+}

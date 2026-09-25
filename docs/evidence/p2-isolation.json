@@ -1,0 +1,13 @@
+{
+  "problem": "P2",
+  "label": "P2.1 concurrent BMKG-only vs PVMBG (set PVMBG_MAX_DELAY=3s)",
+  "duration_s": 30.118663,
+  "http_reqs": 27558,
+  "throughput_rps": 914.9808542298175,
+  "bmkg_p50_ms": 3.445,
+  "bmkg_p95_ms": 8.7898,
+  "bmkg_p99_ms": 19.46156,
+  "pvmbg_p95_ms": 8.425,
+  "error_rate": 0,
+  "controlled_rejections": 0
+}

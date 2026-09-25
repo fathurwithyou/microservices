@@ -1,0 +1,46 @@
+\begin{tikzpicture}[
+  >=Latex,
+  card/.style={draw=metafg!45,rounded corners=3pt,fill=white,
+    minimum width=2.75cm,minimum height=0.96cm,align=center,
+    font=\sffamily\small},
+  source/.style={card,fill=metablue!5,draw=metablue!55},
+  core/.style={card,fill=metabg},
+  state/.style={card,fill=white},
+  broker/.style={card,fill=fairamber!9,draw=fairamber!75!black},
+  flow/.style={->,line width=0.9pt,draw=metafg!80},
+  edgeword/.style={font=\sffamily\scriptsize,text=metafg!80,fill=white,inner sep=1pt},
+]
+\fill[metablue!3,rounded corners=4pt] (0.1,5.65) rectangle (15.25,7.25);
+\fill[metablue!2,rounded corners=4pt] (0.1,2.35) rectangle (15.25,5.35);
+\fill[fairamber!3,rounded corners=4pt] (0.1,0.55) rectangle (15.25,2.05);
+\node[font=\sffamily\bfseries\scriptsize,text=metafg!70,anchor=west] at (0.35,7.0) {AKSES};
+\node[font=\sffamily\bfseries\scriptsize,text=metafg!70,anchor=west] at (0.35,5.1) {INGEST};
+\node[font=\sffamily\bfseries\scriptsize,text=metafg!70,anchor=west] at (0.35,1.82) {DISTRIBUSI};
+
+\node[core] (clients) at (1.65,6.38) {\textbf{Klien hilir}\\Media / Tim / Ops};
+\node[core] (api) at (5.15,6.38) {\textbf{Client API}\\HTTP :8080};
+\node[core] (auth) at (9.15,6.38) {\textbf{Auth Service}\\basis data sendiri};
+
+\node[source] (bmkg) at (1.65,4.36)
+  {\raisebox{-0.12cm}{\includegraphics[height=0.55cm]{assets/bmkg-logo.png}}\enspace\textbf{BMKG}\\REST :8081};
+\node[source] (pvmbg) at (1.65,3.00)
+  {\raisebox{-0.10cm}{\includegraphics[height=0.48cm]{assets/pvmbg-logo.png}}\enspace\textbf{PVMBG}\\REST :8082};
+\node[core] (agg) at (5.15,3.68) {\textbf{Aggregator}\\gRPC :9090};
+\node[state] (store) at (9.15,3.68) {\textbf{Canonical Store}\\PostgreSQL};
+
+\node[state] (outbox) at (5.15,1.28) {\textbf{Outbox}\\satu transaksi};
+\node[broker] (rabbit) at (9.15,1.28)
+  {\raisebox{-0.12cm}{\includegraphics[height=0.48cm]{assets/rabbitmq-logo.png}}\enspace\textbf{RabbitMQ}\\fanout};
+\node[state,minimum width=3.0cm] (queues) at (13.33,1.28)
+  {\textbf{Tiga antrean}\\satu per konsumen};
+
+\draw[flow] (clients.east) -- node[edgeword,above]{HTTP} (api.west);
+\draw[flow] (api.east) -- node[edgeword,above]{gRPC} (auth.west);
+\draw[flow] (api.south) -- node[edgeword,right]{gRPC} (agg.north);
+\draw[flow] (bmkg.east) -- (agg.north west);
+\draw[flow] (pvmbg.east) -- (agg.south west);
+\draw[flow] (agg.east) -- node[edgeword,above]{SQL} (store.west);
+\draw[flow] (agg.south) -- (outbox.north);
+\draw[flow] (outbox.east) -- node[edgeword,above]{AMQP} (rabbit.west);
+\draw[flow] (rabbit.east) -- node[edgeword,above]{fanout} (queues.west);
+\end{tikzpicture}
