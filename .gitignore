@@ -86,3 +86,6 @@ artifacts/*.json
 # Docker volumes and data
 pgdata/
 rabbitmq_data/
+arXiv-2606.00206v1
+artifacts
+.claude

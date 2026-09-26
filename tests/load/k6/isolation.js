@@ -62,7 +62,7 @@ export function handleSummary(data) {
   const pvmbg = data.metrics.pvmbg_latency && data.metrics.pvmbg_latency.values;
   const payload = {
     problem: 'P2',
-    label: 'P2.1 concurrent BMKG-only vs PVMBG (set PVMBG_MAX_DELAY=3s)',
+    label: `P2.1 concurrent BMKG-only vs PVMBG (PVMBG_MAX_DELAY=${__ENV.PVMBG_MAX_DELAY || 'unset'})`,
     duration_s: durationMs / 1000,
     http_reqs: requests,
     throughput_rps: requests / (durationMs / 1000),
