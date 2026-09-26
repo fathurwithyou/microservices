@@ -1,0 +1,45 @@
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.92\linewidth,
+  height=6.0cm,
+  xmin=0.4,xmax=3.6,
+  xtick={1,2,3},
+  xticklabels={{0,5 s},{1,5 s},{3,0 s}},
+  ymode=log,
+  ymin=1,ymax=8000,
+  ytick={1,10,100,1000},
+  yticklabels={1,10,100,1.000},
+  xlabel={Batas penundaan maksimum PVMBG},
+  ylabel={Milidetik (skala log)},
+  ymajorgrids=true,
+  xmajorgrids=false,
+  grid style={draw=metafg!13,densely dotted},
+  axis lines*=left,
+  axis line style={draw=metafg!65,line width=0.55pt},
+  tick label style={font=\footnotesize},
+  label style={font=\footnotesize},
+  clip=false,
+]
+% reference band for the measured read latency of both sources
+\fill[metablue!8] (axis cs:0.4,7.2) rectangle (axis cs:3.6,11.2);
+\node[anchor=west,font=\sffamily\scriptsize,text=metablue!85!black]
+  at (axis cs:0.55,9.2) {p95 pembacaan BMKG: 7,8--10,7 ms};
+% configured source delay
+\addplot+[mark=square*,mark size=2.6pt,line width=1pt,dashed,
+  mark options={fill=fairamber,draw=fairamber},draw=fairamber]
+  coordinates {(1,500) (2,1500) (3,3000)};
+\node[anchor=south,font=\sffamily\scriptsize,text=fairamber!85!black] at (axis cs:1,560) {500};
+\node[anchor=south,font=\sffamily\scriptsize,text=fairamber!85!black] at (axis cs:2,1680) {1.500};
+\node[anchor=south,font=\sffamily\scriptsize,text=fairamber!85!black] at (axis cs:3,3350) {3.000};
+\node[anchor=east,font=\sffamily\scriptsize,text=fairamber!85!black,align=right]
+  at (axis cs:3.35,1400) {penundaan maksimum\\sumber (konfigurasi)};
+% measured read p95 per run
+\addplot+[mark=*,mark size=2.6pt,line width=1pt,
+  mark options={fill=metablue,draw=metablue},draw=metablue]
+  coordinates {(1,7.782) (2,10.7236) (3,8.2749)};
+% acceptance threshold
+\draw[metafg!60,line width=0.6pt,dashed] (axis cs:0.4,300) -- (axis cs:3.6,300);
+\node[anchor=south east,font=\sffamily\scriptsize,text=metafg!85]
+  at (axis cs:3.55,320) {ambang p95 300 ms};
+\end{axis}
+\end{tikzpicture}

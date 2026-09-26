@@ -1,0 +1,31 @@
+\begin{tikzpicture}[every node/.style={font=\sffamily\footnotesize}]
+% time axis
+\draw[metafg!55,line width=0.6pt,-{Latex}] (0,0) -- (12.4,0);
+\node[anchor=west,font=\sffamily\scriptsize,text=metafg!75] at (12.45,0) {waktu};
+% access token validity window
+\draw[metablue,line width=2pt] (0.6,0) -- (7.6,0);
+\fill[metablue] (0.6,0) circle (2pt);
+\node[anchor=south,text=metablue,font=\sffamily\scriptsize] at (0.6,0.16) {terbit};
+\draw[decorate,decoration={brace,amplitude=5pt,raise=3pt},metablue!70]
+  (0.6,0.62) -- (7.6,0.62);
+\node[anchor=south,text=metablue!85!black,font=\sffamily\scriptsize] at (4.1,1.02)
+  {token akses berlaku 60 detik};
+% expiry
+\fill[white] (7.6,0) circle (2.2pt);
+\draw[metafg!70,line width=0.8pt] (7.6,0) circle (2.2pt);
+\node[anchor=north,text=metafg,font=\sffamily\scriptsize,align=center] at (7.6,-0.18)
+  {kedaluwarsa\\permintaan lama $\rightarrow$ HTTP 401};
+% refresh
+\fill[metablue] (9.0,0) circle (2pt);
+\node[anchor=south,text=metablue,font=\sffamily\scriptsize,align=center] at (9.0,0.16)
+  {penyegaran\\HTTP 200, pasangan baru};
+% rotated refresh token rejected
+\fill[white] (10.4,0) circle (2.2pt);
+\draw[metafg!70,line width=0.8pt] (10.4,0) circle (2.2pt);
+\node[anchor=north,text=metafg,font=\sffamily\scriptsize,align=center] at (10.4,-0.18)
+  {token penyegaran lama\\ditolak, HTTP 401};
+% next access with the new token
+\fill[metablue] (11.7,0) circle (2pt);
+\node[anchor=south,text=metablue,font=\sffamily\scriptsize,align=center] at (11.7,0.16)
+  {akses berikutnya\\HTTP 200};
+\end{tikzpicture}

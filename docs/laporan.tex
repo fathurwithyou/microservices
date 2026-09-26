@@ -109,8 +109,8 @@
 \author[1]{Muhammad Fathur Rizky (13523105)}
 \author[1]{Ahmad Wicaksono (13523121)}
 \affiliation[1]{Program Studi Teknik Informatika, Sekolah Teknik Elektro dan Informatika, Institut Teknologi Bandung}
-\metadata[Tanggal]{25 September 2026}
 \metadata[Kelompok]{SidequestProxy}
+\metadata[Sistem]{Platform Koordinasi Kebencanaan BMKG--PVMBG--BNPB}
 \metadata[Mata kuliah]{IF4031 Arsitektur Aplikasi Terdistribusi, Milestone 1}
 \metadata[Email]{\email{13523067@std.stei.itb.ac.id};\ \email{13523105@std.stei.itb.ac.id};\ \email{13523121@std.stei.itb.ac.id}}
 \abstract{Koordinasi informasi kebencanaan menuntut integrasi sumber data yang otonom, respons layanan yang tidak seragam, dan distribusi informasi kepada beberapa konsumen. Makalah ini menyajikan rancangan dan evaluasi prototipe yang menghubungkan layanan simulasi Badan Meteorologi, Klimatologi, dan Geofisika (BMKG) serta Pusat Vulkanologi dan Mitigasi Bencana Geologi (PVMBG) melalui komponen koordinasi Badan Nasional Penanggulangan Bencana (BNPB). Aggregator mengambil data melalui REST, menyimpannya sebagai HazardEvent kanonik pada PostgreSQL, dan mempertahankan atribut tambahan dalam JSONB. Komunikasi internal menggunakan gRPC, sedangkan transaksi outbox dan RabbitMQ memisahkan penyimpanan kejadian dari distribusinya. Evaluasi lokal mencakup pemetaan data, perubahan skema aditif, isolasi keterlambatan sumber, otorisasi, pembangunan ulang layanan, dan pemulihan antrean. Dalam uji isolasi 25 pengguna virtual per sumber selama 30 detik, persentil ke-95 (p95) pembacaan BMKG melalui Client API mencapai 8,790 ms ketika penundaan polling PVMBG dikonfigurasi hingga 3 detik. Uji berkelanjutan 50 pengguna virtual selama 60 detik menghasilkan 28.211 permintaan, p95 13,970 ms, dan tingkat kesalahan 0\%. Hasil tersebut berlaku untuk konfigurasi lokal yang diuji; deduplikasi konsumen belum bertahan setelah proses dimulai ulang.\\[0.6em]\textbf{Kata kunci:} sistem terdistribusi, interoperabilitas data, evolusi skema, otorisasi, transactional outbox, pengujian beban.}
@@ -128,20 +128,20 @@
 \section*{Identitas Kelompok dan Kontribusi}
 \addcontentsline{toc}{section}{Identitas Kelompok dan Kontribusi}
 
-\textbf{Nama kelompok:} SidequestProxy. Nama dan NIM anggota tercantum pada halaman sampul. Rincian kontribusi pada Tabel~\ref{tab:contributions} masih menunggu konfirmasi seluruh anggota sebelum pengumpulan.
+\textbf{Nama kelompok:} SidequestProxy. Nama dan NIM anggota tercantum pada halaman sampul. Tabel~\ref{tab:contributions} merinci pembagian kerja kelompok pada tiga kegiatan yang dinilai: perancangan, implementasi, dan penulisan laporan.
 
 \begin{table}[htbp]
 \centering
 \small
-\caption{\textbf{Kontribusi anggota menunggu konfirmasi kelompok.} Tiga kegiatan mengikuti ketentuan laporan M1.}
+\caption{\textbf{Pembagian kontribusi anggota pada tiga kegiatan laporan M1.} Setiap anggota terlibat pada ketiga kegiatan.}
 \label{tab:contributions}
-\begin{tabularx}{\textwidth}{L{2.8cm}L{1.5cm}YYY}
+\begin{tabularx}{\textwidth}{@{}L{2.8cm}L{1.5cm}YYY@{}}
 \toprule
 \textbf{Anggota} & \textbf{NIM} & \textbf{Perancangan} & \textbf{Implementasi} & \textbf{Penulisan laporan}\\
 \midrule
-Benedict Presley & 13523067 & Belum dikonfirmasi & Belum dikonfirmasi & Belum dikonfirmasi\\
-Muhammad Fathur Rizky & 13523105 & Belum dikonfirmasi & Belum dikonfirmasi & Belum dikonfirmasi\\
-Ahmad Wicaksono & 13523121 & Belum dikonfirmasi & Belum dikonfirmasi & Belum dikonfirmasi\\
+Benedict Presley & 13523067 & Alur demonstrasi P1--P5 dan rancangan antarmuka konsol observasi bukti. & Demo Console React/TypeScript, integrasi Demo API, dan uji smoke Playwright. & Problem 3, bagian observabilitas dan petunjuk menjalankan sistem, serta dokumentasi demonstrasi.\\
+Muhammad Fathur Rizky & 13523105 & Model HazardEvent kanonik, kebijakan pemetaan dinamis, dan pola transactional outbox. & Aggregator: polling paralel, pemetaan, Canonical Store, outbox, dan gRPC; kontrak Protobuf serta mock BMKG dan PVMBG. & Problem 1, Problem 5, serta aturan keparahan kejadian.\\
+Ahmad Wicaksono & 13523121 & Pemisahan domain kredensial, proyeksi berbasis cakupan, dan topologi penerapan lokal. & Auth Service, Client API dengan otorisasi cakupan, konsumen fan-out, serta kemasan Docker dan manifest Kustomize. & Problem 2, Problem 4, metode evaluasi, dan sintesis hasil.\\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -161,26 +161,26 @@ Ahmad Wicaksono & 13523121 & Belum dikonfirmasi & Belum dikonfirmasi & Belum dik
 
 \subsection{Latar belakang}
 
-Penanganan bencana memerlukan pertukaran informasi dari instansi dengan sumber data, kontrak layanan, dan karakteristik operasional yang berbeda. Dalam cakupan Milestone 1 (M1), BMKG menyediakan informasi seismik dan peringatan tsunami, sedangkan PVMBG menyediakan laporan aktivitas gunung api. BNPB berperan sebagai simpul koordinasi yang mengumpulkan, menormalkan, menyimpan, dan menyajikan informasi tersebut kepada client downstream.
+Penanganan bencana memerlukan pertukaran informasi dari instansi dengan sumber data, kontrak layanan, dan karakteristik operasional yang berbeda. Dalam cakupan Milestone 1 (M1), BMKG menyediakan informasi seismik dan peringatan tsunami, sedangkan PVMBG menyediakan laporan aktivitas gunung api. BNPB berperan sebagai simpul koordinasi yang mengumpulkan, menormalkan, menyimpan, dan menyajikan informasi tersebut kepada klien hilir.
 
-Integrasi semacam ini menghadirkan persoalan khas sistem terdistribusi. Kontrak data sumber dapat berubah, waktu respons setiap sumber tidak seragam, salah satu layanan dapat tidak tersedia, kredensial harus dipisahkan menurut domain kepercayaan, dan event perlu didistribusikan kepada beberapa consumer tanpa membentuk ketergantungan sinkron satu per satu. Rancangan M1 menggunakan komponen terpisah untuk mengevaluasi persoalan tersebut pada skala prototipe.
+Integrasi semacam ini menghadirkan persoalan khas sistem terdistribusi. Kontrak data sumber dapat berubah, waktu respons setiap sumber tidak seragam, salah satu layanan dapat tidak tersedia, kredensial harus dipisahkan menurut domain kepercayaan, dan event perlu didistribusikan kepada beberapa konsumen tanpa membentuk ketergantungan sinkron satu per satu. Rancangan M1 menggunakan komponen terpisah untuk mengevaluasi persoalan tersebut pada skala prototipe.
 
 \subsection{Tujuan dan pertanyaan evaluasi}
 
-Tujuan proyek adalah membangun prototipe platform koordinasi kebencanaan yang mengintegrasikan mock service BMKG dan PVMBG, menyajikan HazardEvent kanonik, menerapkan autentikasi dan otorisasi downstream, serta mendistribusikan event kepada consumer independen. Evaluasi disusun untuk menjawab lima pertanyaan operasional yang selaras dengan problem pada spesifikasi \cite{spec-m1}:
+Tujuan proyek adalah membangun prototipe platform koordinasi kebencanaan yang mengintegrasikan mock BMKG dan PVMBG, menyajikan HazardEvent kanonik, menerapkan autentikasi dan otorisasi klien hilir, serta mendistribusikan event kepada konsumen independen. Evaluasi disusun untuk menjawab lima pertanyaan operasional yang selaras dengan problem pada spesifikasi \cite{spec-m1}:
 \begin{enumerate}
   \item Dapatkah data kedua sumber dipetakan ke kontrak kanonik dan tetap menerima field tambahan tanpa migrasi saat field tersebut mulai muncul?
   \item Apakah latensi pembacaan data BMKG melalui Client API tetap memenuhi ambang ketika polling PVMBG melambat atau sumber tersebut tidak tersedia?
-  \item Apakah kredensial silang dan permintaan field mentah tanpa scope yang sesuai ditolak oleh server?
+  \item Apakah kredensial silang dan permintaan field mentah tanpa cakupan akses yang sesuai ditolak oleh server?
   \item Dapatkah satu layanan dibangun ulang secara independen, dan apakah kepemilikan Canonical Store tetap berada pada Aggregator?
-  \item Apakah broker memisahkan producer dari consumer, dan bagaimana sistem menangani redelivery serta duplikasi?
+  \item Apakah broker memisahkan produsen dari konsumen, dan bagaimana sistem menangani redelivery serta duplikasi?
 \end{enumerate}
 
 Kontribusi laporan ini adalah model integrasi yang memisahkan kontrak sumber dari HazardEvent kanonik, rancangan batas kepemilikan data dan distribusi event, serta evaluasi terukur terhadap kelima persoalan M1. Setiap hasil dibahas bersama kondisi pengujian dan batas kesimpulannya agar bukti pada prototipe tidak digeneralisasi ke layanan produksi.
 
 \subsection{Ruang lingkup dan batasan}
 
-Sistem mencakup mock BMKG untuk kejadian seismik dan peringatan tsunami, mock PVMBG untuk laporan aktivitas gunung api, komponen koordinasi BNPB, serta tiga client downstream: Media, Tim Lapangan, dan BNPB Ops. Seluruh client bersifat read-only pada M1. Media hanya berhak memperoleh proyeksi ringkasan; Tim Lapangan dan BNPB Ops dapat memperoleh field mentah sesuai scope.
+Sistem mencakup mock BMKG untuk kejadian seismik dan peringatan tsunami, mock PVMBG untuk laporan aktivitas gunung api, komponen koordinasi BNPB, serta tiga klien hilir: Media, Tim Lapangan, dan BNPB Ops. Seluruh klien bersifat hanya-baca pada M1. Media hanya berhak memperoleh proyeksi ringkasan; Tim Lapangan dan BNPB Ops dapat memperoleh field mentah sesuai cakupan akses.
 
 Integrasi langsung ke layanan produksi BMKG dan PVMBG tidak termasuk dalam ruang lingkup. Mock tidak mengirim data secara proaktif kepada BNPB; Aggregator mengambil data melalui polling. Jalur pelaporan dari lapangan ke BNPB dan jenis bencana di luar seismik serta vulkanik juga tidak dibahas. Dukungan evolusi skema dibatasi pada penambahan field; perubahan nama atau tipe field, maupun hilangnya field wajib, memerlukan penanganan eksplisit.
 
@@ -194,7 +194,7 @@ Integrasi langsung ke layanan produksi BMKG dan PVMBG tidak termasuk dalam ruang
 PVMBG menyediakan laporan aktivitas gunung api dan memakai token akses yang berbeda dari kredensial BMKG. Simulasi tersebut dapat menambahkan atribut tingkat keyakinan saat layanan berjalan serta mengaktifkan atau mengakhiri gangguan. Penundaan respons dikonfigurasi dalam rentang 500 ms hingga 3 detik; nilai ini merupakan parameter simulasi, bukan pengukuran layanan produksi.
 
 
-\textbf{Koordinasi BNPB.} Aggregator menjalankan polling kedua sumber secara independen, memetakan payload menjadi HazardEvent, mengelola status sumber, menyimpan data kanonik, dan mengirim event melalui outbox. Client API menjadi pintu masuk HTTP bagi klien hilir; layanan ini meminta autentikasi ke Auth Service, menegakkan cakupan akses, serta membaca data dari Aggregator melalui gRPC.
+\textbf{Koordinasi BNPB.} Aggregator menjalankan polling kedua sumber secara independen, memetakan muatan data menjadi HazardEvent, mengelola status sumber, menyimpan data kanonik, dan mengirim event melalui outbox. Client API menjadi pintu masuk HTTP bagi klien hilir; layanan ini meminta autentikasi ke Auth Service, menegakkan cakupan akses, serta membaca data dari Aggregator melalui gRPC.
 
 \textbf{Identitas dan konsumen.} Auth Service mengelola identitas klien, token akses dan penyegaran, serta penyimpanan autentikasi sendiri tanpa URL Canonical Store. Dashboard, Notifier, dan Portal berjalan sebagai konsumen terpisah yang menerima salinan event melalui antrean masing-masing.
 
@@ -205,19 +205,19 @@ Demo API dan Demo Console hanya merupakan sarana pengujian, observabilitas, dan 
 \caption{\textbf{Tanggung jawab layanan dipisahkan menurut batas data dan operasi.} Komponen demonstrasi tidak termasuk sistem inti.}
 \label{tab:components}
 \footnotesize
-\begin{tabularx}{\textwidth}{L{3.15cm}Y}
+\begin{tabularx}{\textwidth}{@{}L{3.15cm}Y@{}}
 \toprule
 \textbf{Komponen} & \textbf{Tanggung jawab utama}\\
 \midrule
 BMKG mock & Menyediakan kejadian seismik dan peringatan tsunami melalui REST/JSON.\\
-PVMBG mock & Menyediakan laporan vulkanik, perubahan atribut aditif saat runtime, dan sakelar outage.\\
+PVMBG mock & Menyediakan laporan vulkanik, perubahan atribut aditif saat layanan berjalan, dan sakelar gangguan.\\
 \addlinespace[2pt]
 Aggregator & Polling sumber, pemetaan kanonik, status sumber, Canonical Store, transactional outbox, serta API gRPC internal.\\
-Auth Service & Identitas client, penerbitan dan validasi token, scope, serta rotasi refresh token.\\
-Client API & Endpoint downstream HTTP, validasi token/scope, dan proyeksi ringkasan atau data mentah.\\
+Auth Service & Identitas klien, penerbitan dan validasi token, cakupan akses, serta rotasi token penyegaran.\\
+Client API & Endpoint HTTP untuk klien hilir, validasi token dan cakupan akses, serta proyeksi ringkasan atau data mentah.\\
 \addlinespace[2pt]
-RabbitMQ & Fan-out event ke durable queue consumer dan dead-letter queue.\\
-Dashboard, Notifier, Portal & Consumer independen dengan health check dan pemrosesan event masing-masing.\\
+RabbitMQ & Fan-out event ke antrean tahan lama tiap konsumen dan antrean dead-letter.\\
+Dashboard, Notifier, Portal & Konsumen independen dengan pemeriksaan kesehatan dan pemrosesan event masing-masing.\\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -231,7 +231,7 @@ BMKG menyediakan informasi kejadian gempa dan peringatan tsunami, sedangkan PVMB
 \caption{\textbf{Kedua sumber dipetakan ke HazardEvent yang sama.} Field sumber yang tidak menjadi inti tetap tersedia sebagai atribut tambahan.}
 \label{tab:mapping}
 \footnotesize
-\begin{tabularx}{\textwidth}{L{1.25cm}L{3.2cm}YY}
+\begin{tabularx}{\textwidth}{@{}L{1.25cm}L{3.2cm}YY@{}}
 \toprule
 \textbf{Sumber} & \textbf{Kunci sumber} & \textbf{Field kanonik} & \textbf{Atribut tambahan}\\
 \midrule
@@ -248,21 +248,21 @@ Untuk kejadian BMKG tanpa peringatan tsunami, tingkat keparahan ditentukan berda
 
 \subsection{Endpoint dan port}
 
-Tabel~\ref{tab:endpoints} merangkum endpoint utama pada konfigurasi lokal. Nilai host port dapat disesuaikan melalui environment.
+Tabel~\ref{tab:endpoints} merangkum endpoint utama pada konfigurasi lokal. Nilai port host dapat disesuaikan melalui variabel lingkungan.
 
 \begin{table}[htbp]
 \centering
 \caption{\textbf{Antarmuka jaringan mempertahankan batas antarlayanan.} Port mengikuti konfigurasi lokal prototipe M1.}
 \label{tab:endpoints}
 \footnotesize
-\begin{tabularx}{\textwidth}{L{2.0cm}R{1.6cm}Y}
+\begin{tabularx}{\textwidth}{@{}L{2.0cm}R{1.6cm}Y@{}}
 \toprule
 \textbf{Layanan} & \textbf{Port} & \textbf{Antarmuka utama}\\
 \midrule
 BMKG mock & 8081 & \code{GET /seismic-events?since=...}, \code{GET /tsunami-warnings?since=...}, \code{GET /health}.\\
 PVMBG mock & 8082 & \code{GET /volcanic-reports?since=...}, \code{POST /admin/schema-version}, \code{POST /admin/outage}, \code{GET /health}.\\
 Client API & 8080 & \code{POST /auth/token}, \code{POST /auth/refresh}, \code{GET /hazards}, \code{GET /sources/status}, \code{GET /health}.\\
-Aggregator & 8090, 9090 & HTTP health check pada 8090 dan API internal gRPC pada 9090.\\
+Aggregator & 8090, 9090 & Pemeriksaan kesehatan HTTP pada 8090 dan API internal gRPC pada 9090.\\
 Auth Service & 9091 & API autentikasi internal gRPC.\\
 Demo API & 8086 & Probe dan kendali demonstrasi; komponen pendukung pengujian.\\
 Demo Console & 3000 & Antarmuka demonstrasi; tidak termasuk sistem inti.\\
@@ -273,7 +273,7 @@ Demo Console & 3000 & Antarmuka demonstrasi; tidak termasuk sistem inti.\\
 \subsection{Arsitektur dan alur komunikasi}
 
 
-Komunikasi Aggregator dengan BMKG dan PVMBG menggunakan REST/JSON. Client API berkomunikasi dengan Aggregator dan Auth Service menggunakan gRPC dengan kontrak Protobuf. Setelah HazardEvent dan catatan outbox tersimpan, outbox worker menerbitkan pesan persisten ke exchange RabbitMQ. Broker melakukan fan-out ke queue Dashboard, Notifier, dan Portal. Diagram pada Gambar~\ref{fig:architecture} hanya menampilkan komponen sistem inti; sarana demonstrasi sengaja dikeluarkan.
+Komunikasi Aggregator dengan BMKG dan PVMBG menggunakan REST/JSON. Client API berkomunikasi dengan Aggregator dan Auth Service menggunakan gRPC dengan kontrak Protobuf. Setelah HazardEvent dan catatan outbox tersimpan, pekerja outbox menerbitkan pesan persisten ke exchange RabbitMQ. Broker melakukan fan-out ke antrean Dashboard, Notifier, dan Portal. Diagram pada Gambar~\ref{fig:architecture} hanya menampilkan komponen sistem inti; sarana demonstrasi sengaja dikeluarkan.
 
 \begin{figure}[htbp]
 \centering
@@ -284,7 +284,7 @@ Komunikasi Aggregator dengan BMKG dan PVMBG menggunakan REST/JSON. Client API be
 \end{figure}
 
 
-Client meminta token melalui Client API. Client API meneruskan permintaan penerbitan token ke Auth Service dan mengembalikan pasangan token. Pada permintaan data, Client API meminta Auth Service memvalidasi access token, memeriksa scope di sisi server, lalu meminta HazardEvent melalui gRPC Aggregator. Aggregator membaca Canonical Store dan mengembalikan event kanonik. Client API menghasilkan proyeksi ringkasan atau mentah sesuai scope; permintaan data mentah tanpa scope yang sesuai ditolak dengan HTTP 403.
+Client meminta token melalui Client API. Client API meneruskan permintaan penerbitan token ke Auth Service dan mengembalikan pasangan token. Pada permintaan data, Client API meminta Auth Service memvalidasi token akses, memeriksa cakupan akses di sisi server, lalu meminta HazardEvent melalui gRPC Aggregator. Aggregator membaca Canonical Store dan mengembalikan event kanonik. Client API menghasilkan proyeksi ringkasan atau mentah sesuai cakupan akses; permintaan data mentah tanpa cakupan akses yang sesuai ditolak dengan HTTP 403.
 
 \begin{figure}[htbp]
 \centering
@@ -295,20 +295,20 @@ Client meminta token melalui Client API. Client API meneruskan permintaan penerb
 \end{figure}
 
 
-Aggregator menjalankan polling BMKG dan PVMBG secara independen. Pada siklus BMKG, kejadian gempa dan peringatan tsunami diambil secara terpisah lalu dipadankan berdasarkan kejadian terkait. Pada siklus PVMBG, laporan vulkanik dinormalisasi ke model yang sama. Record baru atau berubah disimpan bersama pesan outbox dalam satu transaksi; broker kemudian menyalurkan salinan kepada antrean durable tiap konsumen.
+Aggregator menjalankan polling BMKG dan PVMBG secara independen. Pada siklus BMKG, kejadian gempa dan peringatan tsunami diambil secara terpisah lalu dipadankan berdasarkan kejadian terkait. Pada siklus PVMBG, laporan vulkanik dinormalisasi ke model yang sama. Record baru atau berubah disimpan bersama pesan outbox dalam satu transaksi; broker kemudian menyalurkan salinan kepada antrean tahan lama tiap konsumen.
 
 \begin{figure}[htbp]
 \centering
 \input{figures/polling-fanout.tex}
-\caption[Polling mandiri, transaksi outbox, dan distribusi event]{\textbf{Polling mandiri diikuti persistensi atomik dan fanout.} HazardEvent serta pesan outbox dicatat dalam satu transaksi. Pekerja outbox menerbitkan pesan ke RabbitMQ, lalu setiap konsumen membaca antreannya sendiri. Backlog Notifier dapat terbentuk tanpa menghentikan Dashboard.}
+\caption[Polling mandiri, transaksi outbox, dan distribusi event]{\textbf{Polling mandiri diikuti persistensi atomik dan fan-out.} HazardEvent serta pesan outbox dicatat dalam satu transaksi. Pekerja outbox menerbitkan pesan ke RabbitMQ, lalu setiap konsumen membaca antreannya sendiri. Antrean Notifier dapat menumpuk tanpa menghentikan Dashboard.}
 \label{fig:polling-fanout}
 \eraserlink{https://app.eraser.io/workspace/LNBH6Hy1uRmyFxbz4AFM?diagram=midk0YWpJpJhZVVf1QDb&layout=canvas}
 \end{figure}
 
 
-Pada deployment lokal, setiap layanan berjalan terpisah. PostgreSQL menampung penyimpanan kanonik milik Aggregator dan penyimpanan autentikasi milik Auth Service dengan hak akses berbeda; RabbitMQ berperan sebagai broker. Sarana demonstrasi hanya digunakan untuk validasi dan tidak ditampilkan pada Gambar~\ref{fig:k3d}.
+Pada penerapan lokal, setiap layanan berjalan terpisah. PostgreSQL menampung penyimpanan kanonik milik Aggregator dan penyimpanan autentikasi milik Auth Service dengan hak akses berbeda; RabbitMQ berperan sebagai broker. Sarana demonstrasi hanya digunakan untuk validasi dan tidak ditampilkan pada Gambar~\ref{fig:k3d}.
 
-Untuk pengujian Kubernetes lokal, K3d menyediakan satu server K3s dan dua agent. Overlay lokal Kustomize mengekspos Client API melalui NodePort 30080 yang dipetakan oleh container load balancer K3d ke host port yang dapat dikonfigurasi. PostgreSQL berjalan sebagai StatefulSet satu replika dengan volume claim template 2 GiB. RabbitMQ berjalan satu replika dengan PVC 1 GiB. Port database dan broker tetap internal cluster.
+Untuk pengujian Kubernetes lokal, K3d menyediakan satu server K3s dan dua agen. Overlay lokal Kustomize mengekspos Client API melalui NodePort 30080 yang dipetakan oleh penyeimbang beban K3d ke port host yang dapat dikonfigurasi. PostgreSQL berjalan sebagai StatefulSet satu replika dengan volume claim template 2 GiB. RabbitMQ berjalan satu replika dengan PVC 1 GiB. Port basis data dan broker tetap di dalam klaster.
 
 \begin{figure}[htbp]
 \centering
@@ -322,9 +322,9 @@ Untuk pengujian Kubernetes lokal, K3d menyediakan satu server K3s dan dua agent.
 
 \subsection{Bahasa, kerangka kerja, dan batas transport}
 
-Go digunakan pada mock sumber, Aggregator, Auth Service, Client API, consumer, dan Demo API. Dukungan konkurensi serta pustaka jaringan Go sesuai untuk layanan yang berkomunikasi melalui HTTP, gRPC, dan AMQP. Setiap layanan dibangun sebagai executable dan image container terpisah.
+Go digunakan pada mock sumber, Aggregator, Auth Service, Client API, konsumen, dan Demo API. Dukungan konkurensi serta pustaka jaringan Go sesuai untuk layanan yang berkomunikasi melalui HTTP, gRPC, dan AMQP. Setiap layanan dibangun sebagai program terpisah dan image kontainer tersendiri.
 
-Gin hanya digunakan pada batas transport HTTP. Handler memproses request dan respons, sementara pemetaan data, otorisasi, dan use case berada pada lapisan aplikasi yang sesuai. Demo Console menggunakan React dan TypeScript; perannya terbatas pada pengujian dan demonstrasi.
+Gin hanya digunakan pada batas transport HTTP. Handler memproses permintaan dan respons, sementara pemetaan data, otorisasi, dan kasus penggunaan berada pada lapisan aplikasi yang sesuai. Demo Console menggunakan React dan TypeScript; perannya terbatas pada pengujian dan demonstrasi.
 
 \subsection{Protokol komunikasi}
 
@@ -341,7 +341,7 @@ Gin hanya digunakan pada batas transport HTTP. Handler memproses request dan res
 
 PostgreSQL menyimpan data inti dalam kolom relasional dan atribut spesifik sumber dalam JSONB. JSONB mendukung operasi serta pengindeksan atas data terstruktur yang berubah \cite{postgres-jsonb}. Pada rancangan ini, JSONB menampung atribut tambahan, bukan menggantikan validasi data inti.
 
-Akses PostgreSQL dibatasi pada layanan pemilik data. Aggregator menyimpan kejadian kanonik, sedangkan Auth Service menyimpan data autentikasi dengan kredensial terpisah. Pemisahan ini mempertahankan kepemilikan data meskipun layanan berbagi satu instance PostgreSQL pada deployment lokal.
+Akses PostgreSQL dibatasi pada layanan pemilik data. Aggregator menyimpan kejadian kanonik, sedangkan Auth Service menyimpan data autentikasi dengan kredensial terpisah. Pemisahan ini mempertahankan kepemilikan data meskipun layanan berbagi satu instance PostgreSQL pada penerapan lokal.
 
 
 \begin{table}[htbp]
@@ -349,7 +349,7 @@ Akses PostgreSQL dibatasi pada layanan pemilik data. Aggregator menyimpan kejadi
 \caption{\textbf{Pilihan teknologi mengutamakan batas layanan dan operasional prototipe.} Alternatif dicatat bersama konsekuensinya.}
 \label{tab:tradeoffs}
 \footnotesize
-\begin{tabularx}{\textwidth}{L{2.25cm}L{4.0cm}Y}
+\begin{tabularx}{\textwidth}{@{}L{2.25cm}L{4.0cm}Y@{}}
 \toprule
 \textbf{Keputusan} & \textbf{Alternatif} & \textbf{Pilihan dan implikasi}\\
 \midrule
@@ -359,14 +359,14 @@ RPC internal & REST/JSON atau gRPC/Protobuf. & \textbf{gRPC/Protobuf} memberi ko
 \addlinespace[3pt]
 Distribusi event & Pemanggilan sinkron per konsumen atau broker pesan. & \textbf{RabbitMQ} menyediakan antrean terpisah; pengiriman setidaknya satu kali menuntut konsumen idempoten.\\
 \addlinespace[3pt]
-Deployment lokal & Proses gabungan atau kontainer per layanan. & \textbf{Kontainer dan K3d} memungkinkan pembangunan ulang layanan secara terpisah, dengan biaya orkestrasi yang lebih tinggi.\\
+Penerapan lokal & Proses gabungan atau kontainer per layanan. & \textbf{Kontainer dan K3d} memungkinkan pembangunan ulang layanan secara terpisah, dengan biaya orkestrasi yang lebih tinggi.\\
 \bottomrule
 \end{tabularx}
 \end{table}
 
 \subsection{Orkestrasi dan pengujian}
 
-Docker Compose digunakan untuk menjalankan stack lokal. K3d menyediakan cluster K3s lokal, sedangkan Kustomize mengelola manifest dasar dan overlay. Pada Kubernetes, Service menyediakan jalur stabil menuju Pod; NodePort mengekspos service pada port tertentu di node \cite{kubernetes-service}. StatefulSet digunakan untuk PostgreSQL karena identitas Pod dan penyimpanan persisten dapat dikaitkan melalui volume claim template \cite{kubernetes-statefulset}.
+Docker Compose digunakan untuk menjalankan seluruh layanan pada lingkungan lokal. K3d menyediakan klaster K3s lokal, sedangkan Kustomize mengelola manifest dasar dan overlay. Pada Kubernetes, Service menyediakan jalur stabil menuju Pod; NodePort mengekspos layanan pada port tertentu di node \cite{kubernetes-service}. StatefulSet digunakan untuk PostgreSQL karena identitas Pod dan penyimpanan persisten dapat dikaitkan melalui volume claim template \cite{kubernetes-statefulset}.
 
 Uji beban mengukur jumlah pengguna virtual, laju permintaan, durasi respons, persentil latensi, dan tingkat kesalahan. Ambang pengujian menetapkan batas lulus untuk latensi dan kegagalan permintaan \cite{k6-thresholds}. Hasil pada laporan ini menggambarkan konfigurasi lokal yang diuji, bukan jaminan kapasitas produksi.
 
@@ -374,9 +374,9 @@ Uji beban mengukur jumlah pengguna virtual, laju permintaan, durasi respons, per
 
 \subsection{Asumsi operasional}
 
-BMKG dan PVMBG diperlakukan sebagai layanan otonom yang hanya merespons request. Aggregator melakukan polling dengan interval default 3 detik. Mock menyiapkan 20 record awal dan menghasilkan record baru dengan interval default 10 detik. Delay simulasi BMKG default 100 ms, sedangkan PVMBG memakai rentang 500 ms hingga 3 detik. Nilai tersebut adalah parameter eksperimen, bukan karakteristik layanan produksi.
+BMKG dan PVMBG diperlakukan sebagai layanan otonom yang hanya merespons permintaan. Aggregator melakukan polling dengan interval bawaan 3 detik. Mock menyiapkan 20 record awal dan menghasilkan record baru dengan interval bawaan 10 detik. Penundaan simulasi BMKG bawaan 100 ms, sedangkan PVMBG memakai rentang 500 ms hingga 3 detik. Nilai tersebut adalah parameter eksperimen, bukan karakteristik layanan produksi.
 
-Port, kredensial, interval, dan konfigurasi runtime dibaca dari environment. Secret aktual disediakan secara lokal atau melalui Kubernetes Secret dan tidak ditanam pada source code. Seluruh klien hilir bersifat hanya-baca pada M1.
+Port, kredensial, interval, dan konfigurasi saat berjalan dibaca dari variabel lingkungan. Secret aktual disediakan secara lokal atau melalui Kubernetes Secret dan tidak ditanam pada kode sumber. Seluruh klien hilir bersifat hanya-baca pada M1.
 
 \subsection{Kebijakan desain}
 
@@ -392,13 +392,40 @@ Port, kredensial, interval, dan konfigurasi runtime dibaca dari environment. Sec
 
 \textbf{Pengiriman event.} Outbox dan RabbitMQ menggunakan pengiriman setidaknya satu kali. Konsumen menekan pemrosesan ganda berdasarkan identitas kejadian selama proses berjalan. Karena catatan deduplikasi belum persisten, perlindungan itu tidak bertahan setelah konsumen dimulai ulang.
 
-\subsection{Metode evaluasi}
+\section{Metode Evaluasi}
 
-\textbf{Lingkungan dan bukti.} Skenario ujung ke ujung P1--P5 dijalankan pada stack Docker Compose terisolasi pada 25 September 2026. Seluruh angka P1--P5 dalam makalah ini berasal dari satu run akhir yang sama. Pengamatan mencakup respons API, status sumber, identitas kontainer, isi basis data, panjang antrean, dan log dengan ID korelasi. Masa berlaku token diatur menjadi 60 detik agar kedaluwarsa dapat diamati tanpa memajukan jam.
+\textbf{Lingkungan dan bukti.} Skenario ujung ke ujung P1--P5 dijalankan pada lingkungan Docker Compose terisolasi, dan angka hasil skenario tersebut berasal dari satu pengujian akhir yang sama. Angka beban berasal dari dua pengujian k6 terpisah. Selain itu, tiga pengamatan pendukung direkam pada lingkungan yang sama: sapuan penundaan sumber, pengulangan langkah evolusi skema, dan satu pesan rusak untuk menguji jalur dead-letter. Sarana demonstrasi mencatat setiap langkah skenario sebagai assertion HTTP beserta ID korelasi. Pengamatan mencakup respons API, status sumber, identitas kontainer, isi basis data, panjang antrean, dan log dengan ID korelasi. Masa berlaku token diatur menjadi 60 detik agar kedaluwarsa dapat diamati tanpa memajukan jam.
 
-\textbf{Pengukuran beban.} Dua run k6 pada 24 September 2026 mengukur pembacaan melalui Client API. Uji isolasi menggunakan 25 pengguna virtual per sumber selama 30 detik; uji berkelanjutan menggunakan 50 pengguna virtual selama 60 detik. Persentil latensi, laju permintaan, galat tak terduga, dan penolakan HTTP 429 diperoleh dari ringkasan mesin dan dilaporkan pada Tabel~\ref{tab:load-results}.
+\textbf{Pengukuran beban.} Dua pengujian k6 mengukur pembacaan melalui Client API. Uji isolasi menggunakan 25 pengguna virtual per sumber selama 30 detik; uji berkelanjutan menggunakan 50 pengguna virtual selama 60 detik. Persentil latensi, laju permintaan, kesalahan tak terduga, dan penolakan HTTP 429 diperoleh dari ringkasan mesin dan dilaporkan pada Tabel~\ref{tab:load-results}.
 
-\textbf{Batas inferensi.} Semua sumber merupakan simulasi dan tiap skenario beban hanya memiliki satu run pada konfigurasi lokal. Hasilnya menilai perilaku prototipe yang diuji, bukan kapasitas produksi atau latensi layanan BMKG dan PVMBG yang sebenarnya.
+\textbf{Batas inferensi.} Semua sumber merupakan simulasi dan tiap skenario beban hanya memiliki satu pengujian pada konfigurasi lokal. Hasilnya menilai perilaku prototipe yang diuji, bukan kapasitas produksi atau latensi layanan BMKG dan PVMBG yang sebenarnya.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Satu konfigurasi lokal yang terdokumentasi.} Versi perangkat lunak dan perangkat keras yang digunakan pada seluruh pengujian.}
+\label{tab:environment}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{3.6cm}Y@{}}
+\toprule
+\textbf{Komponen} & \textbf{Versi atau konfigurasi}\\
+\midrule
+Perangkat host & macOS 26.5.2, Apple M4, 16 GiB RAM\\
+Bahasa dan runtime & Go 1.26; Node 26 untuk Demo Console\\
+Basis data & PostgreSQL 17, satu instans dengan dua basis data milik layanan berbeda\\
+Broker pesan & RabbitMQ 4 (image management)\\
+Kontainer dan klaster & Docker 29.0.1, Compose v2.40.3, k3d v5.9.0, kubectl v1.37.0\\
+Uji beban & k6 v1.5.0; executor \code{constant-vus}\\
+Konfigurasi layanan & polling 3 detik, penundaan BMKG 100 ms, PVMBG 0,5--3 detik, token akses 60 detik\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/demo-p1.png}
+\caption[Assertion skenario P1 pada Demo Console]{\textbf{Langkah skenario tercatat sebagai assertion HTTP dengan ID korelasi.} Empat assertion P1 lulus: baseline HazardEvent kanonik lengkap, pengubahan skema melalui Demo API tanpa memulai ulang layanan (HTTP 200), penerusan field tak dikenal ke \code{attributes}, dan pembacaan berdampingan record lama dan baru. Cuplikan diambil dari Demo Console pada lingkungan pengujian.}
+\label{fig:demo-console}
+\end{figure}
 
 \section{Problem 1: Arsitektur dan Interoperabilitas Data}
 
@@ -420,7 +447,7 @@ Tingkat ancaman \emph{waspada}, \emph{siaga}, atau \emph{awas} pada peringatan y
 
 \subsection{Penanganan perubahan skema}
 
-Field wajib yang dibaca dari payload diperiksa jenis dan keberadaannya, sedangkan atribut tambahan dipertahankan tanpa mengubah tabel kanonik. Penambahan \code{confidence_level} karena itu tidak memerlukan migrasi per atribut. Pemeriksaan bahwa \code{volcano_id} benar-benar ada dalam tabel referensi belum eksplisit pada pemetaan PVMBG; validasi lokasi tidak diklaim untuk ID yang tidak dikenal.
+Field wajib yang dibaca dari muatan data diperiksa jenis dan keberadaannya, sedangkan atribut tambahan dipertahankan tanpa mengubah tabel kanonik. Penambahan \code{confidence_level} karena itu tidak memerlukan migrasi per atribut. Pemeriksaan bahwa \code{volcano_id} benar-benar ada dalam tabel referensi belum eksplisit pada pemetaan PVMBG; validasi lokasi tidak diklaim untuk ID yang tidak dikenal.
 
 \subsection{Konsekuensi pilihan dan batasan}
 
@@ -428,7 +455,14 @@ Pemetaan dinamis mengurangi coupling pada daftar field sumber, sedangkan field k
 
 \subsection{Pengujian dan bukti}
 
-\textbf{Penambahan atribut tidak memerlukan migrasi tabel pada run lokal.} Snapshot akhir run E2E menunjukkan 90 HazardEvent BMKG dan 90 PVMBG. Sebanyak 25 record PVMBG tanpa \code{confidence_level} dan 65 record dengannya dapat dibaca bersama setelah perubahan saat layanan berjalan. Hasil ini membuktikan kompatibilitas penambahan atribut pada data uji; perubahan nama atau tipe field tidak diuji.
+\textbf{Penambahan atribut tidak memerlukan migrasi tabel pada pengujian lokal.} Rekaman akhir pengujian E2E menunjukkan 90 HazardEvent BMKG dan 90 PVMBG. Sebanyak 25 record PVMBG tanpa \code{confidence_level} dan 65 record dengannya dapat dibaca bersama setelah perubahan saat layanan berjalan. Hasil ini membuktikan kompatibilitas penambahan atribut pada data uji; perubahan nama atau tipe field tidak diuji.
+
+\begin{figure}[htbp]
+\centering
+\input{figures/p1-schema.tex}
+\caption[Komposisi record PVMBG sebelum dan sesudah perubahan skema]{\textbf{Satu tabel menyimpan dua bentuk skema.} Komposisi 90 record PVMBG pada Canonical Store setelah perubahan skema: 25 record dibuat sebelum \code{confidence_level} muncul dan 65 record dibuat sesudahnya. Keduanya dibaca dari tabel yang sama tanpa migrasi dan tanpa memulai ulang layanan.}
+\label{fig:p1-schema}
+\end{figure}
 
 \begin{evidencebox}{Observasi pemetaan dan evolusi skema}
 \begin{lstlisting}
@@ -455,25 +489,29 @@ Jika polling PVMBG gagal, Aggregator mempertahankan data terakhir dan menandai s
 
 \subsection{Metode dan hasil uji beban}
 
-Uji isolasi menjalankan 25 pengguna virtual untuk pembacaan BMKG dan 25 untuk PVMBG selama 30 detik, sementara batas penundaan polling PVMBG dikonfigurasi hingga 3 detik. k6 mengukur waktu respons baca Client API, bukan panggilan langsung ke sumber. Dari 27.558 permintaan, laju gabungan tercatat 914,981 permintaan per detik. Pembacaan BMKG menghasilkan p50 3,445 ms, p95 8,790 ms, dan p99 19,462 ms; p95 pembacaan PVMBG sebesar 8,425 ms. \textbf{p95 pembacaan BMKG berada di bawah ambang 300 ms} pada run ini, tanpa galat maupun penolakan kapasitas.
+Uji isolasi menjalankan 25 pengguna virtual untuk pembacaan BMKG dan 25 untuk PVMBG selama 30 detik, sementara batas penundaan polling PVMBG dikonfigurasi hingga 3 detik. k6 mengukur waktu respons pembacaan melalui Client API, bukan panggilan langsung ke sumber. Dari 27.558 permintaan, laju gabungan tercatat 914,981 permintaan per detik. Pembacaan BMKG menghasilkan p50 3,445 ms, p95 8,790 ms, dan p99 19,462 ms; p95 pembacaan PVMBG sebesar 8,425 ms. \textbf{p95 pembacaan BMKG berada di bawah ambang 300 ms} pada pengujian ini, tanpa kesalahan maupun penolakan kapasitas.
 
-Uji berkelanjutan memakai 50 pengguna virtual selama 60 detik untuk pembacaan data BMKG. Run menghasilkan 28.211 permintaan dengan laju 468,899 permintaan per detik. Latensi p50, p95, dan p99 masing-masing 4,888 ms, 13,970 ms, dan 19,915 ms. Tingkat kesalahan dan penolakan kapasitas terkontrol tercatat 0\%. Ambang evaluasi mengukur persentil latensi serta proporsi permintaan gagal \cite{k6-thresholds}.
+Uji berkelanjutan memakai 50 pengguna virtual selama 60 detik untuk pembacaan data BMKG. Pengujian menghasilkan 28.211 permintaan dengan laju 468,899 permintaan per detik. Latensi p50, p95, dan p99 masing-masing 4,888 ms, 13,970 ms, dan 19,915 ms. Tingkat kesalahan dan penolakan kapasitas terkontrol tercatat 0\%. Ambang evaluasi mengukur persentil latensi serta proporsi permintaan gagal \cite{k6-thresholds}.
+
+Konfigurasi k6 memakai executor \code{constant-vus} dengan ambang lulus \code{unexpected_errors: rate<0,01} dan \code{bmkg_only_latency: p(95)<300}. Jeda per iterasi 50 ms pada uji isolasi dan 100 ms pada uji berkelanjutan; endpoint yang diuji adalah pembacaan \code{GET /hazards?source=BMKG} dan \code{source=PVMBG} melalui Client API.
 
 \begin{table}[htbp]
 \centering
-\caption[Hasil dua skenario uji beban lokal]{\textbf{Pembacaan BMKG memenuhi ambang p95 pada dua skenario lokal.} Angka berasal dari run k6 pada 24 September 2026 melalui Client API.}
+\caption[Hasil dua skenario uji beban lokal]{\textbf{Pembacaan BMKG memenuhi ambang p95 pada dua skenario lokal.} Angka berasal dari pengujian k6 melalui Client API.}
 \label{tab:load-results}
 \footnotesize
 \setlength{\tabcolsep}{3.5pt}
-\begin{tabularx}{\textwidth}{L{2.1cm}Y R{1.55cm}R{1.4cm}R{1.0cm}R{1.0cm}R{1.0cm}R{1.0cm}}
+\begin{tabularx}{\textwidth}{@{}L{2.1cm}Y R{1.4cm}R{1.4cm}R{1.0cm}R{1.0cm}R{1.0cm}R{1.3cm}@{}}
 \toprule
-\textbf{Skenario} & \textbf{Beban/durasi} & \textbf{Permintaan} & \textbf{Laju (req/s)} & \textbf{p50 (ms)} & \textbf{p95 (ms)} & \textbf{p99 (ms)} & \textbf{Galat}\\
+\textbf{Skenario} & \textbf{Beban/durasi} & \textbf{Permintaan} & \textbf{Laju (req/s)} & \multicolumn{3}{c}{\textbf{Latensi BMKG (ms)}} & \textbf{Kesalahan}\\
+\cmidrule(lr){5-7}
+ & & & & \textbf{p50} & \textbf{p95} & \textbf{p99} & \\
 \midrule
 Isolasi sumber & 25 VU per sumber; 30 s & 27.558 & 914,981 & 3,445 & \cellcolor{metablue!10}\textbf{8,790} & 19,462 & 0\%\\
 Berkelanjutan & 50 VU; 60 s & 28.211 & 468,899 & 4,888 & 13,970 & 19,915 & 0\%\\
 \bottomrule
 \end{tabularx}
-\par\vspace{2pt}{\footnotesize\raggedright Catatan: pada baris isolasi, jumlah permintaan dan laju menggabungkan dua sumber; persentil latensi hanya untuk endpoint baca BMKG. VU = pengguna virtual.\par}
+\par\vspace{2pt}{\footnotesize\raggedright Catatan: pada baris isolasi, jumlah permintaan dan laju menggabungkan dua sumber; persentil latensi hanya untuk pembacaan BMKG. VU = pengguna virtual.\par}
 \end{table}
 
 \begin{figure}[htbp]
@@ -487,24 +525,34 @@ Berkelanjutan & 50 VU; 60 s & 28.211 & 468,899 & 4,888 & 13,970 & 19,915 & 0\%\\
   xtick={1,2,3},
   xticklabels={p50,p95,p99},
   ymin=0,
-  ymax=23,
+  ymax=24,
   ytick={0,5,10,15,20},
   xlabel={Persentil latensi},
   ylabel={Latensi (ms)},
   ymajorgrids=true,
   xmajorgrids=false,
+  grid style={draw=metafg!13,densely dotted},
   axis lines*=left,
   axis line style={draw=metafg!65,line width=0.55pt},
   tick label style={font=\footnotesize},
   label style={font=\footnotesize},
   clip=false,
 ]
-\addplot+[only marks,mark=*,mark size=2.6pt,mark options={fill=metablue,draw=metablue}] coordinates {
-  (0.88,3.445) (1.88,8.7898) (2.88,19.46156)
-};
-\addplot+[only marks,mark=square*,mark size=2.5pt,mark options={fill=metafg!70,draw=metafg!70}] coordinates {
-  (1.12,4.888) (2.12,13.970) (3.12,19.91538)
-};
+% series 1: isolation run, blue circles with solid trend line
+\addplot+[mark=*,mark size=2.6pt,line width=1pt,
+  mark options={fill=metablue,draw=metablue},draw=metablue]
+  coordinates {(0.88,3.445) (1.88,8.7898) (2.88,19.46156)};
+% series 2: sustained run, amber squares with dashed trend line
+\addplot+[mark=square*,mark size=2.5pt,line width=1pt,dashed,
+  mark options={fill=fairamber,draw=fairamber},draw=fairamber]
+  coordinates {(1.12,4.888) (2.12,13.970) (3.12,19.91538)};
+% direct value labels for the headline point and the two endpoints
+\node[font=\sffamily\scriptsize,text=metablue,anchor=south,inner sep=1.5pt]
+  at (axis cs:1.88,8.790) {8,79};
+\node[font=\sffamily\scriptsize,text=metablue,anchor=east,inner sep=2pt]
+  at (axis cs:2.88,19.462) {19,46};
+\node[font=\sffamily\scriptsize,text=fairamber!85!black,anchor=west,inner sep=2pt]
+  at (axis cs:3.12,19.915) {19,92};
 \end{axis}
 \end{tikzpicture}
 \end{minipage}\hfill
@@ -517,30 +565,45 @@ Berkelanjutan & 50 VU; 60 s & 28.211 & 468,899 & 4,888 & 13,970 & 19,915 & 0\%\\
 ]
 {\footnotesize\sffamily\bfseries\color{metafg}HASIL UTAMA}\par\smallskip
 {\Large\sffamily\bfseries\color{metablue}8,79 ms}\par
-{\small p95 baca BMKG, uji isolasi}\par\medskip
-{\small\textbf{Ambang} 300 ms\\
-\textbf{Rasio} 2,9\% dari ambang}
+{\small p95 pembacaan BMKG, uji isolasi}\par\medskip
+{\small\textbf{Ambang} 300 ms}\par\smallskip
+{\small p95 terhadap ambang}\par\smallskip
+\begin{tikzpicture}[baseline]
+\fill[metafg!14] (0,0) rectangle (2.3,0.16);
+\fill[metablue] (0,0) rectangle (0.067,0.16);
+\draw[metafg!35,line width=0.4pt] (0,0) rectangle (2.3,0.16);
+\end{tikzpicture}\par\smallskip
+{\footnotesize 2,9\% dari ambang}
 \end{tcolorbox}
 \vspace{0.5em}
 {\footnotesize
-\tikz\fill[metablue] (0,0) circle (2pt);\ Isolasi BMKG\\
-\tikz\fill[metafg!70] (0,0) rectangle (4pt,4pt);\ Beban BMKG
+\tikz{\draw[metablue,line width=1pt] (0,0.5pt) -- (8pt,0.5pt);\fill[metablue] (4pt,0.5pt) circle (2pt);}\ Isolasi BMKG\\
+\tikz{\draw[fairamber,line width=1pt,dashed] (0,0.5pt) -- (8pt,0.5pt);\fill[fairamber] (4pt,0.5pt) rectangle (6.2pt,2.7pt);}\ Beban BMKG
 }
 \end{minipage}
-\caption[Persentil latensi pembacaan BMKG]{\textbf{p95 pembacaan BMKG berada di bawah ambang pada dua run lokal.} Seri biru menunjukkan uji isolasi 25 pengguna virtual per sumber selama 30 detik saat polling PVMBG diberi penundaan hingga 3 detik; seri gelap menunjukkan uji berkelanjutan 50 pengguna virtual selama 60 detik. Latensi diukur melalui Client API pada 24 September 2026. Ambang 300 ms ditampilkan terpisah karena di luar skala grafik.}
+\caption[Persentil latensi pembacaan BMKG]{\textbf{p95 pembacaan BMKG berada jauh di bawah ambang pada dua pengujian lokal.} Seri biru menunjukkan uji isolasi 25 pengguna virtual per sumber selama 30 detik saat polling PVMBG diberi penundaan hingga 3 detik; seri kuning menunjukkan uji berkelanjutan 50 pengguna virtual selama 60 detik. Kedua seri diukur melalui Client API dan dihubungkan untuk memperlihatkan bentuk profil latensi. Ambang 300 ms berada di luar skala grafik; rasio p95 isolasi terhadap ambang ditampilkan pada kartu di kanan.}
 \label{fig:load-percentiles}
+\end{figure}
+
+\textbf{Sapuan penundaan sumber.} Batas penundaan maksimum PVMBG dinaikkan dari 0,5 detik menjadi 3 detik pada tiga pengujian terpisah dengan beban yang sama. Persentil ke-95 pembacaan BMKG bergerak pada rentang 7,8--10,7 ms tanpa pola yang mengikuti besaran penundaan, sedangkan penundaan sumber itu sendiri melintasi ambang 300 ms. Pengukuran pertama pada 0,5 detik diulang setelah seluruh kontainer stabil; nilai pertamanya (26,4 ms) tidak dipakai karena masih mengandung pemanasan kontainer.
+
+\begin{figure}[htbp]
+\centering
+\input{figures/p2-sweep.tex}
+\caption[Pembacaan tetap cepat saat sumber melambat]{\textbf{Pembacaan BMKG tidak mengikuti perlambatan sumber.} Batas penundaan maksimum PVMBG diatur pada 0,5, 1,5, dan 3,0 detik; p95 pembacaan BMKG (biru) tetap 7,8--10,7 ms, jauh di bawah ambang 300 ms, sementara penundaan sumber (kuning) melintasi ambang tersebut. Sumbu tegak memakai skala logaritmik. Nilai p95 pembacaan PVMBG pada ketiga pengujian adalah 7,3, 10,5, dan 7,8 ms.}
+\label{fig:p2-sweep}
 \end{figure}
 
 \textbf{Gangguan hanya mengubah kesegaran PVMBG.} Pembacaan BMKG dan data PVMBG yang telah tersimpan tetap berhasil ketika sumber vulkanik tidak tersedia. Setelah gangguan berakhir, status PVMBG pulih tanpa memulai ulang layanan.
 
 \subsection{Konsekuensi pilihan, batasan, dan bukti}
 
-Data terakhir mempertahankan sebagian fungsi baca ketika PVMBG tidak tersedia, tetapi memiliki risiko kebaruan. Karena itu status stale harus ikut diperiksa. Timeout dan batas inflight mengendalikan konsumsi resource, tetapi dapat membatasi throughput atau menghasilkan HTTP 429 saat kapasitas tercapai. Angka k6 merepresentasikan satu konfigurasi run lokal; angka tersebut bukan SLA produksi dan tidak membandingkan variasi spesifikasi host.
+Data terakhir mempertahankan sebagian fungsi baca ketika PVMBG tidak tersedia, tetapi memiliki risiko kebaruan. Karena itu status usang harus ikut diperiksa. Batas waktu dan jumlah permintaan serentak mengendalikan konsumsi sumber daya, tetapi dapat membatasi laju atau menghasilkan HTTP 429 saat kapasitas tercapai. Angka k6 merepresentasikan satu konfigurasi pengujian lokal; angka tersebut bukan SLA produksi dan tidak membandingkan variasi spesifikasi mesin.
 
 
-\begin{evidencebox}{Keluaran pengukuran dan observasi outage}
+\begin{evidencebox}{Keluaran pengukuran dan observasi gangguan}
 \begin{lstlisting}
-load run (24 Sep 2026): VU=50; duration=60.16 s; requests=28211
+load run: VU=50; duration=60.16 s; requests=28211
 throughput=468.899 req/s; p50=4.888 ms; p95=13.970 ms; p99=19.915 ms
 error_rate=0%; controlled_rejections=0
 outage: PVMBG healthy -> stale (stale_since set)
@@ -560,7 +623,7 @@ Setiap sumber, layanan internal, dan klien hilir memiliki identitas tersendiri. 
 \caption{\textbf{Kredensial tiap domain divalidasi oleh layanan pemiliknya.} Cakupan akses klien diterapkan kembali pada Client API.}
 \label{tab:trust-domains}
 \small
-\begin{tabularx}{\textwidth}{L{3.2cm}L{5.0cm}Y}
+\begin{tabularx}{\textwidth}{@{}L{3.2cm}L{5.0cm}Y@{}}
 \toprule
 \textbf{Domain} & \textbf{Kredensial} & \textbf{Pemilik validasi}\\
 \midrule
@@ -580,17 +643,24 @@ BNPB Ops & Kredensial berhak data lengkap & Auth Service\\
 
 Auth Service menerbitkan token dengan cakupan akses sesuai identitas. Media hanya memperoleh ringkasan, sedangkan Tim Lapangan dan BNPB Ops dapat memperoleh data mentah sesuai perannya. Client API memvalidasi token dan menegakkan cakupan tersebut di sisi server. Permintaan data mentah dari Media ditolak dengan HTTP 403; pembatasan tidak hanya bergantung pada tampilan antarmuka.
 
-Access token berlaku selama 60 detik pada konfigurasi pengujian. Refresh token disimpan dalam bentuk hash dan dirotasi ketika digunakan. Token lama setelah rotasi ditolak. Masa berlaku diuji secara alami, bukan dengan memajukan jam sistem.
+Token akses berlaku selama 60 detik pada konfigurasi pengujian. Token penyegaran disimpan dalam bentuk hash dan dirotasi ketika digunakan. Token lama setelah rotasi ditolak. Masa berlaku diuji secara alami, bukan dengan memajukan jam sistem.
+
+\begin{figure}[htbp]
+\centering
+\input{figures/p3-token.tex}
+\caption[Siklus token akses dan penyegaran]{\textbf{Kedaluwarsa, penyegaran, dan penolakan token lama teramati berurutan.} Skema waktu relatif, bukan skala sebenarnya. Token akses terbit dengan masa berlaku 60 detik; permintaan setelah kedaluwarsa ditolak dengan HTTP 401. Penyegaran menerbitkan pasangan token baru melalui HTTP 200, sedangkan token penyegaran yang sudah dirotasi ditolak dengan HTTP 401. Permintaan berikutnya dengan token baru kembali dilayani. Nilai pada gambar berasal dari urutan respons pengujian ujung ke ujung.}
+\label{fig:p3-token}
+\end{figure}
 
 \subsection{Konsekuensi pilihan, batasan, dan pengujian}
 
-Pemisahan trust mencegah penggunaan kredensial satu sumber pada sumber lain dan menempatkan enforcement data mentah di server. Auth Service menambahkan satu panggilan gRPC pada validasi akses, tetapi memusatkan penerbitan, validasi, dan rotasi token. M1 belum mengintegrasikan identity provider eksternal atau revocation list terdistribusi.
+Pemisahan kepercayaan mencegah penggunaan kredensial satu sumber pada sumber lain dan menempatkan penegakan pembatasan data mentah di sisi server. Auth Service menambahkan satu panggilan gRPC pada validasi akses, tetapi memusatkan penerbitan, validasi, dan rotasi token. M1 belum mengintegrasikan penyedia identitas eksternal atau daftar pencabutan terdistribusi. Penerbitan dan validasi berpusat pada Auth Service dengan penyimpanan yang terpisah dari Canonical Store sehingga kompromi pada satu klien tidak memperluas akses ke domain kredensial lain maupun ke data mentah.
 
 \textbf{Penolakan akses diterapkan pada batas layanan.} Kredensial silang BMKG dan PVMBG menghasilkan HTTP 401. Media mendapat HTTP 403 untuk data mentah, tetapi dapat membaca ringkasan tanpa koordinat dan atribut sumber; BNPB Ops dapat membaca data mentah. Token akses kedaluwarsa setelah 60 detik, sedangkan penggunaan ulang token penyegaran yang sudah dirotasi ditolak. Pemindaian konfigurasi tidak menemukan kandidat kredensial tertanam, dengan batas bahwa pemeriksaan tersebut bersifat heuristik.
 
 \begin{evidencebox}{Ringkasan audit konfigurasi}
 \begin{lstlisting}
-configuration template tracked: yes
+tracked .env.example: present
 other tracked environment files: 0
 credential-signature candidates in tracked code/configuration: 0
 scan: high-confidence private-key and provider-token patterns plus long literal assignments
@@ -614,11 +684,11 @@ refresh token: HTTP 200; penggunaan ulang refresh token lama: HTTP 401
 
 \subsection{Batas layanan}
 
-BMKG dan PVMBG merupakan mock source independen. Aggregator menangani polling, pemetaan, status sumber, Canonical Store, dan outbox. Auth Service mengelola client serta token. Client API menyajikan endpoint downstream dan menegakkan otorisasi. Dashboard, Notifier, dan Portal merupakan consumer terpisah. Batas ini memungkinkan salah satu layanan dibangun ulang tanpa mengemas ulang seluruh sistem.
+BMKG dan PVMBG merupakan mock sumber independen. Aggregator menangani polling, pemetaan, status sumber, Canonical Store, dan outbox. Auth Service mengelola klien serta token. Client API menyajikan endpoint untuk klien hilir dan menegakkan otorisasi. Dashboard, Notifier, dan Portal merupakan konsumen terpisah. Batas ini memungkinkan salah satu layanan dibangun ulang tanpa mengemas ulang seluruh sistem.
 
 \subsection{Penyimpanan dan kepemilikan data}
 
-PostgreSQL menyimpan HazardEvent pada kolom kanonik serta atribut fleksibel dalam JSONB. Dalam deployment lokal, satu instance PostgreSQL menyediakan penyimpanan terpisah bagi Aggregator dan Auth Service dengan peran akses berbeda. Aggregator menjadi pemilik Canonical Store. Tugas migrasi satu kali menggunakan kredensial milik Aggregator untuk menyiapkan skema; layanan runtime lain tidak menerima URL tersebut. Peran Auth tidak memiliki hak SELECT pada tabel HazardEvent, sementara Client API membaca data melalui API Aggregator dan consumer menerima event melalui broker. Sarana demonstrasi tidak memiliki akses database maupun kendali terhadap container.
+PostgreSQL menyimpan HazardEvent pada kolom kanonik serta atribut fleksibel dalam JSONB. Dalam penerapan lokal, satu instance PostgreSQL menyediakan penyimpanan terpisah bagi Aggregator dan Auth Service dengan peran akses berbeda. Aggregator menjadi pemilik Canonical Store. Tugas migrasi satu kali menggunakan kredensial milik Aggregator untuk menyiapkan skema; layanan runtime lain tidak menerima URL tersebut. Peran Auth tidak memiliki hak SELECT pada tabel HazardEvent, sementara Client API membaca data melalui API Aggregator dan konsumen menerima event melalui broker. Sarana demonstrasi tidak memiliki akses basis data maupun kendali terhadap kontainer.
 
 \subsection{Alternatif dan pertukaran}
 
@@ -626,11 +696,36 @@ Skema relasional tetap memudahkan tipe dan query tetapi setiap field baru dapat 
 
 \subsection{Penerapan dan pengujian}
 
-Pada K3d, workload memiliki satu replika secara default. PostgreSQL berjalan sebagai StatefulSet satu replika dengan volume claim template 2 GiB. RabbitMQ berjalan satu replika dengan PVC 1 GiB. Overlay lokal mengekspos Client API melalui NodePort 30080; port host dipetakan ke load balancer K3d. Tidak ada Ingress pada overlay lokal. Service NodePort menerima trafik pada port node dan meneruskannya ke Service/endpoint terkait \cite{kubernetes-service}; StatefulSet mempertahankan identitas Pod dan storage terkait \cite{kubernetes-statefulset}.
+Pada K3d, beban kerja memiliki satu replika pada konfigurasi bawaan. PostgreSQL berjalan sebagai StatefulSet satu replika dengan volume claim template 2 GiB. RabbitMQ berjalan satu replika dengan PVC 1 GiB. Overlay lokal mengekspos Client API melalui NodePort 30080; port host dipetakan ke penyeimbang beban K3d. Tidak ada Ingress pada overlay lokal. Service NodePort menerima trafik pada port node dan meneruskannya ke Service/endpoint terkait \cite{kubernetes-service}; StatefulSet mempertahankan identitas Pod dan penyimpanan terkait \cite{kubernetes-statefulset}.
+
+\textbf{Overlay lokal dijalankan dan diverifikasi pada klaster.} Sebelas Deployment dan satu StatefulSet berjalan pada satu server dan dua agen; seluruh pod berada pada status Running dan tersebar di ketiga node. Client API diekspos melalui NodePort 30080, dan permintaan kesehatan melalui jalur tersebut menghasilkan HTTP 200. Percobaan pertama gagal karena pod konsumen merujuk ServiceAccount yang belum didefinisikan pada manifest; setelah manifest dilengkapi, seluruh rollout selesai tanpa perubahan lain.
+
+\begin{evidencebox}{Deployment K3d: pod, service, dan pemeriksaan kesehatan}
+\begin{lstlisting}
+NAME                                  READY   STATUS    NODE
+aggregator-846d9d8498-c8jrw           1/1     Running   k3d-bnpb-m1-agent-1
+auth-64dfd88d45-8pmfh                 1/1     Running   k3d-bnpb-m1-agent-0
+bmkg-78548d5f4f-p7g9f                 1/1     Running   k3d-bnpb-m1-agent-0
+client-api-5858d9678-8gz7s            1/1     Running   k3d-bnpb-m1-server-0
+dashboard-consumer-659b76b667-l95lf   1/1     Running   k3d-bnpb-m1-agent-1
+demo-api-676c777559-lqj2r             1/1     Running   k3d-bnpb-m1-agent-1
+demo-console-db985f7d8-2cdkh          1/1     Running   k3d-bnpb-m1-agent-0
+notifier-consumer-5d7d87d8b5-gq2nd    1/1     Running   k3d-bnpb-m1-agent-0
+portal-consumer-946685b77-tzb5v       1/1     Running   k3d-bnpb-m1-agent-1
+postgres-0                            1/1     Running   k3d-bnpb-m1-server-0
+pvmbg-5c88dc44c6-jkpnc                1/1     Running   k3d-bnpb-m1-server-0
+rabbitmq-7f5f998fbd-dkn8z             1/1     Running   k3d-bnpb-m1-server-0
+
+(kolom IP, umur, dan gate disaring dari keluaran)
+
+client-api   NodePort   :8080 :30080     (satu-satunya port host)
+GET http://<host>:18080/health -> HTTP 200 {"service":"client-api","status":"ok"}
+\end{lstlisting}
+\end{evidencebox}
 
 \textbf{Pembangunan ulang PVMBG tidak mengubah Aggregator maupun Client API.} Identitas kedua kontainer tetap sama dan pembacaan BMKG masih menghasilkan HTTP 200. Pemeriksaan konfigurasi menunjukkan hanya Aggregator dan tugas migrasinya menerima URL Canonical Store; peran Auth tidak memiliki hak SELECT pada HazardEvent. Sebanyak 25 record lama dan 65 record baru tetap terbaca tanpa perubahan struktur tabel.
 
-\begin{evidencebox}{Observasi rebuild dan kepemilikan penyimpanan}
+\begin{evidencebox}{Observasi pembangunan ulang dan kepemilikan penyimpanan}
 \begin{lstlisting}
 PVMBG container: b35925c4cddd -> 86cecb7978f8 (rebuilt)
 Aggregator container: a041fba24f5c -> a041fba24f5c (unchanged)
@@ -641,14 +736,14 @@ runtime services (API, Auth, sources, consumers): no canonical URL
 Auth database role SELECT on hazard_events: denied
 old/new PVMBG records without/with confidence_level: 25/65
 \end{lstlisting}
-\noindent\small Pemeriksaan menunjukkan bahwa tugas migrasi memakai kredensial pemilik store, sedangkan layanan runtime lain tidak menerimanya. Hak SELECT peran Auth juga diperiksa pada PostgreSQL; kebijakan firewall jaringan tidak menjadi bagian dari probe ini.
+\noindent\small Pemeriksaan menunjukkan bahwa tugas migrasi memakai kredensial pemilik penyimpanan kanonik, sedangkan layanan lain yang berjalan tidak menerimanya. Hak SELECT peran Auth juga diperiksa pada PostgreSQL; kebijakan firewall jaringan tidak menjadi bagian dari pemeriksaan ini.
 \end{evidencebox}
 
 \section{Problem 5: Distribusi Event kepada Banyak Konsumen}
 
 \subsection{Produsen, broker, dan konsumen}
 
-Aggregator menyimpan HazardEvent dan pesan outbox dalam satu transaksi. Outbox worker menerbitkan pesan persisten ke exchange fanout RabbitMQ, yang menyalurkan salinan event ke antrean durable tiap konsumen \cite{rabbit-exchanges}. Producer tidak memanggil konsumen secara sinkron.
+Aggregator menyimpan HazardEvent dan pesan outbox dalam satu transaksi. Pekerja outbox menerbitkan pesan persisten ke exchange fanout RabbitMQ yang menyalurkan salinan event ke antrean tahan lama tiap konsumen \cite{rabbit-exchanges}. Produsen tidak memanggil konsumen secara sinkron.
 
 Publisher menunggu konfirmasi penerimaan broker, sedangkan konsumen mengakui pesan setelah pemrosesan berhasil. Pesan yang terus gagal dapat dipisahkan dari antrean utama melalui mekanisme dead-letter. Konfirmasi publisher dan acknowledgement konsumen melindungi dua sisi pengiriman yang berbeda \cite{rabbit-confirms}.
 
@@ -658,11 +753,20 @@ Outbox serta broker menggunakan pengiriman setidaknya satu kali; pesan dapat dit
 
 \subsection{Konsekuensi pilihan, batasan, dan pengujian}
 
-RabbitMQ dipilih karena exchange fanout dan queue terpisah sesuai dengan kebutuhan M1 untuk mengisolasi consumer dan menambahkan subscriber tanpa perubahan producer. Kafka dapat menyediakan replay dan model log berpartisi, tetapi menambah kompleksitas operasional di luar kebutuhan demonstrasi lokal. Dead-lettering membantu memisahkan pesan yang ditolak, tetapi keberhasilan pemindahan dead-letter tetap bergantung pada konfigurasi broker \cite{rabbit-dlx}.
+RabbitMQ dipilih karena exchange bertipe fanout dan antrean terpisah sesuai dengan kebutuhan M1 untuk mengisolasi tiap konsumen dan menambahkan konsumen baru tanpa perubahan produsen. Kafka dapat menyediakan pemutaran ulang dan model log berpartisi, tetapi menambah kompleksitas operasional di luar kebutuhan demonstrasi lokal. Dead-lettering membantu memisahkan pesan yang ditolak, tetapi keberhasilan pemindahan dead-letter tetap bergantung pada konfigurasi broker \cite{rabbit-dlx}.
 
-\textbf{Gangguan konsumen dan broker menghasilkan backlog yang pulih.} Saat Notifier berhenti, antreannya berubah dari 0 menjadi 8 pesan sementara Dashboard tetap menerima event; setelah Notifier aktif kembali, antrean menjadi nol dan event yang sama ditemukan pada lognya. Portal ditambahkan tanpa mengubah image producer. Saat broker berhenti, 10 pesan outbox tertunda lalu habis diterbitkan setelah broker pulih. Log ketiga konsumen memuat ID kejadian dan ID korelasi yang sama. Run ini tidak memaksakan pengiriman ulang, sehingga tidak membuktikan deduplikasi persisten.
+\textbf{Gangguan konsumen dan broker membentuk tumpukan antrean yang pulih.} Saat Notifier berhenti, antreannya berubah dari 0 menjadi 8 pesan sementara Dashboard tetap menerima event; setelah Notifier aktif kembali, antrean menjadi nol dan event yang sama ditemukan pada lognya. Portal ditambahkan tanpa mengubah image Aggregator. Saat broker berhenti, 10 pesan outbox tertunda lalu habis diterbitkan setelah broker pulih. Log ketiga konsumen memuat ID kejadian dan ID korelasi yang sama. Pengujian ini tidak memaksakan pengiriman ulang sehingga tidak membuktikan deduplikasi persisten.
 
-\begin{evidencebox}{Log consumer dan pemulihan pesan}
+\begin{figure}[htbp]
+\centering
+\input{figures/p5-delivery.tex}
+\caption[Jejak penyampaian event ke tiga konsumen]{\textbf{Event yang terbit saat konsumen berhenti tetap tersusul, bukan hilang.} Jejak pemrosesan pada pengujian ujung ke ujung; sumbu waktu dalam detik relatif. Notifier memproses 4a3a\ldots{} sesaat sebelum dihentikan; selama penghentian Dashboard tetap memproses 3db8\ldots{} dan Notifier menyusul event yang sama 0,9 detik setelah dijalankan kembali, sejalan dengan antrean tahan lama yang berubah dari 0 menjadi 8 lalu kembali 0 pesan. Event ece5\ldots{} diterima ketiga konsumen dengan selisih di bawah 0,1 ms. Rentang penghentian dibatasi oleh log terakhir sebelum penghentian dan log pertama setelah pemulihan.}
+\label{fig:p5-delivery}
+\end{figure}
+
+\textbf{Pesan rusak berakhir di dead-letter queue.} Satu pesan yang bukan protobuf valid dipublikasikan ke exchange. Setiap konsumen menolaknya tanpa pengantrean ulang dan mencatat kegagalan dekode; pesan itu berakhir tepat satu kali di dead-letter queue tiap konsumen, sementara antrean utama kembali kosong dan pemrosesan event normal berlanjut. Pada rancangan awal, ketiga konsumen berbagi satu dead-letter exchange bertipe fanout sehingga satu pesan tersalin ke seluruh dead-letter queue; adapter konsumen kemudian diubah agar setiap konsumen memakai dead-letter exchange sendiri.
+
+\begin{evidencebox}{Log konsumen dan pemulihan pesan}
 \begin{lstlisting}
 dashboard-consumer | event_id=ece5a4df | correlation_id=ee1bacfe | redelivered=false
 notifier-consumer  | event_id=ece5a4df | correlation_id=ee1bacfe | redelivered=false
@@ -677,21 +781,19 @@ Notifier queue: 0 -> 8 -> 0; outbox while broker was down: 10 -> 0
 
 \subsection{Pemeriksaan kesehatan dan pencatatan}
 
-Layanan menyediakan pemeriksaan kesehatan untuk pemantauan pada container lokal maupun cluster Kubernetes. Aggregator juga melaporkan kesegaran BMKG dan PVMBG secara terpisah. Log terstruktur memuat nama layanan, operasi, hasil, latensi, dan ID korelasi sehingga alur permintaan lintas layanan dapat ditelusuri.
+Layanan menyediakan pemeriksaan kesehatan untuk pemantauan pada kontainer lokal maupun klaster Kubernetes. Aggregator juga melaporkan kesegaran BMKG dan PVMBG secara terpisah. Log terstruktur memuat nama layanan, operasi, hasil, latensi, dan ID korelasi sehingga alur permintaan lintas layanan dapat ditelusuri.
 
 \subsection{Keamanan konfigurasi}
 
-Kredensial aktual tidak ditanam pada kode aplikasi, image layanan, atau konfigurasi deployment. Berkas contoh hanya menjelaskan jenis konfigurasi yang diperlukan; nilai rahasia disediakan secara lokal atau melalui Secret Kubernetes. Layanan dijalankan dengan hak akses minimum. Auth Service memisahkan kredensial klien dan menyimpan token dalam bentuk hash; akses data mentah diperiksa di sisi server.
+Kredensial aktual tidak ditanam pada kode aplikasi, image layanan, atau konfigurasi penerapan. Berkas contoh \texttt{.env.example} hanya menjelaskan jenis konfigurasi yang diperlukan; nilai rahasia disediakan secara lokal atau melalui Secret Kubernetes. Layanan dijalankan dengan hak akses minimum. Auth Service memisahkan kredensial klien dan menyimpan token dalam bentuk hash; akses data mentah diperiksa di sisi server.
 
 \subsection{Petunjuk menjalankan sistem}
 
-Operasi lokal dimulai dengan menyediakan kredensial melalui mekanisme yang aman, menyiapkan kontrak komunikasi, lalu menjalankan layanan sebagai container terpisah. Setelah pemeriksaan kesehatan menyatakan layanan siap, pengujian fungsional dan skenario E2E digunakan untuk memvalidasi perilaku sistem.
+Langkah lengkap menjalankan sistem dari kondisi awal, daftar variabel lingkungan, serta perintah untuk memicu setiap skenario demo tercantum pada README repositori. Bagian ini merangkum alur utamanya.
 
-Pada mode lokal, Docker Compose menjalankan layanan sumber, layanan koordinasi, basis data, dan broker dalam kontainer terpisah. Kontrak komunikasi disiapkan sebelum layanan dijalankan.
+Pada mode lokal, kredensial disalin dari \texttt{.env.example}, kontrak komunikasi dibangkitkan, lalu seluruh layanan dijalankan sebagai kontainer terpisah melalui satu perintah Docker Compose. Setelah pemeriksaan kesehatan menyatakan layanan siap, uji unit, validasi kontrak, dan skenario E2E dijalankan untuk menilai kesiapan sistem.
 
-Setelah layanan siap, pemeriksaan kesehatan, uji unit, validasi kontrak, dan skenario E2E digunakan untuk menilai kesiapan dan perilaku sistem.
-
-Untuk evaluasi klaster lokal, K3d menjalankan satu server dan dua agen. Akses klien masuk melalui NodePort, sementara komunikasi internal menggunakan Service Kubernetes. Layanan tanpa status dapat direplikasi; basis data dan broker tetap satu replika pada konfigurasi M1 sehingga keduanya menjadi titik kegagalan tunggal.
+Untuk evaluasi klaster lokal, K3d menjalankan satu server dan dua agen; akses klien masuk melalui NodePort, sedangkan komunikasi internal memakai Service Kubernetes. Layanan tanpa status dapat direplikasi, sementara basis data dan broker tetap satu replika pada konfigurasi M1 sehingga keduanya menjadi titik kegagalan tunggal.
 
 \section{Sintesis Hasil}
 
@@ -699,16 +801,16 @@ Untuk evaluasi klaster lokal, K3d menjalankan satu server dan dua agen. Akses kl
 
 \begin{table}[htbp]
 \centering
-\caption{\textbf{Lima kriteria M1 teramati pada pengujian lokal.} Setiap hasil ditafsirkan dalam batas lingkungan simulasi dan satu run yang dilaporkan.}
+\caption{\textbf{Lima kriteria M1 teramati pada pengujian lokal.} Setiap hasil ditafsirkan dalam batas lingkungan simulasi dan satu pengujian yang dilaporkan.}
 \label{tab:test-summary}
 \footnotesize
-\begin{tabularx}{\textwidth}{L{1.25cm}L{3.4cm}YL{3.2cm}}
+\begin{tabularx}{\textwidth}{@{}L{1.25cm}L{3.4cm}YL{3.2cm}@{}}
 \toprule
 \textbf{Masalah} & \textbf{Metode} & \textbf{Observasi utama} & \textbf{Batas inferensi}\\
 \midrule
 P1 & Evolusi skema saat layanan berjalan & \textbf{90 kejadian per sumber}; 25 record lama dan 65 baru tetap terbaca. & Hanya penambahan atribut yang diuji.\\
 \addlinespace[3pt]
-P2 & k6 isolasi dan beban berkelanjutan & \textbf{p95 baca BMKG 8,79 ms} pada isolasi; 28.211 permintaan dan galat 0\% pada 50 pengguna virtual. & Pembacaan melalui Client API pada stack lokal.\\
+P2 & k6 isolasi dan beban berkelanjutan & \textbf{p95 pembacaan BMKG 8,79 ms} pada isolasi; 28.211 permintaan dan tingkat kesalahan 0\% pada 50 pengguna virtual. & Pembacaan melalui Client API pada lingkungan lokal.\\
 \addlinespace[3pt]
 P3 & Kredensial silang dan hak data mentah & \textbf{HTTP 401} untuk kredensial silang; \textbf{HTTP 403} untuk akses mentah Media; token berakhir setelah 60 detik. & Identitas berasal dari layanan simulasi.\\
 \addlinespace[3pt]
@@ -719,27 +821,27 @@ P5 & Penghentian Notifier dan broker lalu pemulihan & \textbf{Antrean 0--8--0}; 
 \end{tabularx}
 \end{table}
 
-Gambar~\ref{fig:load-percentiles} memperlihatkan seluruh persentil pembacaan BMKG yang dilaporkan k6. Pada uji isolasi, p95 sebesar 8,790 ms setara dengan 2,9\% dari ambang 300 ms; pada uji berkelanjutan, p95 sebesar 13,970 ms. Kedua angka berasal dari satu run per skenario dan tidak menunjukkan variasi antarrun. Ambang galat di bawah 1\% juga terpenuhi pada run tersebut \cite{k6-thresholds}.
+Gambar~\ref{fig:load-percentiles} memperlihatkan seluruh persentil pembacaan BMKG yang dilaporkan k6. Pada uji isolasi, p95 sebesar 8,790 ms setara dengan 2,9\% dari ambang 300 ms; pada uji berkelanjutan, p95 sebesar 13,970 ms. Kedua angka berasal dari satu pengujian per skenario dan tidak menunjukkan variasi antar-pengujian. Ambang kesalahan di bawah 1\% juga terpenuhi pada pengujian tersebut \cite{k6-thresholds}.
 
 Rincian hubungan antara kriteria, pengamatan, dan batas interpretasi disajikan pada Tabel~\ref{tab:traceability} di Lampiran~\ref{sec:traceability}.
 
 \subsection{Batasan evaluasi dan informasi yang perlu dilengkapi}
 
-Skenario E2E P1--P5 dijalankan pada 25 September 2026 di dalam stack sementara yang dibersihkan setelah pengujian. Data uji beban berasal dari 24 September. Uji integrasi terpisah terhadap stack lokal tidak dijalankan; hasil E2E tidak disamakan dengan pengujian integrasi yang lebih luas. Angka beban tidak digunakan untuk menyimpulkan kapasitas produksi, dan deduplikasi konsumen belum persisten setelah restart. Integrasi API produksi BMKG/PVMBG tidak termasuk cakupan.
+Skenario E2E P1--P5 dijalankan di dalam lingkungan sementara yang dibersihkan setelah pengujian. Data uji beban berasal dari pengujian k6 yang terpisah. Uji integrasi terpisah terhadap lingkungan lokal tidak dijalankan; hasil E2E tidak disamakan dengan pengujian integrasi yang lebih luas. Angka beban tidak digunakan untuk menyimpulkan kapasitas produksi, dan deduplikasi konsumen belum persisten setelah dimulai ulang. Integrasi API produksi BMKG/PVMBG tidak termasuk cakupan.
 
-Nama kelompok tercatat sebagai SidequestProxy; pembagian kontribusi perlu dikonfirmasi oleh kelompok. Bukti disajikan melalui cuplikan log, hasil pengukuran, diagram, dan grafik; pembahasan menafsirkan hasil tanpa menyalin detail internal implementasi.
+Nama kelompok tercatat sebagai SidequestProxy dan pembagian kerja dirinci pada bagian identitas kelompok. Bukti disajikan melalui cuplikan log, hasil pengukuran, diagram, dan grafik; pembahasan menafsirkan hasil tanpa menyalin detail internal implementasi.
 
 \section{Pernyataan Penggunaan LLM}
 
 LLM digunakan sebagai alat bantu untuk menelusuri struktur repository, menyusun draft dokumentasi, merangkum hasil pengujian, dan membantu penyuntingan bahasa. Penggunaan tersebut tidak menggantikan tanggung jawab kelompok untuk memahami desain, memeriksa implementasi, dan memverifikasi bukti yang disajikan.
 
-Sebelum laporan dikumpulkan, seluruh anggota kelompok perlu meninjau kode, konfigurasi, angka pengujian, dan naskah final. Klaim yang tidak dapat ditelusuri ke kode, dokumentasi, atau artefak run harus dihapus atau diperbaiki. Penggunaan LLM dinyatakan secara eksplisit sesuai ketentuan spesifikasi M1 \cite{spec-m1}.
+Sebelum laporan dikumpulkan, seluruh anggota kelompok perlu meninjau kode, konfigurasi, angka pengujian, dan naskah final. Klaim yang tidak dapat ditelusuri ke kode, dokumentasi, atau artefak pengujian harus dihapus atau diperbaiki. Penggunaan LLM dinyatakan secara eksplisit sesuai ketentuan spesifikasi M1 \cite{spec-m1}.
 
 \section{Kesimpulan}
 
 Prototipe M1 mengintegrasikan dua layanan sumber simulasi melalui Aggregator, menyajikan HazardEvent kanonik kepada klien yang berwenang, dan mendistribusikan event melalui outbox serta RabbitMQ. Pemisahan kolom kanonik dan JSONB memungkinkan atribut tambahan PVMBG diterima tanpa migrasi per atribut, sementara akses langsung ke Canonical Store tetap dimiliki Aggregator.
 
-Pada pengujian lokal, perubahan atribut aditif, gangguan sumber, penolakan akses tidak sah, pembangunan ulang layanan, dan pemulihan backlog menunjukkan perilaku yang sesuai dengan lima kriteria M1. Pembacaan BMKG melalui Client API memiliki p95 8,790 ms pada uji isolasi dengan batas penundaan polling PVMBG 3 detik, lebih rendah daripada ambang 300 ms. Angka ini menggambarkan satu konfigurasi prototipe dan tidak mengukur latensi sumber secara langsung. Pengiriman pesan tetap bersemantik setidaknya satu kali, sedangkan deduplikasi konsumen belum persisten setelah proses dimulai ulang. Kontribusi setiap anggota masih menunggu konfirmasi kelompok.
+Pada pengujian lokal, perubahan atribut aditif, gangguan sumber, penolakan akses tidak sah, pembangunan ulang layanan, dan pemulihan tumpukan antrean menunjukkan perilaku yang sesuai dengan lima kriteria M1. Pembacaan BMKG melalui Client API memiliki p95 8,790 ms pada uji isolasi dengan batas penundaan polling PVMBG 3 detik, lebih rendah daripada ambang 300 ms. Angka ini menggambarkan satu konfigurasi prototipe dan tidak mengukur latensi sumber secara langsung. Pengiriman pesan tetap bersemantik setidaknya satu kali, sedangkan deduplikasi konsumen belum persisten setelah proses dimulai ulang.
 
 \begin{thebibliography}{99}
 \bibitem[Tim Pengajar IF4031(2026)]{spec-m1}
@@ -803,7 +905,7 @@ Diakses 25 September 2026.
 
 \small
 \setlength{\tabcolsep}{2pt}
-\begin{longtable}{L{3.3cm}p{12.3cm}}
+\begin{longtable}{@{}L{3.3cm}p{12.3cm}@{}}
 \caption{\textbf{Setiap kriteria M1 memiliki observasi yang dapat diperiksa.} Tabel ini menghubungkan hasil dengan batas interpretasinya.}
 \label{tab:traceability}\\
 \toprule
@@ -815,41 +917,100 @@ Diakses 25 September 2026.
 \midrule
 \endhead
 \rowcolor{metabg}\multicolumn{2}{l}{\sffamily\bfseries P1: Interoperabilitas dan evolusi skema}\\
-\textbf{P1.1} Pemetaan kedua sumber & 90 event BMKG dan 90 event PVMBG tercatat pada snapshot akhir; cuplikan record menunjukkan field kanonik dan atribut sumber.\\
-\textbf{P1.2} Perubahan skema saat layanan berjalan & \texttt{confidence\_level} muncul setelah perubahan runtime; identitas container Aggregator dan PVMBG tidak berubah.\\
-\textbf{P1.3} Koeksistensi record lama dan baru & 25 record tanpa atribut baru dan 65 record dengannya terbaca bersama tanpa migrasi.\\
-\textbf{P1.4} Penanganan atribut tambahan & Atribut sumber tambahan tetap ada pada \texttt{attributes}, sedangkan field kanonik tetap divalidasi.\\
-\textbf{P1.5} Mekanisme dan batas skema & Atribut additive-only diteruskan; rename, perubahan tipe, dan hilangnya field wajib perlu perubahan eksplisit.\\
+\textbf{P1.1} Pemetaan kedua sumber & 90 event BMKG dan 90 event PVMBG tercatat pada rekaman akhir; cuplikan record menunjukkan field kanonik dan atribut sumber.\newline{\footnotesize\textit{Kode:} \texttt{TestP1CanonicalMappingForBothSources}; \texttt{TestSeismicSeverityMapping}; \texttt{TestWarningsByEventIDCorrelatesUsingRelatedEventID}.}\\
+\textbf{P1.2} Perubahan skema saat layanan berjalan & \texttt{confidence\_level} muncul setelah perubahan saat berjalan; identitas kontainer Aggregator dan PVMBG tidak berubah.\newline{\footnotesize\textit{Kode:} \texttt{TestP1SchemaEvolutionKeepsPVMBGHazardsValid}.}\\
+\textbf{P1.3} Koeksistensi record lama dan baru & 25 record tanpa atribut baru dan 65 record dengannya terbaca bersama tanpa migrasi.\newline{\footnotesize\textit{Kode:} \texttt{TestVolcanicPreservesAdditiveFields}; kueri hitung JSONB pada harness pengujian.}\\
+\textbf{P1.4} Penanganan atribut tambahan & Atribut sumber tambahan tetap ada pada \texttt{attributes}, sedangkan field kanonik tetap divalidasi.\newline{\footnotesize\textit{Kode:} fungsi \texttt{additionalAttributes} pada paket pemetaan; kebijakan additive-only.}\\
+\textbf{P1.5} Mekanisme dan batas skema & Atribut additive-only diteruskan; rename, perubahan tipe, dan hilangnya field wajib perlu perubahan eksplisit.\newline{\footnotesize\textit{Kode:} \texttt{TestRejectsInvalidRequiredFields}; bagian 6.2 laporan ini.}\\
 \addlinespace[3pt]
 \rowcolor{metabg}\multicolumn{2}{l}{\sffamily\bfseries P2: Isolasi sumber dan beban}\\
-\textbf{P2.1} Isolasi keterlambatan sumber & Saat batas penundaan polling PVMBG 3 detik, pembacaan BMKG melalui Client API mencatat p95 8,79 ms dan galat 0\%, di bawah ambang 300 ms.\\
-\textbf{P2.2} Beban berkelanjutan & 50 pengguna virtual selama 60 detik menghasilkan 28.211 request, throughput 468,899 request/detik, p50/p95/p99 4,888/13,970/19,915 ms, dan error rate 0\%.\\
-\textbf{P2.3} Gangguan dan pemulihan & PVMBG berubah menjadi stale; pembacaan BMKG dan data PVMBG tersimpan mendapat HTTP 200. Status pulih menjadi healthy tanpa restart.\\
-\textbf{P2.4} Model konkurensi & Polling independen, batas waktu, dan batas permintaan serentak mengurangi head-of-line blocking dan mengendalikan penggunaan resource.\\
+\textbf{P2.1} Isolasi keterlambatan sumber & Saat batas penundaan polling PVMBG 3 detik, pembacaan BMKG melalui Client API mencatat p95 8,79 ms dan tingkat kesalahan 0\%, di bawah ambang 300 ms.\newline{\footnotesize\textit{Kode:} skenario k6 isolasi; ambang \texttt{p(95)<300}.}\\
+\textbf{P2.2} Beban berkelanjutan & 50 pengguna virtual selama 60 detik menghasilkan 28.211 permintaan, laju 468,899 permintaan/detik, p50/p95/p99 4,888/13,970/19,915 ms, dan tingkat kesalahan 0\%.\newline{\footnotesize\textit{Kode:} skenario k6 berkelanjutan; ambang \texttt{rate<0,01}.}\\
+\textbf{P2.3} Gangguan dan pemulihan & PVMBG berubah menjadi usang; pembacaan BMKG dan data PVMBG tersimpan mendapat HTTP 200. Status pulih menjadi sehat tanpa memulai ulang layanan.\newline{\footnotesize\textit{Kode:} \texttt{TestP2PVMBGOutageKeepsBMKGAvailable}.}\\
+\textbf{P2.4} Model konkurensi & Polling independen, batas waktu, dan batas permintaan serentak mengurangi penyumbatan antrean dan mengendalikan penggunaan sumber daya.\newline{\footnotesize\textit{Kode:} bagian 7.1 laporan ini; batas serentak pada Client API.}\\
 \addlinespace[3pt]
 \rowcolor{metabg}\multicolumn{2}{l}{\sffamily\bfseries P3: Identitas dan hak akses}\\
-\textbf{P3.1} Pemisahan kredensial & Kredensial silang BMKG/PVMBG masing-masing ditolak dengan HTTP 401.\\
-\textbf{P3.2} Pembatasan data mentah & Media mendapat HTTP 403 untuk permintaan mentah dan HTTP 200 untuk ringkasan tanpa field mentah; BNPB Ops dapat membaca data mentah.\\
-\textbf{P3.3} Kedaluwarsa dan pembaruan token & Setelah TTL 60 detik, token akses lama mendapat HTTP 401; refresh mendapat HTTP 200 dan token refresh lama ditolak.\\
-\textbf{P3.4} Kerahasiaan konfigurasi & Contoh konfigurasi tersedia; pemindaian pola kredensial tidak menemukan kandidat pada kode dan konfigurasi yang diperiksa. Pemindaian heuristik bukan jaminan universal.\\
-\textbf{P3.5} Batas kepercayaan internal & Identitas, scope, dan kredensial layanan divalidasi pada batas masing-masing layanan.\\
+\textbf{P3.1} Pemisahan kredensial & Kredensial silang BMKG/PVMBG masing-masing ditolak dengan HTTP 401.\newline{\footnotesize\textit{Kode:} \texttt{TestP3IndependentCredentialsAndRefreshRotation}.}\\
+\textbf{P3.2} Pembatasan data mentah & Media mendapat HTTP 403 untuk permintaan mentah dan HTTP 200 untuk ringkasan tanpa field mentah; BNPB Ops dapat membaca data mentah.\newline{\footnotesize\textit{Kode:} \texttt{TestP3IndependentCredentialsAndRefreshRotation}; proyeksi ringkasan dan mentah pada Client API.}\\
+\textbf{P3.3} Kedaluwarsa dan pembaruan token & Setelah TTL 60 detik, token akses lama mendapat HTTP 401; penyegaran mendapat HTTP 200 dan token penyegaran lama ditolak.\newline{\footnotesize\textit{Kode:} \texttt{TestP3IndependentCredentialsAndRefreshRotation}; TTL 60 detik diamati secara alami.}\\
+\textbf{P3.4} Kerahasiaan konfigurasi & \texttt{.env.example} satu-satunya berkas environment terlacak; pemindaian pola kredensial tidak menemukan kandidat pada kode dan konfigurasi yang diperiksa. Pemindaian heuristik bukan jaminan universal.\newline{\footnotesize\textit{Kode:} konfigurasi dibaca melalui environment; audit berkas terlacak.}\\
+\textbf{P3.5} Batas kepercayaan internal & Identitas, cakupan akses, dan kredensial layanan divalidasi pada batas masing-masing layanan.\newline{\footnotesize\textit{Kode:} interceptor gRPC dan pemeriksaan cakupan pada Client API.}\\
 \addlinespace[3pt]
 \rowcolor{metabg}\multicolumn{2}{l}{\sffamily\bfseries P4: Batas layanan dan penyimpanan}\\
-\textbf{P4.1} Pembangunan ulang independen & Container PVMBG berubah, sedangkan Aggregator dan Client API tetap sama; query BMKG setelah rebuild mendapat HTTP 200.\\
-\textbf{P4.2} Penyimpanan fleksibel & 25 record lama dan 65 record baru terbaca berdampingan tanpa migrasi untuk atribut tambahan.\\
-\textbf{P4.3} Kepemilikan data & URL diberikan ke Aggregator dan migrator satu kali; runtime lain tidak menerimanya. Peran Auth tidak memiliki SELECT pada HazardEvent.\\
-\textbf{P4.4} Alternatif penyimpanan & Relasi menyimpan field inti; JSONB menampung atribut dinamis. Document store dibandingkan sebagai alternatif beserta konsekuensinya.\\
+\textbf{P4.1} Pembangunan ulang independen & Kontainer PVMBG berubah, sedangkan Aggregator dan Client API tetap sama; permintaan BMKG setelah pembangunan ulang mendapat HTTP 200.\newline{\footnotesize\textit{Kode:} harness pengujian dengan \texttt{compose up --no-deps --build pvmbg}.}\\
+\textbf{P4.2} Penyimpanan fleksibel & 25 record lama dan 65 record baru terbaca berdampingan tanpa migrasi untuk atribut tambahan.\newline{\footnotesize\textit{Kode:} kueri hitung JSONB pada Canonical Store.}\\
+\textbf{P4.3} Kepemilikan data & URL diberikan ke Aggregator dan migrator satu kali; layanan lain yang berjalan tidak menerimanya. Peran Auth tidak memiliki SELECT pada HazardEvent.\newline{\footnotesize\textit{Kode:} pemeriksaan environment kontainer; hak SELECT peran Auth pada PostgreSQL.}\\
+\textbf{P4.4} Alternatif penyimpanan & Relasi menyimpan field inti; JSONB menampung atribut dinamis. Document store dibandingkan sebagai alternatif beserta konsekuensinya.\newline{\footnotesize\textit{Kode:} bagian 9.3 laporan ini.}\\
 \addlinespace[3pt]
 \rowcolor{metabg}\multicolumn{2}{l}{\sffamily\bfseries P5: Distribusi dan pemulihan event}\\
-\textbf{P5.1} Penerbitan melalui broker & Sepuluh pesan outbox tertahan saat broker berhenti dan backlog menjadi nol setelah pemulihan.\\
-\textbf{P5.2} Consumer independen & Dashboard, Notifier, dan Portal memproses event dengan ID kejadian dan ID korelasi yang sama.\\
-\textbf{P5.3} Consumer berhenti dan pulih & Antrean Notifier berubah dari 0 menjadi 8 lalu 0 pesan; satu event saat Notifier berhenti ditemukan pada log setelah pulih.\\
-\textbf{P5.4} Penambahan consumer & Portal memproses event baru; identitas container dan image producer tetap sama.\\
-\textbf{Semantik P5} & Pengiriman setidaknya satu kali; deduplikasi hanya selama proses hidup, sehingga consumer perlu idempoten dan pemrosesan tepat satu kali yang persisten belum dijamin.\\
+\textbf{P5.1} Penerbitan melalui broker & Sepuluh pesan outbox tertahan saat broker berhenti dan tumpukan antrean menjadi nol setelah pemulihan.\newline{\footnotesize\textit{Kode:} kueri hitung outbox pada Canonical Store.}\\
+\textbf{P5.2} Konsumen independen & Dashboard, Notifier, dan Portal memproses event dengan ID kejadian dan ID korelasi yang sama.\newline{\footnotesize\textit{Kode:} log konsumen dengan ID kejadian dan ID korelasi; Gambar 7.}\\
+\textbf{P5.3} Konsumen berhenti dan pulih & Antrean Notifier berubah dari 0 menjadi 8 lalu 0 pesan; satu event saat Notifier berhenti ditemukan pada log setelah pulih.\newline{\footnotesize\textit{Kode:} jejak penyampaian event pada Gambar 7; log Notifier setelah pemulihan.}\\
+\textbf{P5.4} Penambahan konsumen & Portal memproses event baru; identitas kontainer dan image Aggregator tetap sama.\newline{\footnotesize\textit{Kode:} pemeriksaan identitas kontainer dan image Aggregator.}\\
+\textbf{Semantik P5} & Pengiriman setidaknya satu kali; deduplikasi hanya selama proses hidup sehingga konsumen perlu idempoten dan pemrosesan tepat satu kali yang persisten belum dijamin.\newline{\footnotesize\textit{Kode:} \texttt{TestProcessorDeduplicatesWithinProcessButNotAcrossRestart}.}\\
 \bottomrule
 \end{longtable}
 \normalsize
 
+\section{Pengamatan pengulangan evolusi skema}
+\label{sec:p1-repeat}
 
+Pada lingkungan pengujian yang sama, langkah evolusi skema P1 diulang untuk merekam pembagian temporal record. Pengamatan berlangsung empat belas menit; menit pertama memuat batch seed, lalu satu siklus polling menambahkan sekitar enam record per menit. Perubahan skema dipicu pada menit kesembilan. Seluruh record yang masuk setelahnya membawa \code{confidence_level}, sedangkan record sebelumnya tetap tanpa field tersebut, dan kedua kelompok dibaca dari tabel yang sama tanpa memulai ulang layanan.
+
+\begin{figure}[htbp]
+\centering
+\input{figures/p1-temporal.tex}
+\caption[Pembagian temporal record PVMBG]{\textbf{Batas perubahan skema terlihat pada urutan pencatatan.} Jumlah record PVMBG per menit pada pengamatan pengulangan; batang kelabu adalah record tanpa \code{confidence_level} dan batang biru adalah record dengannya. Perubahan skema dipicu pada menit kesembilan; record sesudahnya seluruhnya membawa field tersebut tanpa migrasi dan tanpa memulai ulang layanan.}
+\label{fig:p1-temporal}
+\end{figure}
+
+\section{Singkatan dan istilah}
+\label{sec:glossary}
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Singkatan yang dipakai pada laporan.}}
+\label{tab:abbreviations}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{2.6cm}Y@{}}
+\toprule
+\textbf{Singkatan} & \textbf{Arti}\\
+\midrule
+M1 & Milestone 1\\
+BMKG & Badan Meteorologi, Klimatologi, dan Geofisika\\
+PVMBG & Pusat Vulkanologi dan Mitigasi Bencana Geologi\\
+BNPB & Badan Nasional Penanggulangan Bencana\\
+REST & Representational State Transfer\\
+gRPC & Google Remote Procedure Call\\
+AMQP & Advanced Message Queuing Protocol\\
+JSONB & Bentuk biner JSON pada PostgreSQL\\
+TTL & Time to live, masa berlaku token\\
+VU & Pengguna virtual pada pengujian beban\\
+DLQ & Dead-letter queue, antrean pesan yang ditolak\\
+E2E & Ujung ke ujung (end to end)\\
+PVC & Persistent volume claim pada Kubernetes\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Istilah yang dipakai dengan makna khusus pada laporan.}}
+\label{tab:terms}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{2.6cm}Y@{}}
+\toprule
+\textbf{Istilah} & \textbf{Makna pada laporan ini}\\
+\midrule
+HazardEvent & Entitas kanonik BNPB hasil normalisasi kedua sumber.\\
+Canonical Store & Penyimpanan HazardEvent yang dimiliki dan diakses langsung oleh Aggregator.\\
+Outbox & Tabel pesan tertunda yang ditulis dalam transaksi yang sama dengan HazardEvent.\\
+Fan-out & Penyalinan satu pesan ke antrean beberapa konsumen melalui sebuah exchange.\\
+Usang & Status sumber yang data terakhirnya sudah lama tidak diperbarui.\\
+Idempoten & Sifat pemrosesan yang hasilnya tidak berubah ketika pesan yang sama diterima ulang.\\
+Setidaknya satu kali & Semantik pengiriman yang menjamin pesan tidak hilang, tetapi dapat terkirim ulang.\\
+\bottomrule
+\end{tabularx}
+\end{table}
 
 \end{document}

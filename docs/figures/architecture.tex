@@ -31,8 +31,8 @@
 \node[state] (outbox) at (5.15,1.28) {\textbf{Outbox}\\satu transaksi};
 \node[broker] (rabbit) at (9.15,1.28)
   {\raisebox{-0.12cm}{\includegraphics[height=0.48cm]{assets/rabbitmq-logo.png}}\enspace\textbf{RabbitMQ}\\fanout};
-\node[state,minimum width=3.0cm] (queues) at (13.33,1.28)
-  {\textbf{Tiga antrean}\\satu per konsumen};
+\node[state,minimum width=3.25cm] (consumers) at (13.5,1.28)
+  {\textbf{Tiga konsumen}\\Dashboard, Notifier, Portal};
 
 \draw[flow] (clients.east) -- node[edgeword,above]{HTTP} (api.west);
 \draw[flow] (api.east) -- node[edgeword,above]{gRPC} (auth.west);
@@ -42,5 +42,5 @@
 \draw[flow] (agg.east) -- node[edgeword,above]{SQL} (store.west);
 \draw[flow] (agg.south) -- (outbox.north);
 \draw[flow] (outbox.east) -- node[edgeword,above]{AMQP} (rabbit.west);
-\draw[flow] (rabbit.east) -- node[edgeword,above]{fanout} (queues.west);
+\draw[flow] (rabbit.east) -- node[edgeword,above]{fanout} (consumers.west);
 \end{tikzpicture}
