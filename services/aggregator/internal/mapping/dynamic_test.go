@@ -2,6 +2,7 @@ package mapping
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -77,6 +78,59 @@ func TestSeismicSeverityMapping(t *testing.T) {
 			}
 			if event.Severity != testCase.want {
 				t.Fatalf("severity = %q, want %q", event.Severity, testCase.want)
+			}
+		})
+	}
+}
+
+func TestRejectsInvalidRequiredFields(t *testing.T) {
+	validSeismic := map[string]any{"event_id": "e-1", "magnitude": 5.2, "depth_km": 10.0, "epicenter_lat": -6.2, "epicenter_lon": 106.8, "region_name": "Jawa Barat", "occurred_at": time.Now().UTC().Format(time.RFC3339), "potential_tsunami": false}
+	validVolcanic := map[string]any{"report_id": "r-1", "volcano_id": "merapi", "alert_level": "Waspada", "eruption_count_24h": 2, "ash_column_height_m": 420.0, "reported_at": time.Now().UTC().Format(time.RFC3339)}
+
+	cases := []struct {
+		name   string
+		source string
+		mutate func(map[string]any)
+	}{
+		{name: "seismic missing event id", source: "seismic", mutate: func(raw map[string]any) { delete(raw, "event_id") }},
+		{name: "seismic magnitude wrong type", source: "seismic", mutate: func(raw map[string]any) { raw["magnitude"] = "strong" }},
+		{name: "seismic missing occurred at", source: "seismic", mutate: func(raw map[string]any) { delete(raw, "occurred_at") }},
+		{name: "seismic occurred at not RFC3339", source: "seismic", mutate: func(raw map[string]any) { raw["occurred_at"] = "25-09-2026" }},
+		{name: "seismic potential tsunami wrong type", source: "seismic", mutate: func(raw map[string]any) { raw["potential_tsunami"] = "yes" }},
+		{name: "volcanic missing report id", source: "volcanic", mutate: func(raw map[string]any) { delete(raw, "report_id") }},
+		{name: "volcanic unknown alert level", source: "volcanic", mutate: func(raw map[string]any) { raw["alert_level"] = "Hati-hati" }},
+		{name: "volcanic eruption count wrong type", source: "volcanic", mutate: func(raw map[string]any) { raw["eruption_count_24h"] = "many" }},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := validSeismic
+			if testCase.source == "volcanic" {
+				payload = validVolcanic
+			}
+			snapshot := make(map[string]any, len(payload))
+			for key, value := range payload {
+				snapshot[key] = value
+			}
+			testCase.mutate(snapshot)
+
+			raw := map[string]json.RawMessage{}
+			for key, value := range snapshot {
+				encoded, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw[key] = encoded
+			}
+
+			var err error
+			if testCase.source == "volcanic" {
+				_, err = Volcanic(raw, map[string]domain.VolcanoReference{"merapi": {Name: "Gunung Merapi", Latitude: -7.54, Longitude: 110.44}}, time.Now().UTC())
+			} else {
+				_, err = Seismic(raw, nil, time.Now().UTC())
+			}
+			if !errors.Is(err, domain.ErrInvalidSourcePayload) {
+				t.Fatalf("err = %v, want ErrInvalidSourcePayload", err)
 			}
 		})
 	}

@@ -11,7 +11,6 @@ import (
 
 const (
 	exchangeName       = "hazard.events"
-	deadLetterExchange = "hazard.events.dlx"
 )
 
 type Process func([]byte, string, bool) error
@@ -95,6 +94,7 @@ func (c *Consumer) declare() error {
 	if err := c.channel.ExchangeDeclare(exchangeName, amqp091.ExchangeFanout, true, false, false, false, nil); err != nil {
 		return err
 	}
+	deadLetterExchange := c.queue + ".dlx"
 	if err := c.channel.ExchangeDeclare(deadLetterExchange, amqp091.ExchangeFanout, true, false, false, false, nil); err != nil {
 		return err
 	}
