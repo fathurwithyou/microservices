@@ -7,6 +7,13 @@ import (
 	"github.com/fathurwithyou/microservices/services/pvmbg/internal/domain"
 )
 
+// Seed volcano IDs and alert levels cycle deterministically with the report
+// index so every seed batch covers all volcanoes and alert levels.
+var seedVolcanoIDs = []string{"merapi", "semeru", "anak_krakatau"}
+
+var seedAlertLevels = []string{"Normal", "Waspada", "Siaga", "Awas"}
+
+// InitialReports builds count deterministic historical reports ending at now.
 func InitialReports(now time.Time, count int) []domain.VolcanicReport {
 	if count < 0 {
 		count = 0
@@ -15,12 +22,12 @@ func InitialReports(now time.Time, count int) []domain.VolcanicReport {
 	for index := 0; index < count; index++ {
 		reportedAt := now.Add(-time.Duration(count-index) * time.Minute)
 		reports = append(reports, domain.VolcanicReport{
-			"report_id":           "pvmbg-report-" + strconv.Itoa(index+1),
-			"volcano_id":          []string{"merapi", "sem eru", "anak_krakatau"}[index%3],
-			"alert_level":         []string{"Normal", "Waspada", "Siaga", "Awas"}[index%4],
-			"eruption_count_24h":  index % 4,
-			"ash_column_height_m": float64(index * 125),
-			"reported_at":         reportedAt.Format(time.RFC3339),
+			ReportID:         "pvmbg-report-" + strconv.Itoa(index+1),
+			VolcanoID:        seedVolcanoIDs[index%len(seedVolcanoIDs)],
+			AlertLevel:       seedAlertLevels[index%len(seedAlertLevels)],
+			EruptionCount24H: float64(index % 4),
+			AshColumnHeightM: float64(index * 125),
+			ReportedAt:       reportedAt.Format(time.RFC3339),
 		})
 	}
 	return reports

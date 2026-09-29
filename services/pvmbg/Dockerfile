@@ -1,6 +1,6 @@
 FROM golang:1.26-alpine AS build
 WORKDIR /src
-COPY contracts ./contracts
+COPY pkg ./pkg
 COPY services/pvmbg ./services/pvmbg
 RUN cd services/pvmbg && go build -trimpath -ldflags='-s -w' -o /out/pvmbg ./cmd/server
 

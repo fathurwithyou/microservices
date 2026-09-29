@@ -11,8 +11,22 @@ func TestInitialReportsHonorsCount(t *testing.T) {
 	if len(reports) != 3 {
 		t.Fatalf("reports = %d, want 3", len(reports))
 	}
-	if reports[0]["report_id"] != "pvmbg-report-1" {
-		t.Fatalf("first report ID = %v, want pvmbg-report-1", reports[0]["report_id"])
+	if reports[0].ReportID != "pvmbg-report-1" {
+		t.Fatalf("first report ID = %v, want pvmbg-report-1", reports[0].ReportID)
+	}
+}
+
+func TestInitialReportsCoverAllVolcanoes(t *testing.T) {
+	now := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	reports := InitialReports(now, 3)
+	seen := map[string]bool{}
+	for _, report := range reports {
+		seen[report.VolcanoID] = true
+	}
+	for _, id := range []string{"merapi", "semeru", "anak_krakatau"} {
+		if !seen[id] {
+			t.Fatalf("seed missing volcano %q: %+v", id, reports)
+		}
 	}
 }
 

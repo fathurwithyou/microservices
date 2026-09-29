@@ -1,60 +1,56 @@
 package httptransport
 
 import (
-	"crypto/rand"
-	"math/big"
+	"context"
 	"net/http"
 	"time"
 
+	"github.com/fathurwithyou/microservices/pkg/correlation"
 	"github.com/gin-gonic/gin"
 )
 
-func (h handler) health(c *gin.Context) {
-	if h.state.IsOutage() {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "outage", "service": "pvmbg"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "pvmbg"})
-}
-
+// volcanicReports serves reports observed since the ?since= cursor. A
+// malformed non-empty cursor is a 400: silently returning the full history
+// would surprise pollers and hide client bugs.
 func (h handler) volcanicReports(c *gin.Context) {
 	if h.state.IsOutage() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "pvmbg outage"})
 		return
 	}
-	if !waitForDelay(c, randomDelay(h.state.DelayRange())) {
+	since, ok := parseSince(c.Query("since"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid since parameter"})
+		return
+	}
+	if !waitDelay(c.Request.Context(), h.randomDelay()) {
 		return
 	}
 
 	started := time.Now()
-	c.JSON(http.StatusOK, h.state.ReportsSince(parseSince(c.Query("since"))))
-	h.logger.Info("outbound response", "service", "pvmbg", "component", "http", "operation", "volcanic-reports", "latency_ms", time.Since(started).Milliseconds(), "status", http.StatusOK, "correlation_id", c.GetString("correlation_id"))
+	c.JSON(http.StatusOK, h.state.ReportsSince(since))
+	h.logger.Info("outbound response", "service", serviceName, "component", "http", "operation", "volcanic-reports", "latency_ms", time.Since(started).Milliseconds(), "status", http.StatusOK, "correlation_id", c.GetString(correlation.GinKey))
 }
 
-func waitForDelay(c *gin.Context, delay time.Duration) bool {
+// parseSince parses an RFC3339 cursor. An empty value means "from the
+// beginning". The second return value is false for malformed input.
+func parseSince(value string) (time.Time, bool) {
+	if value == "" {
+		return time.Time{}, true
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
+}
+
+// waitDelay sleeps for d unless ctx is cancelled first, reporting whether
+// the full delay elapsed.
+func waitDelay(ctx context.Context, d time.Duration) bool {
 	select {
-	case <-time.After(delay):
+	case <-time.After(d):
 		return true
-	case <-c.Request.Context().Done():
+	case <-ctx.Done():
 		return false
 	}
-}
-
-func randomDelay(minDelay, maxDelay time.Duration) time.Duration {
-	if maxDelay <= minDelay {
-		return minDelay
-	}
-	span := big.NewInt(int64(maxDelay - minDelay))
-	value, err := rand.Int(rand.Reader, span)
-	if err != nil {
-		return minDelay
-	}
-	return minDelay + time.Duration(value.Int64())
-}
-
-func parseSince(value string) time.Time {
-	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
-		return parsed
-	}
-	return time.Time{}
 }
