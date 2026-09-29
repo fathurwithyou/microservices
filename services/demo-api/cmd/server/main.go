@@ -14,6 +14,14 @@ import (
 	httptransport "github.com/fathurwithyou/microservices/services/demo-api/internal/transport/http"
 )
 
+const (
+	readHeaderTimeout = 2 * time.Second
+	readTimeout       = 10 * time.Second
+	writeTimeout      = 15 * time.Second
+	idleTimeout       = 30 * time.Second
+	shutdownTimeout   = 5 * time.Second
+)
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg, err := config.Load()
@@ -24,10 +32,10 @@ func main() {
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           httptransport.NewRouter(httptransport.RouterConfig{Config: cfg, Logger: logger}),
-		ReadHeaderTimeout: 2 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       30 * time.Second,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -39,7 +47,7 @@ func main() {
 		}
 	}()
 	<-ctx.Done()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	_ = server.Shutdown(shutdownCtx)
 }

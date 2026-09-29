@@ -1,5 +1,6 @@
 FROM golang:1.26-alpine AS build
 WORKDIR /src
+COPY pkg ./pkg
 COPY services/demo-api ./services/demo-api
 RUN cd services/demo-api && go build -trimpath -ldflags='-s -w' -o /out/demo-api ./cmd/server
 

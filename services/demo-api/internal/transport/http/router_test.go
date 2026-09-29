@@ -109,8 +109,9 @@ func TestQueuesMapsManagementAPI(t *testing.T) {
 			response.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		name := request.URL.Path[strings.LastIndex(request.URL.Path, "/")+1:]
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"name":"dashboard.hazard-events","messages":4,"consumers":1,"messages_ready":4}`))
+		_, _ = response.Write([]byte(`{"name":"` + name + `","messages":4,"consumers":1,"messages_ready":4}`))
 	}))
 	t.Cleanup(management.Close)
 	router := newTestRouter(t, config.Config{
@@ -118,11 +119,151 @@ func TestQueuesMapsManagementAPI(t *testing.T) {
 		RabbitUser:          "guest",
 		RabbitPassword:      "secret",
 		RequestTimeout:      time.Second,
+		QueueNames:          []string{"dashboard.hazard-events", "notifier.hazard-events", "portal.hazard-events"},
 	}, nil)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/observability/queues", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	body := decode(t, response.Body)
+	queues, ok := body["queues"].([]any)
+	if !ok || len(queues) != 3 {
+		t.Fatalf("queues = %#v", body["queues"])
+	}
+	for index, expected := range []string{"dashboard.hazard-events", "notifier.hazard-events", "portal.hazard-events"} {
+		snapshot := queues[index].(map[string]any)
+		if snapshot["name"] != expected {
+			t.Fatalf("queues[%d].name = %v want %s", index, snapshot["name"], expected)
+		}
+	}
+}
+
+func TestQueuesPreservesOrderUnderParallelReads(t *testing.T) {
+	delays := map[string]time.Duration{
+		"dashboard.hazard-events": 200 * time.Millisecond,
+		"notifier.hazard-events":  100 * time.Millisecond,
+		"portal.hazard-events":    0,
+	}
+	management := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		name := request.URL.Path[strings.LastIndex(request.URL.Path, "/")+1:]
+		time.Sleep(delays[name])
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"name":"` + name + `","messages":1,"consumers":1,"messages_ready":1}`))
+	}))
+	t.Cleanup(management.Close)
+	router := newTestRouter(t, config.Config{
+		RabbitManagementURL: management.URL,
+		RabbitUser:          "guest",
+		RabbitPassword:      "secret",
+		RequestTimeout:      time.Second,
+		QueueNames:          []string{"dashboard.hazard-events", "notifier.hazard-events", "portal.hazard-events"},
+	}, nil)
+	started := time.Now()
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/observability/queues", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if elapsed := time.Since(started); elapsed > 280*time.Millisecond {
+		t.Fatalf("queue reads look sequential: elapsed = %s", elapsed)
+	}
+	body := decode(t, response.Body)
+	queues := body["queues"].([]any)
+	for index, expected := range []string{"dashboard.hazard-events", "notifier.hazard-events", "portal.hazard-events"} {
+		snapshot := queues[index].(map[string]any)
+		if snapshot["name"] != expected {
+			t.Fatalf("queues[%d].name = %v want %s", index, snapshot["name"], expected)
+		}
+	}
+}
+
+func TestServiceHealthAggregatesProbeTargets(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if strings.Contains(request.URL.Path, "pvmbg") {
+			response.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		response.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+	authAddr := strings.TrimPrefix(upstream.URL, "http://")
+	router := newTestRouter(t, config.Config{
+		ClientAPIHealthURL:   upstream.URL + "/client",
+		AggregatorHealthURL:  upstream.URL + "/aggregator",
+		BMKGHealthURL:        upstream.URL + "/bmkg",
+		PVMBGHealthURL:       upstream.URL + "/pvmbg",
+		AuthAddr:             authAddr,
+		DashboardConsumerURL: upstream.URL + "/dashboard",
+		NotifierConsumerURL:  upstream.URL + "/notifier",
+		PortalConsumerURL:    upstream.URL + "/portal",
+		RequestTimeout:       time.Second,
+	}, nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/observability/health", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	body := decode(t, response.Body)
+	services, ok := body["services"].([]any)
+	if !ok || len(services) != 8 {
+		t.Fatalf("services = %#v", body["services"])
+	}
+	statuses := map[string]map[string]any{}
+	for _, entry := range services {
+		probe := entry.(map[string]any)
+		statuses[probe["name"].(string)] = probe
+	}
+	if statuses["client-api"]["status"] != "healthy" {
+		t.Fatalf("client-api = %#v", statuses["client-api"])
+	}
+	if statuses["auth"]["status"] != "healthy" {
+		t.Fatalf("auth = %#v", statuses["auth"])
+	}
+	if statuses["pvmbg"]["status"] != "outage" || statuses["pvmbg"]["detail"] != "PVMBG outage switch is enabled" {
+		t.Fatalf("pvmbg = %#v", statuses["pvmbg"])
+	}
+	if statuses["portal-consumer"]["optional"] != true {
+		t.Fatalf("portal-consumer = %#v", statuses["portal-consumer"])
+	}
+}
+
+func TestServiceHealthMarksUnreachableTargetsDown(t *testing.T) {
+	router := newTestRouter(t, config.Config{
+		ClientAPIHealthURL:   "http://127.0.0.1:1/health",
+		AggregatorHealthURL:  "http://127.0.0.1:1/health",
+		BMKGHealthURL:        "http://127.0.0.1:1/health",
+		PVMBGHealthURL:       "http://127.0.0.1:1/health",
+		AuthAddr:             "127.0.0.1:1",
+		DashboardConsumerURL: "http://127.0.0.1:1/health",
+		NotifierConsumerURL:  "http://127.0.0.1:1/health",
+		PortalConsumerURL:    "http://127.0.0.1:1/health",
+		RequestTimeout:       time.Second,
+	}, nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/observability/health", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	body := decode(t, response.Body)
+	for _, entry := range body["services"].([]any) {
+		probe := entry.(map[string]any)
+		if probe["status"] != "down" {
+			t.Fatalf("probe %v status = %v want down", probe["name"], probe["status"])
+		}
+	}
+}
+
+func TestListArtifactsUnavailableReturns500(t *testing.T) {
+	router := newTestRouter(t, config.Config{ArtifactsDir: filepath.Join(t.TempDir(), "missing"), RequestTimeout: time.Second}, nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/artifacts", nil))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	body := decode(t, response.Body)
+	if body["error"] != "artifacts unavailable" {
+		t.Fatalf("error = %#v", body["error"])
 	}
 }
 
