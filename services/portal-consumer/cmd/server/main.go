@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fathurwithyou/microservices/services/portal-consumer/internal/adapters/rabbitmq"
+	"github.com/fathurwithyou/microservices/pkg/consumerkit"
+	"github.com/fathurwithyou/microservices/pkg/healthsrv"
 	"github.com/fathurwithyou/microservices/services/portal-consumer/internal/application"
 	"github.com/fathurwithyou/microservices/services/portal-consumer/internal/config"
-	httptransport "github.com/fathurwithyou/microservices/services/portal-consumer/internal/transport/http"
 )
 
 const (
@@ -23,10 +23,17 @@ const (
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	cfg := config.Load()
+
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("configuration load failed", "service", serviceName, "error", err)
+		os.Exit(1)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	healthServer := httptransport.NewHealthServer(cfg.HealthPort)
+
+	healthServer := healthsrv.New(healthsrv.Config{Port: cfg.HealthPort, Service: serviceName})
 	go func() {
 		if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("health server stopped", "service", serviceName, "error", err)
@@ -34,28 +41,25 @@ func main() {
 		}
 	}()
 
-	for {
-		consumer, err := rabbitmq.New(rabbitmq.ConsumerConfig{URL: cfg.RabbitURL, Queue: queueName, Service: serviceName, Logger: logger})
-		if err != nil {
-			logger.Error("broker connection failed", "service", serviceName, "error", err)
-			select {
-			case <-time.After(2 * time.Second):
-				continue
-			case <-ctx.Done():
-				break
-			}
-		}
-		if ctx.Err() != nil {
-			break
-		}
-
-		runErr := consumer.Run(ctx, application.NewProcessor(serviceName, logger).Process)
-		_ = consumer.Close()
-		if ctx.Err() != nil {
-			break
-		}
-		logger.Error("consumer stopped; reconnecting", "service", serviceName, "error", runErr)
+	consumer, err := consumerkit.New(consumerkit.Config{
+		URL:     cfg.RabbitURL,
+		Queue:   queueName,
+		Service: serviceName,
+		Logger:  logger,
+	})
+	if err != nil {
+		logger.Error("consumer setup failed", "service", serviceName, "error", err)
+		os.Exit(1)
 	}
+
+	processor := application.NewProcessor(serviceName, logger)
+	go func() {
+		if err := consumer.Run(ctx, processor.Process); err != nil {
+			logger.Error("consumer stopped", "service", serviceName, "error", err)
+		}
+	}()
+
+	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = healthServer.Shutdown(shutdownCtx)

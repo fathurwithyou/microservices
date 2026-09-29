@@ -1,6 +1,7 @@
 FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY contracts ./contracts
+COPY pkg ./pkg
 COPY services/notifier-consumer ./services/notifier-consumer
 RUN cd services/notifier-consumer && go build -trimpath -ldflags='-s -w' -o /out/notifier-consumer ./cmd/server
 

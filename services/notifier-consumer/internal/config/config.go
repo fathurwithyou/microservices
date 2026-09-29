@@ -1,15 +1,29 @@
 package config
 
-import "os"
+import (
+	"fmt"
 
-type Config struct{ RabbitURL, HealthPort string }
+	"github.com/fathurwithyou/microservices/pkg/env"
+)
 
-func Load() Config {
-	return Config{RabbitURL: os.Getenv("RABBITMQ_URL"), HealthPort: valueOr("CONSUMER_HEALTH_PORT", "8084")}
+// Config holds the runtime configuration for the consumer.
+type Config struct {
+	// RabbitURL is the AMQP connection string. Required.
+	RabbitURL string
+	// HealthPort is the TCP port the health endpoint listens on.
+	HealthPort string
 }
-func valueOr(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
+
+// Load reads configuration from the environment. A missing RABBITMQ_URL is
+// an error so the service fails fast at startup instead of silently running
+// without a broker.
+func Load() (Config, error) {
+	rabbitURL, err := env.Required("RABBITMQ_URL")
+	if err != nil {
+		return Config{}, fmt.Errorf("load config: %w", err)
 	}
-	return fallback
+	return Config{
+		RabbitURL:  rabbitURL,
+		HealthPort: env.String("CONSUMER_HEALTH_PORT", "8084"),
+	}, nil
 }
