@@ -1,6 +1,6 @@
 FROM golang:1.26-alpine AS build
 WORKDIR /src
-COPY contracts ./contracts
+COPY pkg ./pkg
 COPY services/bmkg ./services/bmkg
 RUN cd services/bmkg && go build -trimpath -ldflags='-s -w' -o /out/bmkg ./cmd/server
 

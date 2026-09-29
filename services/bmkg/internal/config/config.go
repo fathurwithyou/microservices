@@ -1,55 +1,57 @@
+// Package config loads BMKG runtime configuration from the environment.
 package config
 
 import (
-	"errors"
-	"os"
-	"strconv"
+	"fmt"
 	"time"
+
+	"github.com/fathurwithyou/microservices/pkg/env"
 )
 
+// Config holds the runtime configuration for the BMKG simulation service.
 type Config struct {
-	Port             string
-	APIKey           string
-	ResponseDelay    time.Duration
+	// Port is the TCP port the HTTP server listens on.
+	Port string
+	// APIKey is the credential clients send in the X-BMKG-Key header.
+	APIKey string
+	// ResponseDelay is the fixed artificial delay injected into
+	// /seismic-events responses.
+	ResponseDelay time.Duration
+	// NewEventInterval is how often the producer appends a new event.
 	NewEventInterval time.Duration
-	SeedCount        int
+	// SeedCount is the number of historical events seeded at startup.
+	SeedCount int
 }
 
+// Load reads configuration from environment variables. Malformed integer or
+// duration values are errors instead of silent fallbacks so the service
+// fails fast at startup. A non-positive NEW_EVENT_INTERVAL is rejected
+// because time.NewTicker panics on it.
 func Load() (Config, error) {
-	apiKey := os.Getenv("BMKG_API_KEY")
-	if apiKey == "" {
-		return Config{}, errors.New("BMKG_API_KEY is required")
+	apiKey, err := env.Required("BMKG_API_KEY")
+	if err != nil {
+		return Config{}, fmt.Errorf("load config: %w", err)
+	}
+	responseDelay, err := env.Duration("BMKG_DELAY", 100*time.Millisecond)
+	if err != nil {
+		return Config{}, fmt.Errorf("load config: %w", err)
+	}
+	newEventInterval, err := env.Duration("NEW_EVENT_INTERVAL", 10*time.Second)
+	if err != nil {
+		return Config{}, fmt.Errorf("load config: %w", err)
+	}
+	if newEventInterval <= 0 {
+		return Config{}, fmt.Errorf("load config: environment variable NEW_EVENT_INTERVAL must be positive, got %s", newEventInterval)
+	}
+	seedCount, err := env.Int("SEED_COUNT", 20)
+	if err != nil {
+		return Config{}, fmt.Errorf("load config: %w", err)
 	}
 	return Config{
-		Port:             valueOr("BMKG_PORT", "8081"),
+		Port:             env.String("BMKG_PORT", "8081"),
 		APIKey:           apiKey,
-		ResponseDelay:    durationOr("BMKG_DELAY", 100*time.Millisecond),
-		NewEventInterval: durationOr("NEW_EVENT_INTERVAL", 10*time.Second),
-		SeedCount:        intOr("SEED_COUNT", 20),
+		ResponseDelay:    responseDelay,
+		NewEventInterval: newEventInterval,
+		SeedCount:        seedCount,
 	}, nil
-}
-
-func intOr(name string, fallback int) int {
-	if value := os.Getenv(name); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil && parsed >= 0 {
-			return parsed
-		}
-	}
-	return fallback
-}
-
-func valueOr(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func durationOr(name string, fallback time.Duration) time.Duration {
-	if value := os.Getenv(name); value != "" {
-		if parsed, err := time.ParseDuration(value); err == nil {
-			return parsed
-		}
-	}
-	return fallback
 }

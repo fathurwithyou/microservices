@@ -16,32 +16,43 @@ import (
 	httptransport "github.com/fathurwithyou/microservices/services/bmkg/internal/transport/http"
 )
 
+// serviceName identifies this service in structured logs.
+const serviceName = "bmkg"
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Error("configuration failed", "service", "bmkg", "error", err)
+		logger.Error("configuration failed", "service", serviceName, "error", err)
 		os.Exit(1)
 	}
 
-	state := state.New(cfg.SeedCount)
-	producer := application.NewEventProducer(state, cfg.NewEventInterval)
+	memory := state.New(state.Config{SeedCount: cfg.SeedCount})
+	producer := application.NewEventProducer(application.Config{State: memory, Interval: cfg.NewEventInterval})
 	server := &http.Server{
-		Addr:              ":" + cfg.Port,
-		Handler:           httptransport.NewRouter(httptransport.RouterConfig{State: state, APIKey: cfg.APIKey, ResponseDelay: cfg.ResponseDelay, Logger: logger}),
+		Addr: ":" + cfg.Port,
+		Handler: httptransport.NewRouter(httptransport.RouterConfig{
+			State:         memory,
+			APIKey:        cfg.APIKey,
+			ResponseDelay: cfg.ResponseDelay,
+			Logger:        logger,
+		}),
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       5 * time.Second,
-		WriteTimeout:      5 * time.Second,
-		IdleTimeout:       30 * time.Second,
+		// WriteTimeout is 5s: BMKG injects a fixed artificial delay
+		// (default 100ms, configured 50-150ms) into /seismic-events, so
+		// 5s leaves ample headroom for delay plus serialization.
+		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  30 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go producer.Run(ctx)
 	go func() {
-		logger.Info("server started", "service", "bmkg", "port", cfg.Port)
+		logger.Info("server started", "service", serviceName, "port", cfg.Port)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("server stopped", "service", "bmkg", "error", err)
+			logger.Error("server stopped", "service", serviceName, "error", err)
 			stop()
 		}
 	}()

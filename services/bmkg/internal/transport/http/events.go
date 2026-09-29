@@ -1,6 +1,7 @@
 package httptransport
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -8,36 +9,55 @@ import (
 )
 
 func (h handler) seismicEvents(c *gin.Context) {
-	if !waitForResponseDelay(c, h.responseDelay) {
+	if !waitDelay(c.Request.Context(), h.responseDelay) {
+		return
+	}
+	since, ok := parseSince(c)
+	if !ok {
 		return
 	}
 	started := time.Now()
-	c.JSON(http.StatusOK, h.state.EventsSince(parseSince(c.Query("since"))))
+	c.JSON(http.StatusOK, h.state.EventsSince(since))
 	h.logResponse(c, "seismic-events", started)
 }
 
 func (h handler) tsunamiWarnings(c *gin.Context) {
+	since, ok := parseSince(c)
+	if !ok {
+		return
+	}
 	started := time.Now()
-	c.JSON(http.StatusOK, h.state.WarningsSince(parseSince(c.Query("since"))))
+	c.JSON(http.StatusOK, h.state.WarningsSince(since))
 	h.logResponse(c, "tsunami-warnings", started)
 }
 
 func (h handler) logResponse(c *gin.Context, operation string, started time.Time) {
-	h.logger.Info("outbound response", "service", "bmkg", "component", "http", "operation", operation, "latency_ms", time.Since(started).Milliseconds(), "status", http.StatusOK, "correlation_id", c.GetString("correlation_id"))
+	h.logger.Info("outbound response", "service", serviceName, "component", "http", "operation", operation, "latency_ms", time.Since(started).Milliseconds(), "status", http.StatusOK, "correlation_id", c.GetString("correlation_id"))
 }
 
-func waitForResponseDelay(c *gin.Context, delay time.Duration) bool {
+// waitDelay blocks for d, returning false when the client disconnected
+// before the delay elapsed.
+func waitDelay(ctx context.Context, d time.Duration) bool {
 	select {
-	case <-time.After(delay):
+	case <-time.After(d):
 		return true
-	case <-c.Request.Context().Done():
+	case <-ctx.Done():
 		return false
 	}
 }
 
-func parseSince(value string) time.Time {
-	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
-		return parsed
+// parseSince reads the optional `since` query parameter as RFC3339. An
+// empty value means "everything" (the zero time). A malformed non-empty
+// value responds 400 and returns ok=false.
+func parseSince(c *gin.Context) (time.Time, bool) {
+	value := c.Query("since")
+	if value == "" {
+		return time.Time{}, true
 	}
-	return time.Time{}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid since parameter"})
+		return time.Time{}, false
+	}
+	return parsed, true
 }
