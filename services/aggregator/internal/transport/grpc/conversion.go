@@ -2,6 +2,7 @@ package grpctransport
 
 import (
 	"fmt"
+	"time"
 
 	eventspb "github.com/fathurwithyou/microservices/contracts/gen/go/events"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
@@ -43,7 +44,7 @@ func severityFromProto(value eventspb.Severity) domain.Severity {
 }
 
 func hazardToProto(item domain.HazardEvent) *eventspb.HazardEvent {
-	result := &eventspb.HazardEvent{HazardId: item.HazardID, Source: sourceToProto(item.Source), SourceRefId: item.SourceRefID, HazardType: hazardTypeToProto(item.HazardType), Severity: severityToProto(item.Severity), AreaName: item.AreaName, Latitude: item.Latitude, Longitude: item.Longitude, OccurredAt: item.OccurredAt.Format("2006-01-02T15:04:05Z07:00"), IngestedAt: item.IngestedAt.Format("2006-01-02T15:04:05Z07:00"), Attributes: map[string]string{}}
+	result := &eventspb.HazardEvent{HazardId: item.HazardID, Source: sourceToProto(item.Source), SourceRefId: item.SourceRefID, HazardType: hazardTypeToProto(item.HazardType), Severity: severityToProto(item.Severity), AreaName: item.AreaName, Latitude: item.Latitude, Longitude: item.Longitude, OccurredAt: item.OccurredAt.Format(time.RFC3339), IngestedAt: item.IngestedAt.Format(time.RFC3339), Attributes: map[string]string{}}
 	for key, value := range item.Attributes {
 		result.Attributes[key] = fmt.Sprint(value)
 	}
@@ -51,28 +52,36 @@ func hazardToProto(item domain.HazardEvent) *eventspb.HazardEvent {
 }
 
 func sourceStatusToProto(item domain.SourceStatus, source eventspb.Source) *eventspb.SourceStatus {
-	result := &eventspb.SourceStatus{Source: source, Status: item.Status, LastError: item.LastError}
+	result := &eventspb.SourceStatus{Source: source, Status: string(item.Status), LastError: item.LastError}
 	if item.LastSuccessAt != nil {
-		result.LastSuccessAt = item.LastSuccessAt.Format("2006-01-02T15:04:05Z07:00")
+		result.LastSuccessAt = item.LastSuccessAt.Format(time.RFC3339)
 	}
 	if item.StaleSince != nil {
-		result.StaleSince = item.StaleSince.Format("2006-01-02T15:04:05Z07:00")
+		result.StaleSince = item.StaleSince.Format(time.RFC3339)
 	}
 	return result
 }
 
 func sourceToProto(value domain.Source) eventspb.Source {
-	if value == domain.SourceBMKG {
+	switch value {
+	case domain.SourceBMKG:
 		return eventspb.Source_SOURCE_BMKG
+	case domain.SourcePVMBG:
+		return eventspb.Source_SOURCE_PVMBG
+	default:
+		return eventspb.Source_SOURCE_UNSPECIFIED
 	}
-	return eventspb.Source_SOURCE_PVMBG
 }
 
 func hazardTypeToProto(value domain.HazardType) eventspb.HazardType {
-	if value == domain.HazardSeismic {
+	switch value {
+	case domain.HazardSeismic:
 		return eventspb.HazardType_HAZARD_TYPE_SEISMIC
+	case domain.HazardVolcanic:
+		return eventspb.HazardType_HAZARD_TYPE_VOLCANIC
+	default:
+		return eventspb.HazardType_HAZARD_TYPE_UNSPECIFIED
 	}
-	return eventspb.HazardType_HAZARD_TYPE_VOLCANIC
 }
 
 func severityToProto(value domain.Severity) eventspb.Severity {

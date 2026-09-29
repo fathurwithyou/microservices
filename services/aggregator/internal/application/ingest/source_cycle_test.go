@@ -28,6 +28,26 @@ func TestWarningsByEventIDCorrelatesUsingRelatedEventID(t *testing.T) {
 	}
 }
 
+// fakeSource is a scriptable Source for scheduling tests.
+type fakeSource struct {
+	name  domain.Source
+	fetch func(ctx context.Context, since time.Time, correlationID string) ([]domain.HazardEvent, error)
+}
+
+func (f *fakeSource) Name() domain.Source { return f.name }
+
+func (f *fakeSource) Fetch(ctx context.Context, since time.Time, correlationID string) ([]domain.HazardEvent, error) {
+	return f.fetch(ctx, since, correlationID)
+}
+
+func testEvent(id string, source domain.Source) domain.HazardEvent {
+	return domain.HazardEvent{HazardID: id, Source: source, SourceRefID: id, HazardType: domain.HazardSeismic, Severity: domain.SeverityNormal, OccurredAt: time.Now().UTC(), IngestedAt: time.Now().UTC(), Attributes: map[string]any{}}
+}
+
+func testPoller(repository Repository) *Poller {
+	return &Poller{repository: repository, interval: time.Hour, timeout: time.Second, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+}
+
 type observingRepository struct {
 	*memory.Repository
 	advanced chan time.Time
@@ -51,11 +71,12 @@ func TestRunSourceLoadsAndAdvancesPersistedCursorAfterSuccess(t *testing.T) {
 	called := make(chan time.Time, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	poller := &Poller{repository: repository, interval: time.Hour, timeout: time.Second, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	go poller.runSource(ctx, domain.SourceBMKG, func(_ context.Context, since time.Time, _ string) error {
+	poller := testPoller(repository)
+	source := &fakeSource{name: domain.SourceBMKG, fetch: func(_ context.Context, since time.Time, _ string) ([]domain.HazardEvent, error) {
 		called <- since
-		return nil
-	})
+		return nil, nil
+	}}
+	go poller.runSource(ctx, source)
 
 	select {
 	case since := <-called:
@@ -77,7 +98,7 @@ func TestRunSourceLoadsAndAdvancesPersistedCursorAfterSuccess(t *testing.T) {
 	cancel()
 }
 
-func TestRunSourceDoesNotAdvanceCursorWhenBatchFails(t *testing.T) {
+func TestRunSourceDoesNotAdvanceCursorWhenFetchFails(t *testing.T) {
 	repository := &observingRepository{Repository: memory.NewRepository(), advanced: make(chan time.Time, 1)}
 	starting := time.Now().UTC().Add(-time.Hour)
 	if err := repository.Repository.AdvancePollCursor(context.Background(), domain.SourcePVMBG, starting); err != nil {
@@ -87,11 +108,12 @@ func TestRunSourceDoesNotAdvanceCursorWhenBatchFails(t *testing.T) {
 	called := make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	poller := &Poller{repository: repository, interval: time.Hour, timeout: time.Second, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	go poller.runSource(ctx, domain.SourcePVMBG, func(_ context.Context, _ time.Time, _ string) error {
+	poller := testPoller(repository)
+	source := &fakeSource{name: domain.SourcePVMBG, fetch: func(_ context.Context, _ time.Time, _ string) ([]domain.HazardEvent, error) {
 		called <- struct{}{}
-		return errors.New("source unavailable")
-	})
+		return nil, errors.New("source unavailable")
+	}}
+	go poller.runSource(ctx, source)
 
 	select {
 	case <-called:
@@ -110,5 +132,79 @@ func TestRunSourceDoesNotAdvanceCursorWhenBatchFails(t *testing.T) {
 	if !cursor.Equal(starting) {
 		t.Fatalf("failed batch changed cursor: got %s, want %s", cursor, starting)
 	}
+	status, err := repository.GetSourceStatus(context.Background(), domain.SourcePVMBG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Status != domain.SourceStateStale {
+		t.Fatalf("failed batch status = %q, want %q", status.Status, domain.SourceStateStale)
+	}
 	cancel()
+}
+
+func TestRunSourcePersistsFetchedEvents(t *testing.T) {
+	repository := memory.NewRepository()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller := testPoller(repository)
+	source := &fakeSource{name: domain.SourceBMKG, fetch: func(_ context.Context, _ time.Time, _ string) ([]domain.HazardEvent, error) {
+		return []domain.HazardEvent{testEvent("h-1", domain.SourceBMKG)}, nil
+	}}
+	go poller.runSource(ctx, source)
+
+	deadline := time.After(time.Second)
+	for {
+		event, err := repository.GetHazard(context.Background(), "h-1")
+		if err == nil {
+			if event.SourceRefID != "h-1" {
+				t.Fatalf("persisted event = %+v", event)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("event was not persisted: %v", err)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestRunSourceAdvancesPastPoisonPayloads(t *testing.T) {
+	repository := &observingRepository{Repository: memory.NewRepository(), advanced: make(chan time.Time, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller := testPoller(repository)
+	source := &fakeSource{name: domain.SourcePVMBG, fetch: func(_ context.Context, _ time.Time, _ string) ([]domain.HazardEvent, error) {
+		return []domain.HazardEvent{testEvent("h-2", domain.SourcePVMBG)}, &MappingError{Source: domain.SourcePVMBG, Err: errors.New("bad payload")}
+	}}
+	go poller.runSource(ctx, source)
+
+	select {
+	case <-repository.advanced:
+	case <-time.After(time.Second):
+		t.Fatal("mapping errors must not block cursor advancement")
+	}
+	if _, err := repository.GetHazard(context.Background(), "h-2"); err != nil {
+		t.Fatalf("successfully mapped event was not persisted: %v", err)
+	}
+	cancel()
+}
+
+func TestNewPollerValidatesConfig(t *testing.T) {
+	repository := memory.NewRepository()
+	source := &fakeSource{name: domain.SourceBMKG, fetch: func(context.Context, time.Time, string) ([]domain.HazardEvent, error) { return nil, nil }}
+
+	if _, err := NewPoller(PollerConfig{}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("empty config error = %v, want ErrInvalidConfig", err)
+	}
+	if _, err := NewPoller(PollerConfig{Repository: repository, Sources: []Source{source}, Interval: time.Second, Timeout: 0}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("zero timeout error = %v, want ErrInvalidConfig", err)
+	}
+	poller, err := NewPoller(PollerConfig{Repository: repository, Sources: []Source{source}, Interval: time.Second, Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("valid config failed: %v", err)
+	}
+	if poller == nil || len(poller.sources) != 1 {
+		t.Fatalf("poller = %+v", poller)
+	}
 }

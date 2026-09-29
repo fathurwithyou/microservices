@@ -111,7 +111,7 @@ func (s *Repository) GetSourceStatus(ctx context.Context, source domain.Source) 
 	var result domain.SourceStatus
 	err := s.pool.QueryRow(ctx, `SELECT source,status,last_success_at,stale_since,last_error FROM source_status WHERE source=$1`, source).Scan(&result.Source, &result.Status, &result.LastSuccessAt, &result.StaleSince, &result.LastError)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.SourceStatus{Source: source, Status: "unknown"}, nil
+		return domain.SourceStatus{Source: source, Status: domain.SourceStateUnknown}, nil
 	}
 	if err != nil {
 		return domain.SourceStatus{}, err

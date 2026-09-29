@@ -28,6 +28,19 @@ const (
 	SeverityAwas    Severity = "AWAS"
 )
 
+// SourceState describes the health of an external feed as tracked by the
+// poller.
+type SourceState string
+
+const (
+	// SourceStateHealthy means the last poll cycle succeeded.
+	SourceStateHealthy SourceState = "healthy"
+	// SourceStateStale means poll cycles have been failing since StaleSince.
+	SourceStateStale SourceState = "stale"
+	// SourceStateUnknown means no poll cycle has completed yet.
+	SourceStateUnknown SourceState = "unknown"
+)
+
 type HazardEvent struct {
 	HazardID    string
 	Source      Source
@@ -49,7 +62,7 @@ type VolcanoReference struct {
 
 type SourceStatus struct {
 	Source        Source
-	Status        string
+	Status        SourceState
 	LastSuccessAt *time.Time
 	StaleSince    *time.Time
 	LastError     string

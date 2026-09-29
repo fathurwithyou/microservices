@@ -88,16 +88,42 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		return 1
 	}
 	defer publisher.Close()
-	poller := applicationingest.NewPoller(applicationingest.PollerConfig{
+	bmkgClient, err := sources.New(sources.ClientConfig{BaseURL: cfg.BMKGURL, Name: "bmkg", Header: "X-BMKG-Key", Value: cfg.BMKGKey, Timeout: cfg.RequestTimeout, Logger: logger})
+	if err != nil {
+		logger.Error("bmkg client initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	pvmbgClient, err := sources.New(sources.ClientConfig{BaseURL: cfg.PVMBGURL, Name: "pvmbg", Header: "Authorization", Value: "Bearer " + cfg.PVMBGToken, Timeout: cfg.RequestTimeout, Logger: logger})
+	if err != nil {
+		logger.Error("pvmbg client initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	bmkgSource, err := applicationingest.NewBMKGSource(applicationingest.BMKGSourceConfig{Client: bmkgClient, Logger: logger})
+	if err != nil {
+		logger.Error("bmkg source initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	pvmbgSource, err := applicationingest.NewPVMBGSource(applicationingest.PVMBGSourceConfig{Client: pvmbgClient, Logger: logger, Volcanoes: volcanoes})
+	if err != nil {
+		logger.Error("pvmbg source initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	poller, err := applicationingest.NewPoller(applicationingest.PollerConfig{
 		Repository: persistence,
-		BMKG:       sources.New(sources.ClientConfig{BaseURL: cfg.BMKGURL, Name: "bmkg", Header: "X-BMKG-Key", Value: cfg.BMKGKey, Timeout: cfg.RequestTimeout, Logger: logger}),
-		PVMBG:      sources.New(sources.ClientConfig{BaseURL: cfg.PVMBGURL, Name: "pvmbg", Header: "Authorization", Value: "Bearer " + cfg.PVMBGToken, Timeout: cfg.RequestTimeout, Logger: logger}),
+		Sources:    []applicationingest.Source{bmkgSource, pvmbgSource},
 		Interval:   cfg.PollInterval,
 		Timeout:    cfg.RequestTimeout,
 		Logger:     logger,
-		Volcanoes:  volcanoes,
 	})
-	outboxWorker := outbox.NewWorker(outbox.WorkerConfig{Repository: persistence, Publisher: publisher, Interval: cfg.OutboxPollInterval, Logger: logger})
+	if err != nil {
+		logger.Error("poller initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	outboxWorker, err := outbox.NewWorker(outbox.WorkerConfig{Repository: persistence, Publisher: publisher, Interval: cfg.OutboxPollInterval, Logger: logger})
+	if err != nil {
+		logger.Error("outbox worker initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
 	queries := hazards.NewQueries(persistence)
 
 	grpcListener, err := net.Listen("tcp", ":"+cfg.GRPCPort)
@@ -105,7 +131,7 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("gRPC listen failed", "service", "aggregator", "error", err)
 		return 1
 	}
-	grpcServer := grpctransport.NewServer(queries, cfg.InternalServiceToken, logger)
+	grpcServer := grpctransport.NewServer(grpctransport.ServerConfig{Queries: queries, ServiceToken: cfg.InternalServiceToken, Logger: logger})
 	httpServer := httptransport.NewHealthServer(cfg.HTTPPort)
 
 	go poller.Run(ctx)

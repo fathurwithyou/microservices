@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"sort"
 	"sync"
@@ -119,7 +120,7 @@ func (s *Repository) GetSourceStatus(_ context.Context, source domain.Source) (d
 	defer s.mu.RUnlock()
 	status, ok := s.status[source]
 	if !ok {
-		return domain.SourceStatus{Source: source, Status: "unknown"}, nil
+		return domain.SourceStatus{Source: source, Status: domain.SourceStateUnknown}, nil
 	}
 	return status, nil
 }
@@ -200,16 +201,8 @@ func (s *Repository) ReleaseOutbox(_ context.Context, id int64, leaseToken strin
 }
 
 func clone(event domain.HazardEvent) domain.HazardEvent {
-	event.Attributes = mapsClone(event.Attributes)
+	event.Attributes = maps.Clone(event.Attributes)
 	return event
-}
-
-func mapsClone(input map[string]any) map[string]any {
-	output := make(map[string]any, len(input))
-	for key, value := range input {
-		output[key] = value
-	}
-	return output
 }
 
 func defaultVolcanoes() map[string]domain.VolcanoReference {
@@ -221,9 +214,5 @@ func defaultVolcanoes() map[string]domain.VolcanoReference {
 }
 
 func cloneVolcanoes(input map[string]domain.VolcanoReference) map[string]domain.VolcanoReference {
-	output := make(map[string]domain.VolcanoReference, len(input))
-	for key, value := range input {
-		output[key] = value
-	}
-	return output
+	return maps.Clone(input)
 }

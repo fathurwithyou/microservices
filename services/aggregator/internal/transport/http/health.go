@@ -4,21 +4,22 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/fathurwithyou/microservices/pkg/correlation"
 )
 
+// NewHealthServer returns the aggregator liveness HTTP server.
 func NewHealthServer(port string) *http.Server {
 	router := http.NewServeMux()
-	router.HandleFunc("/health", health)
+	router.HandleFunc("GET /health", health)
 	return &http.Server{Addr: ":" + port, Handler: router, ReadHeaderTimeout: 2 * time.Second, WriteTimeout: 3 * time.Second}
 }
 
 func health(response http.ResponseWriter, request *http.Request) {
-	correlationID := request.Header.Get("X-Correlation-ID")
+	correlationID := request.Header.Get(correlation.Header)
 	if correlationID == "" {
-		correlationID = uuid.NewString()
+		correlationID = correlation.New()
 	}
-	response.Header().Set("X-Correlation-ID", correlationID)
+	response.Header().Set(correlation.Header, correlationID)
 	response.Header().Set("Content-Type", "application/json")
 	_, _ = response.Write([]byte(`{"status":"ok","service":"aggregator"}`))
 }

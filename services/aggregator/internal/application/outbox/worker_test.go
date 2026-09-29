@@ -30,7 +30,10 @@ func TestDispatchPendingPublishesAndAcknowledgesClaimedMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	publisher := &recordingPublisher{}
-	worker := NewWorker(WorkerConfig{Repository: repository, Publisher: publisher, Interval: time.Second, Logger: slog.Default()})
+	worker, err := NewWorker(WorkerConfig{Repository: repository, Publisher: publisher, Interval: time.Second, Logger: slog.Default()})
+	if err != nil {
+		t.Fatal(err)
+	}
 	worker.dispatchPending(context.Background())
 
 	if publisher.calls != 1 {
@@ -52,7 +55,10 @@ func TestDispatchPendingReleasesFailedClaimForRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	publisher := &recordingPublisher{err: errors.New("broker unavailable")}
-	worker := NewWorker(WorkerConfig{Repository: repository, Publisher: publisher, Interval: time.Second, Logger: slog.Default()})
+	worker, err := NewWorker(WorkerConfig{Repository: repository, Publisher: publisher, Interval: time.Second, Logger: slog.Default()})
+	if err != nil {
+		t.Fatal(err)
+	}
 	worker.dispatchPending(context.Background())
 
 	immediate, err := repository.ClaimPendingOutbox(context.Background(), 1, time.Minute)
@@ -63,7 +69,7 @@ func TestDispatchPendingReleasesFailedClaimForRetry(t *testing.T) {
 		t.Fatalf("failed message was immediately reclaimed: %#v", immediate)
 	}
 
-	time.Sleep(outboxRetryBase + 100*time.Millisecond)
+	time.Sleep(DefaultRetryBase + 100*time.Millisecond)
 	retry, err := repository.ClaimPendingOutbox(context.Background(), 1, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -74,13 +80,28 @@ func TestDispatchPendingReleasesFailedClaimForRetry(t *testing.T) {
 }
 
 func TestRetryDelayIsExponentialAndBounded(t *testing.T) {
-	if got := retryDelay(1); got != 500*time.Millisecond {
+	worker := &Worker{retryBase: DefaultRetryBase, retryMaximum: DefaultRetryMaximum}
+	if got := worker.retryDelay(1); got != 500*time.Millisecond {
 		t.Fatalf("first retry delay = %s, want 500ms", got)
 	}
-	if got := retryDelay(3); got != 2*time.Second {
+	if got := worker.retryDelay(3); got != 2*time.Second {
 		t.Fatalf("third retry delay = %s, want 2s", got)
 	}
-	if got := retryDelay(99); got != outboxRetryMaximum {
-		t.Fatalf("retry delay = %s, want maximum %s", got, outboxRetryMaximum)
+	if got := worker.retryDelay(99); got != DefaultRetryMaximum {
+		t.Fatalf("retry delay = %s, want maximum %s", got, DefaultRetryMaximum)
+	}
+}
+
+func TestNewWorkerValidatesConfig(t *testing.T) {
+	if _, err := NewWorker(WorkerConfig{}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("empty config error = %v, want ErrInvalidConfig", err)
+	}
+	repository := memory.NewRepository()
+	worker, err := NewWorker(WorkerConfig{Repository: repository, Publisher: &recordingPublisher{}, Interval: time.Second})
+	if err != nil {
+		t.Fatalf("valid config failed: %v", err)
+	}
+	if worker.batchSize != DefaultBatchSize || worker.leaseDuration != DefaultLeaseDuration {
+		t.Fatalf("defaults not applied: %+v", worker)
 	}
 }

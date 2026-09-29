@@ -1,6 +1,7 @@
 FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY contracts ./contracts
+COPY pkg ./pkg
 COPY services/aggregator ./services/aggregator
 RUN cd services/aggregator && go build -trimpath -ldflags='-s -w' -o /out/aggregator ./cmd/server
 
