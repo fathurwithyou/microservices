@@ -67,14 +67,14 @@ func TestStorePersistsCredentialsAndRotatesRefreshToken(t *testing.T) {
 
 	rotatedAccess := domain.AccessToken{Hash: []byte(fmt.Sprintf("access-rotated-%d", now.UnixNano())), ExpiresAt: now.Add(time.Minute)}
 	rotatedRefresh := domain.RefreshToken{Hash: []byte(fmt.Sprintf("refresh-rotated-%d", now.UnixNano()))}
-	owner, err := store.RotateRefreshToken(ctx, refresh.Hash, rotatedAccess, rotatedRefresh)
+	owner, err := store.RotateRefreshToken(ctx, refresh.Hash, rotatedAccess, rotatedRefresh, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if owner.ClientID != clientID || len(owner.Scopes) != 1 || owner.Scopes[0] != "hazard:read:raw" {
 		t.Fatalf("unexpected rotated owner: %+v", owner)
 	}
-	if _, err := store.RotateRefreshToken(ctx, refresh.Hash, rotatedAccess, rotatedRefresh); !errors.Is(err, ports.ErrInvalidToken) {
+	if _, err := store.RotateRefreshToken(ctx, refresh.Hash, rotatedAccess, rotatedRefresh, now); !errors.Is(err, ports.ErrInvalidToken) {
 		t.Fatalf("old refresh token error = %v, want invalid token", err)
 	}
 }

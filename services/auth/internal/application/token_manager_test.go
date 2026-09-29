@@ -12,79 +12,149 @@ import (
 
 func TestIssuePersistsHashedTokenMaterialAndScopes(t *testing.T) {
 	store := newMemoryTokenStore()
-	manager := NewTokenManager(time.Minute, store)
+	manager := newTestManager(t, store, nil)
 	seedClient(t, manager, "field-team-client", "secret", "hazard:read:raw")
 
-	access, refresh, _, scopes, err := manager.Issue(context.Background(), "field-team-client", "secret")
+	pair, err := manager.Issue(context.Background(), "field-team-client", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if access == "" || refresh == "" {
+	if pair.AccessToken == "" || pair.RefreshToken == "" {
 		t.Fatal("token pair is empty")
 	}
-	if string(store.access[hashKey(hash(access))].Hash) == access {
+	if pair.ClientID != "field-team-client" {
+		t.Fatalf("token pair client = %q, want field-team-client", pair.ClientID)
+	}
+	if string(store.access[hashKey(hash(pair.AccessToken))].Hash) == pair.AccessToken {
 		t.Fatal("access token was stored in plaintext")
 	}
-	if _, ok := store.refresh[hashKey(hash(refresh))]; !ok {
+	if _, ok := store.refresh[hashKey(hash(pair.RefreshToken))]; !ok {
 		t.Fatal("refresh token was not persisted")
 	}
-	if len(scopes) != 1 || scopes[0] != "hazard:read:raw" {
-		t.Fatalf("unexpected scopes: %v", scopes)
+	if len(pair.Scopes) != 1 || pair.Scopes[0] != "hazard:read:raw" {
+		t.Fatalf("unexpected scopes: %v", pair.Scopes)
 	}
 }
 
 func TestIssueRejectsInvalidCredentials(t *testing.T) {
 	store := newMemoryTokenStore()
-	manager := NewTokenManager(time.Minute, store)
+	manager := newTestManager(t, store, nil)
 	seedClient(t, manager, "media-client", "secret", "hazard:read:summary")
 
-	if _, _, _, _, err := manager.Issue(context.Background(), "media-client", "wrong"); !errors.Is(err, ErrInvalidCredentials) {
-		t.Fatalf("invalid credentials error = %v, want ErrInvalidCredentials", err)
+	if _, err := manager.Issue(context.Background(), "media-client", "wrong"); !errors.Is(err, ports.ErrInvalidCredentials) {
+		t.Fatalf("invalid credentials error = %v, want ports.ErrInvalidCredentials", err)
 	}
 }
 
 func TestRefreshRotationRejectsOldToken(t *testing.T) {
 	store := newMemoryTokenStore()
-	manager := NewTokenManager(time.Minute, store)
+	manager := newTestManager(t, store, nil)
 	seedClient(t, manager, "field-team-client", "secret", "hazard:read:raw")
-	_, refresh, _, _, err := manager.Issue(context.Background(), "field-team-client", "secret")
+	issued, err := manager.Issue(context.Background(), "field-team-client", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, rotated, _, clientID, scopes, err := manager.Refresh(context.Background(), refresh)
+	rotated, err := manager.Refresh(context.Background(), issued.RefreshToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rotated == refresh {
+	if rotated.RefreshToken == issued.RefreshToken {
 		t.Fatal("refresh token was not rotated")
 	}
-	if clientID != "field-team-client" || len(scopes) != 1 || scopes[0] != "hazard:read:raw" {
-		t.Fatalf("unexpected rotated owner: %s %v", clientID, scopes)
+	if rotated.ClientID != "field-team-client" || len(rotated.Scopes) != 1 || rotated.Scopes[0] != "hazard:read:raw" {
+		t.Fatalf("unexpected rotated owner: %s %v", rotated.ClientID, rotated.Scopes)
 	}
-	if _, _, _, _, _, err := manager.Refresh(context.Background(), refresh); !errors.Is(err, ErrInvalidRefreshToken) {
+	if _, err := manager.Refresh(context.Background(), issued.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
 		t.Fatalf("old refresh token accepted: %v", err)
 	}
 }
 
 func TestValidateAccessTokenExpires(t *testing.T) {
 	store := newMemoryTokenStore()
-	manager := NewTokenManager(time.Minute, store)
+	current := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	manager := newTestManager(t, store, func() time.Time { return current })
 	seedClient(t, manager, "media-client", "secret", "hazard:read:summary")
-	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
-	manager.now = func() time.Time { return now }
 
-	access, _, _, _, err := manager.Issue(context.Background(), "media-client", "secret")
+	pair, err := manager.Issue(context.Background(), "media-client", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := manager.Validate(context.Background(), access); err != nil {
+	clientID, scopes, expiresAt, err := manager.Validate(context.Background(), pair.AccessToken)
+	if err != nil {
 		t.Fatalf("valid access token rejected: %v", err)
 	}
-	manager.now = func() time.Time { return now.Add(time.Minute) }
-	if _, _, _, err := manager.Validate(context.Background(), access); !errors.Is(err, ErrInvalidAccessToken) {
+	if clientID != "media-client" || len(scopes) != 1 || scopes[0] != "hazard:read:summary" {
+		t.Fatalf("unexpected validated session: %s %v", clientID, scopes)
+	}
+	if want := current.Add(time.Minute); !expiresAt.Equal(want) {
+		t.Fatalf("expiresAt = %s, want %s", expiresAt, want)
+	}
+
+	current = current.Add(time.Minute)
+	if _, _, _, err := manager.Validate(context.Background(), pair.AccessToken); !errors.Is(err, ErrInvalidAccessToken) {
 		t.Fatalf("expired access token accepted: %v", err)
 	}
+}
+
+func TestNewTokenManagerValidatesConfig(t *testing.T) {
+	if _, err := NewTokenManager(TokenManagerConfig{AccessTokenTTL: time.Minute}); err == nil {
+		t.Fatal("nil repository accepted")
+	}
+	if _, err := NewTokenManager(TokenManagerConfig{Repository: newMemoryTokenStore()}); err == nil {
+		t.Fatal("zero AccessTokenTTL accepted")
+	}
+}
+
+func TestIssueUsesInjectedClockAndTokenGenerator(t *testing.T) {
+	store := newMemoryTokenStore()
+	fixed := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	tokens := []string{"access-token-1", "refresh-token-1"}
+	next := 0
+	manager, err := NewTokenManager(TokenManagerConfig{
+		Repository:     store,
+		AccessTokenTTL: time.Minute,
+		Now:            func() time.Time { return fixed },
+		GenerateToken: func() (string, error) {
+			value := tokens[next]
+			next++
+			return value, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedClient(t, manager, "media-client", "secret", "hazard:read:summary")
+
+	pair, err := manager.Issue(context.Background(), "media-client", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pair.AccessToken != "access-token-1" || pair.RefreshToken != "refresh-token-1" {
+		t.Fatalf("unexpected token pair: %+v", pair)
+	}
+	if !pair.ExpiresAt.Equal(fixed.Add(time.Minute)) {
+		t.Fatalf("expiresAt = %s, want %s", pair.ExpiresAt, fixed.Add(time.Minute))
+	}
+}
+
+func TestDefaultTokenGeneratorProducesHex(t *testing.T) {
+	token, err := randomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(token) != tokenBytes*2 {
+		t.Fatalf("token length = %d, want %d", len(token), tokenBytes*2)
+	}
+}
+
+func newTestManager(t *testing.T, store ports.TokenRepository, now func() time.Time) *TokenManager {
+	t.Helper()
+	manager, err := NewTokenManager(TokenManagerConfig{Repository: store, AccessTokenTTL: time.Minute, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manager
 }
 
 func seedClient(t *testing.T, manager *TokenManager, clientID, secret, scope string) {
@@ -151,9 +221,9 @@ func (s *memoryTokenStore) ValidateAccessToken(_ context.Context, tokenHash []by
 	return token, nil
 }
 
-func (s *memoryTokenStore) RotateRefreshToken(_ context.Context, oldHash []byte, access domain.AccessToken, refresh domain.RefreshToken) (domain.TokenOwner, error) {
+func (s *memoryTokenStore) RotateRefreshToken(_ context.Context, oldHash []byte, access domain.AccessToken, refresh domain.RefreshToken, now time.Time) (domain.TokenOwner, error) {
 	old, ok := s.refresh[hashKey(oldHash)]
-	if !ok || old.revoked || old.expires != nil && !old.expires.After(time.Now()) {
+	if !ok || old.revoked || (old.expires != nil && !old.expires.After(now)) {
 		return domain.TokenOwner{}, ports.ErrInvalidToken
 	}
 	old.revoked = true

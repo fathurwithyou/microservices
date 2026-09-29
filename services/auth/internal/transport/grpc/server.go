@@ -4,23 +4,47 @@ import (
 	"log/slog"
 
 	authpb "github.com/fathurwithyou/microservices/contracts/gen/go/auth"
-	"github.com/fathurwithyou/microservices/services/auth/internal/application"
+	"github.com/fathurwithyou/microservices/pkg/grpckit"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 )
 
-func NewServer(manager *application.TokenManager, internalServiceToken string, loggers ...*slog.Logger) *grpc.Server {
-	logger := slog.Default()
-	if len(loggers) > 0 && loggers[0] != nil {
-		logger = loggers[0]
+// HealthMethod is the full gRPC method path of the auth health check. It is
+// public so callers can serve it without a service token.
+const HealthMethod = "/bnpb.auth.Auth/HealthCheck"
+
+// ServerConfig holds the collaborators the gRPC server needs. Unlike a
+// variadic logger, every dependency is explicit.
+type ServerConfig struct {
+	// Tokens is the application service backing the auth RPCs.
+	Tokens TokenService
+	// ServiceToken is the bearer token required on protected methods.
+	ServiceToken string
+	// Logger receives structured log output. Defaults to slog.Default().
+	Logger *slog.Logger
+	// HealthMethod is the public method path that bypasses auth.
+	// Defaults to the HealthMethod constant.
+	HealthMethod string
+}
+
+// NewServer builds the auth gRPC server with shared observability and
+// service-token auth interceptors.
+func NewServer(cfg ServerConfig) *grpc.Server {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	healthMethod := cfg.HealthMethod
+	if healthMethod == "" {
+		healthMethod = HealthMethod
 	}
 	server := grpc.NewServer(grpc.ChainUnaryInterceptor(
-		unaryObservabilityInterceptor(logger),
-		unaryAuthInterceptor(internalServiceToken),
+		grpckit.UnaryObservability(grpckit.Config{Service: "auth", Logger: logger}),
+		grpckit.UnaryAuth(grpckit.AuthConfig{Token: cfg.ServiceToken, PublicMethods: []string{healthMethod}}),
 	))
-	authpb.RegisterAuthServer(server, newAuthHandler(manager))
+	authpb.RegisterAuthServer(server, newAuthHandler(cfg.Tokens, logger))
 	registerHealth(server)
 	reflection.Register(server)
 	return server

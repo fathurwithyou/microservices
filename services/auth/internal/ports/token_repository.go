@@ -19,5 +19,5 @@ type TokenRepository interface {
 	AuthenticateClient(context.Context, string, string) (domain.Client, error)
 	PersistTokenPair(context.Context, domain.AccessToken, domain.RefreshToken) error
 	ValidateAccessToken(context.Context, []byte, time.Time) (domain.AccessToken, error)
-	RotateRefreshToken(context.Context, []byte, domain.AccessToken, domain.RefreshToken) (domain.TokenOwner, error)
+	RotateRefreshToken(context.Context, []byte, domain.AccessToken, domain.RefreshToken, time.Time) (domain.TokenOwner, error)
 }

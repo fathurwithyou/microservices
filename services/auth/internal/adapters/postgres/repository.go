@@ -128,7 +128,7 @@ WHERE token_hash = $1
 	return token, nil
 }
 
-func (s *Repository) RotateRefreshToken(ctx context.Context, oldHash []byte, access domain.AccessToken, refresh domain.RefreshToken) (domain.TokenOwner, error) {
+func (s *Repository) RotateRefreshToken(ctx context.Context, oldHash []byte, access domain.AccessToken, refresh domain.RefreshToken, now time.Time) (domain.TokenOwner, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return domain.TokenOwner{}, fmt.Errorf("begin refresh rotation transaction: %w", err)
@@ -149,7 +149,7 @@ FOR UPDATE`, oldHash).Scan(&owner.ClientID, &scopesJSON, &expiresAt, &revokedAt)
 		}
 		return domain.TokenOwner{}, fmt.Errorf("load refresh token: %w", err)
 	}
-	if revokedAt != nil || expiresAt != nil && !expiresAt.After(time.Now()) {
+	if revokedAt != nil || (expiresAt != nil && !expiresAt.After(now)) {
 		return domain.TokenOwner{}, ports.ErrInvalidToken
 	}
 	if err := json.Unmarshal(scopesJSON, &owner.Scopes); err != nil {
