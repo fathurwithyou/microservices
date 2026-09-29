@@ -1,12 +1,12 @@
 package config
 
 import (
-	"errors"
-	"os"
-	"strconv"
 	"time"
+
+	"github.com/fathurwithyou/microservices/pkg/env"
 )
 
+// Config holds the runtime configuration for the client-api gateway.
 type Config struct {
 	Port                 string
 	InternalServiceToken string
@@ -16,42 +16,30 @@ type Config struct {
 	MaxInflightRequests  int
 }
 
+// Load reads configuration from the environment. Malformed values are
+// errors so the service fails fast at startup.
 func Load() (Config, error) {
-	internalServiceToken := os.Getenv("INTERNAL_SERVICE_TOKEN")
-	if internalServiceToken == "" {
-		return Config{}, errors.New("INTERNAL_SERVICE_TOKEN is required")
+	internalServiceToken, err := env.Required("INTERNAL_SERVICE_TOKEN")
+	if err != nil {
+		return Config{}, err
+	}
+	requestTimeout, err := env.Duration("REQUEST_TIMEOUT", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	maxInflight, err := env.Int("MAX_INFLIGHT_REQUESTS", 64)
+	if err != nil {
+		return Config{}, err
+	}
+	if maxInflight < 1 {
+		maxInflight = 1
 	}
 	return Config{
-		Port:                 valueOr("CLIENT_API_PORT", "8080"),
+		Port:                 env.String("CLIENT_API_PORT", "8080"),
 		InternalServiceToken: internalServiceToken,
-		AggregatorAddress:    valueOr("AGGREGATOR_GRPC_ADDR", "aggregator:9090"),
-		AuthAddress:          valueOr("AUTH_GRPC_ADDR", "auth:9091"),
-		RequestTimeout:       durationOr("REQUEST_TIMEOUT", 5*time.Second),
-		MaxInflightRequests:  intOr("MAX_INFLIGHT_REQUESTS", 64),
+		AggregatorAddress:    env.String("AGGREGATOR_GRPC_ADDR", "aggregator:9090"),
+		AuthAddress:          env.String("AUTH_GRPC_ADDR", "auth:9091"),
+		RequestTimeout:       requestTimeout,
+		MaxInflightRequests:  maxInflight,
 	}, nil
-}
-
-func valueOr(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func durationOr(name string, fallback time.Duration) time.Duration {
-	if value := os.Getenv(name); value != "" {
-		if parsed, err := time.ParseDuration(value); err == nil {
-			return parsed
-		}
-	}
-	return fallback
-}
-
-func intOr(name string, fallback int) int {
-	if value := os.Getenv(name); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
-			return parsed
-		}
-	}
-	return fallback
 }

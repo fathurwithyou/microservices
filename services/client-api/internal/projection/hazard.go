@@ -1,7 +1,8 @@
 package projection
 
-import eventspb "github.com/fathurwithyou/microservices/contracts/gen/go/events"
+import "github.com/fathurwithyou/microservices/services/client-api/internal/ports"
 
+// Summary is the public, reduced view of a hazard event.
 type Summary struct {
 	HazardID   string `json:"hazard_id"`
 	Source     string `json:"source"`
@@ -12,9 +13,25 @@ type Summary struct {
 	IngestedAt string `json:"ingested_at"`
 }
 
-func ToSummary(event *eventspb.HazardEvent) Summary {
-	return Summary{HazardID: event.GetHazardId(), Source: event.GetSource().String(), HazardType: event.GetHazardType().String(), Severity: event.GetSeverity().String(), AreaName: event.GetAreaName(), OccurredAt: event.GetOccurredAt(), IngestedAt: event.GetIngestedAt()}
+// ToSummary projects an internal event onto the fields allowed by the
+// summary scope.
+func ToSummary(event ports.Hazard) Summary {
+	return Summary{HazardID: event.HazardID, Source: event.Source, HazardType: event.HazardType, Severity: event.Severity, AreaName: event.AreaName, OccurredAt: event.OccurredAt, IngestedAt: event.IngestedAt}
 }
-func ToRaw(event *eventspb.HazardEvent) map[string]any {
-	return map[string]any{"hazard_id": event.GetHazardId(), "source": event.GetSource().String(), "source_ref_id": event.GetSourceRefId(), "hazard_type": event.GetHazardType().String(), "severity": event.GetSeverity().String(), "area_name": event.GetAreaName(), "latitude": event.GetLatitude(), "longitude": event.GetLongitude(), "occurred_at": event.GetOccurredAt(), "ingested_at": event.GetIngestedAt(), "attributes": event.GetAttributes()}
+
+// ToRaw projects the complete event for clients with the raw scope.
+func ToRaw(event ports.Hazard) map[string]any {
+	return map[string]any{
+		"hazard_id":     event.HazardID,
+		"source":        event.Source,
+		"source_ref_id": event.SourceRefID,
+		"hazard_type":   event.HazardType,
+		"severity":      event.Severity,
+		"area_name":     event.AreaName,
+		"latitude":      event.Latitude,
+		"longitude":     event.Longitude,
+		"occurred_at":   event.OccurredAt,
+		"ingested_at":   event.IngestedAt,
+		"attributes":    event.Attributes,
+	}
 }
