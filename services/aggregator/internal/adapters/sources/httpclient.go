@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/fathurwithyou/microservices/pkg/correlation"
 )
 
 // Client performs authenticated GET requests against one external feed and
@@ -72,7 +74,7 @@ func (c *Client) Get(ctx context.Context, path, correlationID string) ([]map[str
 		return nil, err
 	}
 	request.Header.Set(c.header, c.value)
-	request.Header.Set("X-Correlation-ID", correlationID)
+	request.Header.Set(correlation.Header, correlationID)
 	response, err := c.client.Do(request)
 	if err != nil {
 		c.log(correlationID, started, 0, err)
