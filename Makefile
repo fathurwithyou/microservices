@@ -1,11 +1,10 @@
-.PHONY: help tools generate test lint build compose-up compose-down k3d-up k3d-deploy k3d-scale k3d-down k3s-deploy test-contract test-integration test-e2e test-load test-load-isolation frontend-test demo-up test-demo-e2e migrate-up migrate-down migrate-status seed
+.PHONY: help tools generate test lint build compose-up compose-down k3d-up k3d-deploy k3d-scale k3d-down test-contract test-integration test-e2e test-load test-load-isolation frontend-test demo-up test-demo-e2e migrate-up migrate-down migrate-status seed
 
 K3D_CLUSTER ?= bnpb-m1
 K3D_HOST_PORT ?= 8080
 K3D_IMAGE_PREFIX ?= bnpb-m1
 K3S_NAMESPACE ?= bnpb-m1
 K3S_ENV_FILE ?= .env
-IMAGE_REGISTRY ?= ghcr.io/fathurwithyou
 K3D_SERVICES := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer demo-api
 K3D_DEPLOYMENTS := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer rabbitmq demo-api demo-console
 K3D_SCALABLE_DEPLOYMENTS := client-api auth dashboard-consumer notifier-consumer portal-consumer
@@ -74,16 +73,6 @@ k3d-scale: ## Scale one stateless deployment; use K3D_SCALE_SERVICE and K3D_REPL
 	@test "$(K3D_REPLICAS)" -ge 1 || (echo "K3D_REPLICAS must be >= 1" >&2; exit 1)
 	@kubectl -n $(K3S_NAMESPACE) scale deployment/$(K3D_SCALE_SERVICE) --replicas=$(K3D_REPLICAS)
 	@kubectl -n $(K3S_NAMESPACE) rollout status deployment/$(K3D_SCALE_SERVICE) --timeout=180s
-
-k3s-deploy: ## Apply the remote Kustomize overlay using IMAGE_REGISTRY and K3S_ENV_FILE
-	@test -n "$(IMAGE_REGISTRY)" || (echo "IMAGE_REGISTRY is required" >&2; exit 1)
-	@test -f $(K3S_ENV_FILE) || (echo "missing $(K3S_ENV_FILE); provide deployment secrets" >&2; exit 1)
-	@kubectl create namespace $(K3S_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
-	@kubectl -n $(K3S_NAMESPACE) create secret generic bnpb-secrets --from-env-file=$(K3S_ENV_FILE) --dry-run=client -o yaml | kubectl apply -f -
-	@kubectl kustomize deploy/kustomize/overlays/remote | sed 's#ghcr.io/fathurwithyou#$(IMAGE_REGISTRY)#g' | kubectl apply -f -
-	@kubectl -n $(K3S_NAMESPACE) rollout status statefulset/postgres --timeout=180s
-	@for deployment in $(K3D_DEPLOYMENTS); do kubectl -n $(K3S_NAMESPACE) rollout restart deployment/$$deployment; done
-	@for deployment in $(K3D_DEPLOYMENTS); do kubectl -n $(K3S_NAMESPACE) rollout status deployment/$$deployment --timeout=180s || exit $$?; done
 
 k3d-down: ## Delete the local K3d cluster
 	@k3d cluster delete $(K3D_CLUSTER)

@@ -7,7 +7,6 @@ if "%K3D_HOST_PORT%"=="" set "K3D_HOST_PORT=8080"
 if "%K3D_IMAGE_PREFIX%"=="" set "K3D_IMAGE_PREFIX=bnpb-m1"
 if "%K3S_NAMESPACE%"=="" set "K3S_NAMESPACE=bnpb-m1"
 if "%K3S_ENV_FILE%"=="" set "K3S_ENV_FILE=.env"
-if "%IMAGE_REGISTRY%"=="" set "IMAGE_REGISTRY=ghcr.io/fathurwithyou"
 
 set "TARGET=%~1"
 if "%TARGET%"=="" goto help
@@ -35,7 +34,6 @@ if /i "%TARGET%"=="k3d-up" goto k3d-up
 if /i "%TARGET%"=="k3d-down" goto k3d-down
 if /i "%TARGET%"=="k3d-deploy" goto k3d-deploy
 if /i "%TARGET%"=="k3d-scale" goto k3d-scale
-if /i "%TARGET%"=="k3s-deploy" goto k3s-deploy
 if /i "%TARGET%"=="lint" goto lint
 
 echo Unknown target: %TARGET%
@@ -64,7 +62,7 @@ echo   test-integration     - integration tests
 echo   test-e2e             - full e2e (requires bash, e.g. Git Bash)
 echo   test-load            - k6 sustained load
 echo   test-load-isolation  - k6 isolation load
-echo   k3d-up / k3d-down / k3d-deploy / k3d-scale / k3s-deploy
+echo   k3d-up / k3d-down / k3d-deploy / k3d-scale
 echo.
 echo Set COMPOSE_ENV_FILE to override the default .env file.
 exit /b 0
@@ -301,26 +299,3 @@ if errorlevel 1 exit /b 1
 kubectl -n %K3S_NAMESPACE% rollout status deployment/%K3D_SCALE_SERVICE% --timeout=180s
 exit /b !ERRORLEVEL!
 
-:k3s-deploy
-if "%IMAGE_REGISTRY%"=="" (
-  echo IMAGE_REGISTRY is required
-  exit /b 1
-)
-if not exist "%K3S_ENV_FILE%" (
-  echo missing %K3S_ENV_FILE%; provide deployment secrets
-  exit /b 1
-)
-kubectl create namespace %K3S_NAMESPACE% --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n %K3S_NAMESPACE% create secret generic bnpb-secrets --from-env-file=%K3S_ENV_FILE% --dry-run=client -o yaml | kubectl apply -f -
-kubectl kustomize deploy/kustomize/overlays/remote | powershell -NoProfile -Command "$input | ForEach-Object { $_ -replace 'ghcr.io/fathurwithyou', '%IMAGE_REGISTRY%' }" | kubectl apply -f -
-if errorlevel 1 exit /b 1
-kubectl -n %K3S_NAMESPACE% rollout status statefulset/postgres --timeout=180s
-if errorlevel 1 exit /b 1
-for %%D in (bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer rabbitmq demo-api demo-console) do (
-  kubectl -n %K3S_NAMESPACE% rollout restart deployment/%%D
-)
-for %%D in (bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer rabbitmq demo-api demo-console) do (
-  kubectl -n %K3S_NAMESPACE% rollout status deployment/%%D --timeout=180s
-  if errorlevel 1 exit /b 1
-)
-exit /b 0

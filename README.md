@@ -143,7 +143,7 @@ npm install
 npm run dev
 ```
 
-For K3s deployment: `make k3d-up`, create secrets, `make k3d-deploy`.
+For local K3d deployment: `make k3d-up` then `make k3d-deploy`.
 
 ## Architecture
 
@@ -151,5 +151,5 @@ For K3s deployment: `make k3d-up`, create secrets, `make k3d-deploy`.
 - RabbitMQ for fan-out event distribution with durable queues
 - PostgreSQL with JSONB attributes for flexible schema evolution
 - Per-service Dockerfiles for build isolation
-- Kustomize overlays for K3s/K8s manifests
+- Kustomize manifests for local K3d deployment
 - Same-origin Demo Console proxy: `/api/*` → Client API, `/demo/*` → demo-api

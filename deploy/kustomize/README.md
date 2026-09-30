@@ -1,6 +1,6 @@
 # Kustomize deployment
 
-Secret values are intentionally not stored in this repository. The Makefile targets create or update the Kubernetes Secret from an environment-managed file, then apply the selected overlay.
+Secret values are intentionally not stored in this repository. The Makefile targets create or update the Kubernetes Secret from an environment-managed file, then apply the local overlay.
 
 For local K3d:
 
@@ -26,17 +26,8 @@ PostgreSQL is a single persistent StatefulSet. Its PVC keeps `aggregator_db` acr
 
 RabbitMQ also uses a PVC so durable queues and persistent messages survive a pod restart. No database or broker port is exposed outside the cluster.
 
-For a remote K3s cluster, publish the application images (including demo-api and demo-console) below a common registry prefix, then run:
-
-```sh
-IMAGE_REGISTRY=ghcr.io/your-org K3S_ENV_FILE=.env make k3s-deploy
-```
-
-The remote target substitutes `IMAGE_REGISTRY` into the overlay, creates the Secret, applies the LoadBalancer Client API service, and waits for the StatefulSet and Deployments. It assumes the cluster has a default StorageClass; K3s local-path storage is suitable for development.
-
 To render without applying:
 
 ```sh
 kubectl kustomize overlays/local
-kubectl kustomize overlays/remote
 ```

@@ -31,7 +31,6 @@ vendor/
 
 # Kustomize
 deploy/kustomize/overlays/local/.kustomize/
-deploy/kustomize/overlays/remote/.kustomize/
 
 # k3d
 .k3d/
