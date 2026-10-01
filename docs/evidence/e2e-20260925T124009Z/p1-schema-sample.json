@@ -1,0 +1,11 @@
+{
+  "observation": "raw PVMBG HazardEvent after runtime schema change",
+  "problem": "P1",
+  "sample_record": {
+    "attributes": {
+      "confidence_level": "0.82"
+    },
+    "hazard_id": "8657dd6f-151c-5b09-8c58-73f96dd37a1a",
+    "source": "SOURCE_PVMBG"
+  }
+}

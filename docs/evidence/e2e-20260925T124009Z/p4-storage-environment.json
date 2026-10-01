@@ -1,0 +1,8 @@
+{
+  "problem": "P4",
+  "aggregator_has_database_url_environment": true,
+  "client_api_has_database_url_environment": false,
+  "auth_has_database_url_environment": false,
+  "auth_role_can_select_canonical_hazards": false,
+  "scope_note": "records service database URL assignment and PostgreSQL SELECT privilege for the Auth database role"
+}

@@ -1,0 +1,37 @@
+\begin{tikzpicture}[
+  >=Latex,
+  card/.style={draw=metafg!45,rounded corners=3pt,fill=metabg,
+    minimum width=2.55cm,minimum height=0.94cm,align=center,
+    font=\sffamily\small},
+  source/.style={card,fill=metablue!5,draw=metablue!55},
+  queue/.style={card,minimum width=2.8cm,fill=white},
+  flow/.style={->,line width=0.9pt,draw=metafg!80},
+  branch/.style={line width=0.8pt,draw=metafg!70},
+]
+\node[source] (bmkg) at (1.4,4.52)
+  {\raisebox{-0.12cm}{\includegraphics[height=0.52cm]{assets/bmkg-logo.png}}\enspace\textbf{BMKG}};
+\node[source] (pvmbg) at (1.4,3.17)
+  {\raisebox{-0.10cm}{\includegraphics[height=0.46cm]{assets/pvmbg-logo.png}}\enspace\textbf{PVMBG}};
+\node[card] (mapping) at (4.55,3.84) {\textbf{Pemetaan}\\Aggregator};
+\node[card,fill=metablue!7,draw=metablue!55] (tx) at (7.75,3.84)
+  {\textbf{Satu transaksi}\\Event + outbox};
+\node[card] (worker) at (10.95,3.84) {\textbf{Pekerja outbox}\\konfirmasi};
+\node[card,fill=fairamber!9,draw=fairamber!75!black] (rabbit) at (14.15,3.84)
+  {\raisebox{-0.12cm}{\includegraphics[height=0.48cm]{assets/rabbitmq-logo.png}}\enspace\textbf{RabbitMQ}};
+
+\node[queue] (dash) at (4.6,1.10) {\textbf{Dashboard}\\antrean tahan lama};
+\node[queue] (notify) at (9.1,1.10) {\textbf{Notifier}\\antrean tahan lama};
+\node[queue] (portal) at (13.6,1.10) {\textbf{Portal}\\antrean tahan lama};
+
+\draw[flow] (bmkg.east) -- (mapping.north west);
+\draw[flow] (pvmbg.east) -- (mapping.south west);
+\draw[flow] (mapping.east) -- (tx.west);
+\draw[flow] (tx.east) -- (worker.west);
+\draw[flow] (worker.east) -- (rabbit.west);
+\draw[branch] (rabbit.south) -- (14.15,2.40) -- (4.6,2.40);
+\draw[flow] (4.6,2.40) -- (dash.north);
+\draw[flow] (9.1,2.40) -- (notify.north);
+\draw[flow] (13.6,2.40) -- (portal.north);
+\fill[metafg!70] (9.1,2.40) circle (1.1pt);
+\fill[metafg!70] (13.6,2.40) circle (1.1pt);
+\end{tikzpicture}

@@ -1,0 +1,38 @@
+{
+  "problem": "P1",
+  "samples": {
+    "BMKG": {
+      "area_name": "Jawa Barat",
+      "attributes": {
+        "depth_km": "12",
+        "magnitude": "5.1",
+        "potential_tsunami": "true"
+      },
+      "hazard_id": "905a2b1e-4e44-5c1b-8f77-3822f370e778",
+      "hazard_type": "HAZARD_TYPE_SEISMIC",
+      "ingested_at": "2026-09-25T12:40:23Z",
+      "latitude": -7.1,
+      "longitude": 107.6,
+      "occurred_at": "2026-09-25T12:40:23Z",
+      "severity": "SEVERITY_WASPADA",
+      "source": "SOURCE_BMKG",
+      "source_ref_id": "bmkg-seismic-7ef6b11c-ca0c-4876-879c-c4f6227a952e"
+    },
+    "PVMBG": {
+      "area_name": "Gunung Merapi",
+      "attributes": {
+        "ash_column_height_m": "350",
+        "eruption_count_24h": "1"
+      },
+      "hazard_id": "8657dd6f-151c-5b09-8c58-73f96dd37a1a",
+      "hazard_type": "HAZARD_TYPE_VOLCANIC",
+      "ingested_at": "2026-09-25T12:40:23Z",
+      "latitude": -7.54,
+      "longitude": 110.44,
+      "occurred_at": "2026-09-25T12:40:23Z",
+      "severity": "SEVERITY_WASPADA",
+      "source": "SOURCE_PVMBG",
+      "source_ref_id": "pvmbg-report-a2790773-c73b-4e7e-9709-2f049886cdfa"
+    }
+  }
+}

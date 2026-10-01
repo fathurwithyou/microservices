@@ -1,0 +1,16 @@
+{
+  "problem": "P5",
+  "event_id_semantics": "HazardEvent hazard_id",
+  "sample_logs": {
+    "dashboard": "dashboard-consumer-1  | {\"time\":\"2026-09-25T12:41:38.195031088Z\",\"level\":\"INFO\",\"msg\":\"event processed\",\"service\":\"dashboard-consumer\",\"event_id\":\"ece5a4df-414f-5c6b-8b2a-6397a6c82d22\",\"correlation_id\":\"ee1bacfe-ffd7-495c-862f-7b9d9ba309b5\",\"redelivered\":false}",
+    "notifier": "notifier-consumer-1  | {\"time\":\"2026-09-25T12:41:38.194975255Z\",\"level\":\"INFO\",\"msg\":\"event processed\",\"service\":\"notifier-consumer\",\"event_id\":\"ece5a4df-414f-5c6b-8b2a-6397a6c82d22\",\"correlation_id\":\"ee1bacfe-ffd7-495c-862f-7b9d9ba309b5\",\"redelivered\":false}",
+    "portal": "portal-consumer-1  | {\"time\":\"2026-09-25T12:41:38.194980505Z\",\"level\":\"INFO\",\"msg\":\"event processed\",\"service\":\"portal-consumer\",\"event_id\":\"ece5a4df-414f-5c6b-8b2a-6397a6c82d22\",\"correlation_id\":\"ee1bacfe-ffd7-495c-862f-7b9d9ba309b5\",\"redelivered\":false}"
+  },
+  "shared_event_id": "ece5a4df-414f-5c6b-8b2a-6397a6c82d22",
+  "shared_correlation_id": "ee1bacfe-ffd7-495c-862f-7b9d9ba309b5",
+  "fields_present": [
+    "event_id",
+    "correlation_id",
+    "redelivered"
+  ]
+}

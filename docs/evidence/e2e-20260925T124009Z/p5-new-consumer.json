@@ -1,0 +1,8 @@
+{
+  "problem": "P5",
+  "producer_container_id_before": "a041fba24f5c4f2b16516a48b668de124d926be8cad57fc87b673c3a582ee205",
+  "producer_container_id_after": "a041fba24f5c4f2b16516a48b668de124d926be8cad57fc87b673c3a582ee205",
+  "producer_image_id_before": "sha256:4dbb52bbf3b1a93cb0d48c831526897128f0dbccc5ec9aa9a086910145df181d",
+  "producer_image_id_after": "sha256:4dbb52bbf3b1a93cb0d48c831526897128f0dbccc5ec9aa9a086910145df181d",
+  "portal_log_sample": "portal-consumer-1  | {\"time\":\"2026-09-25T12:41:38.194980505Z\",\"level\":\"INFO\",\"msg\":\"event processed\",\"service\":\"portal-consumer\",\"event_id\":\"ece5a4df-414f-5c6b-8b2a-6397a6c82d22\",\"correlation_id\":\"ee1bacfe-ffd7-495c-862f-7b9d9ba309b5\",\"redelivered\":false}"
+}

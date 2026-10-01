@@ -1,0 +1,6 @@
+{
+  "problem": "P5",
+  "pending_while_broker_down": 10,
+  "pending_after_recovery": 0,
+  "source": "live Canonical Store outbox count query"
+}

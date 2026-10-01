@@ -1,0 +1,27 @@
+\begin{tikzpicture}[every node/.style={font=\sffamily\footnotesize}]
+\def\W{10}
+% bar segments: 25 of 90 records without confidence_level, 65 with
+\fill[metafg!12] (0,0) rectangle (2.778,0.8);
+\fill[metablue!35] (2.778,0) rectangle (\W,0.8);
+\draw[metafg!45,line width=0.5pt] (0,0) rectangle (\W,0.8);
+\draw[metafg!45,line width=0.5pt] (2.778,0) -- (2.778,0.8);
+\node[font=\sffamily\bfseries\normalsize,text=metafg] at (1.389,0.40) {25};
+\node[font=\sffamily\bfseries\normalsize,text=metafg] at (6.389,0.40) {65};
+% segment labels below the bar
+\node[anchor=north,align=center,text=metafg] at (1.389,-0.10)
+  {tanpa\\\texttt{confidence\_level}};
+\node[anchor=north,align=center,text=metafg] at (6.389,-0.10)
+  {dengan\\\texttt{confidence\_level}};
+% baseline with ticks
+\draw[metafg!55,line width=0.5pt] (0,-1.45) -- (\W,-1.45);
+\foreach \x/\l in {0/0,2.778/25,\W/90}{
+  \draw[metafg!55,line width=0.5pt] (\x,-1.45) -- (\x,-1.65);
+  \node[anchor=north,text=metafg] at (\x,-1.70) {\l};
+}
+\node[anchor=north,text=metafg!80] at (5,-2.10)
+  {record PVMBG pada Canonical Store ($n = 90$)};
+% annotation for the running service
+\draw[metafg!55,line width=0.5pt,{Bar}-{Bar}] (2.778,1.08) -- (\W,1.08);
+\node[anchor=south,text=metafg!85] at (6.389,1.15)
+  {ditambahkan saat layanan berjalan, tanpa migrasi tabel};
+\end{tikzpicture}

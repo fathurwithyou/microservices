@@ -1,0 +1,32 @@
+\begin{tikzpicture}[every node/.style={font=\sffamily\footnotesize}]
+% time axis (seconds since 12:41:28 UTC)
+\draw[metafg!45,line width=0.5pt] (0,0) -- (11.0,0);
+\foreach \t in {0,2,4,6,8,10}{
+  \draw[metafg!45,line width=0.5pt] (\t,0) -- (\t,-0.10);
+  \node[anchor=north,font=\sffamily\scriptsize,text=metafg] at (\t,-0.14) {\t};
+}
+\node[anchor=north,font=\sffamily\scriptsize,text=metafg!80] at (5.5,-0.62) {detik relatif};
+% lanes
+\foreach \y/\name in {0.5/Dashboard, 1.7/Notifier, 2.9/Portal}{
+  \draw[metafg!18,line width=0.4pt,dashed] (0,\y) -- (11.0,\y);
+  \node[anchor=east,font=\sffamily\scriptsize,text=metafg] at (-0.15,\y) {\name};
+}
+% Notifier downtime interval, bounded by its last and first log lines
+\fill[metafg!10] (1.35,1.42) rectangle (5.95,1.98);
+\node[anchor=west,font=\sffamily\scriptsize,text=metafg] at (1.45,2.05) {Notifier dihentikan};
+\node[anchor=center,font=\sffamily\scriptsize,text=metafg!80] at (3.65,1.57) {antrean menumpuk 8 pesan};
+% event markers
+\fill[metablue] (1.19,1.7) circle (2pt);
+\node[anchor=north,font=\sffamily\scriptsize,text=metablue] at (1.19,1.60) {4a3a\ldots};
+\fill[metablue] (5.19,0.5) circle (2pt);
+\node[anchor=south,font=\sffamily\scriptsize,text=metablue] at (5.19,0.62) {3db8\ldots};
+\fill[metablue] (6.09,1.7) circle (2pt);
+\node[anchor=south west,font=\sffamily\scriptsize,text=metablue] at (6.16,1.76) {3db8\ldots};
+\draw[->,metafg!60,line width=0.5pt,dashed] (5.34,0.64) .. controls (5.7,1.05) .. (5.98,1.55);
+\node[anchor=west,font=\sffamily\scriptsize,text=metafg!85] at (5.28,1.02) {menyusul 0,9 s};
+% fan-out to the three consumers
+\foreach \y in {0.5,1.7,2.9}{\fill[metablue] (10.20,\y) circle (2pt);}
+\draw[metafg!45,line width=0.4pt,dotted] (10.20,0.42) -- (10.20,3.0);
+\node[anchor=south west,align=left,font=\sffamily\scriptsize,text=metablue]
+  at (10.32,2.98) {ece5\ldots\\tiga konsumen, selisih < 0,1 ms};
+\end{tikzpicture}

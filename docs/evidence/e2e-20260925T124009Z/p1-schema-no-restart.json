@@ -1,0 +1,9 @@
+{
+  "problem": "P1",
+  "aggregator_container_id_before": "a041fba24f5c4f2b16516a48b668de124d926be8cad57fc87b673c3a582ee205",
+  "aggregator_container_id_after": "a041fba24f5c4f2b16516a48b668de124d926be8cad57fc87b673c3a582ee205",
+  "pvmbg_container_id_before": "b35925c4cddfd15be5508548ea29b818397913c3b7de8bb4c21976bf5e615519",
+  "pvmbg_container_id_after": "b35925c4cddfd15be5508548ea29b818397913c3b7de8bb4c21976bf5e615519",
+  "same_running_instances": true,
+  "scope_note": "identities sampled around the live schema and API checks"
+}

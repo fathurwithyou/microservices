@@ -1,0 +1,12 @@
+{
+  "problem": "P5",
+  "notifier_queue_messages_before_stop": 0,
+  "notifier_queue_messages_after_stop": 8,
+  "notifier_queue_messages_after_recovery": 0,
+  "dashboard_log_sample_read_after_notifier_stop": "dashboard-consumer-1  | {\"time\":\"2026-09-25T12:41:33.188785878Z\",\"level\":\"INFO\",\"msg\":\"event processed\",\"service\":\"dashboard-consumer\",\"event_id\":\"3db89de1-8c5b-5615-a875-d29b5c27c6ef\",\"correlation_id\":\"4325cd2e-fe44-497f-a733-cbe9a68e3589\",\"redelivered\":false}",
+  "notifier_log_for_same_event_after_recovery": "notifier-consumer-1  | {\"time\":\"2026-09-25T12:41:34.09300642Z\",\"level\":\"INFO\",\"msg\":\"event processed\",\"service\":\"notifier-consumer\",\"event_id\":\"3db89de1-8c5b-5615-a875-d29b5c27c6ef\",\"correlation_id\":\"4325cd2e-fe44-497f-a733-cbe9a68e3589\",\"redelivered\":false}",
+  "notifier_log_sample_before_stop": "notifier-consumer-1  | {\"time\":\"2026-09-25T12:41:29.188358001Z\",\"level\":\"INFO\",\"msg\":\"event processed\",\"service\":\"notifier-consumer\",\"event_id\":\"4a3a2864-c3a7-54d4-8cfe-8b2ec0230376\",\"correlation_id\":\"15877743-fe85-44f6-b6ef-4c45a371062c\",\"redelivered\":false}",
+  "queued_event_id_observed_by_dashboard": "3db89de1-8c5b-5615-a875-d29b5c27c6ef",
+  "queued_event_correlation_id": "4325cd2e-fe44-497f-a733-cbe9a68e3589",
+  "scope_note": "one event processed by Dashboard during the stop interval was matched to Notifier after restart; queue depth was 0 after recovery"
+}

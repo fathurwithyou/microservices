@@ -1,0 +1,8 @@
+{
+  "problem": "P3",
+  "tracked_env_example_present": true,
+  "tracked_non_example_environment_file_count": 0,
+  "credential_signature_candidate_file_count": 0,
+  "scan_scope": "tracked implementation and deployment text under services, apps, deploy, infra, scripts, tests, and .github",
+  "scan_note": "heuristic signature scan; does not prove absence of every possible secret format"
+}

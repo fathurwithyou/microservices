@@ -1,0 +1,39 @@
+{
+  "bmkg_hazards_returned": 28,
+  "problem": "P2",
+  "pvmbg_hazards_returned": 28,
+  "recovered_observation": {
+    "status": "healthy"
+  },
+  "scenario": "PVMBG outage and recovery",
+  "stale_observation": {
+    "stale_since": "2026-09-25T12:40:23Z",
+    "status": "stale"
+  },
+  "status_sequence": [
+    {
+      "step": "enable PVMBG outage",
+      "status_code": 200
+    },
+    {
+      "step": "PVMBG source status is stale",
+      "status_code": 200
+    },
+    {
+      "step": "read BMKG hazards during outage",
+      "status_code": 200
+    },
+    {
+      "step": "read stored PVMBG hazards during outage",
+      "status_code": 200
+    },
+    {
+      "step": "disable PVMBG outage",
+      "status_code": 200
+    },
+    {
+      "step": "PVMBG source status recovered",
+      "status_code": 200
+    }
+  ]
+}

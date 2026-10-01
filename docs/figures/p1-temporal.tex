@@ -1,0 +1,33 @@
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.92\linewidth,
+  height=5.6cm,
+  ybar stacked,
+  bar width=8pt,
+  xmin=0.4,xmax=14.6,
+  xtick={1,2,...,14},
+  ymin=0,ymax=25,
+  ytick={0,5,10,15,20,25},
+  xlabel={Menit pengamatan},
+  ylabel={Record PVMBG},
+  ymajorgrids=true,
+  xmajorgrids=false,
+  grid style={draw=metafg!13,densely dotted},
+  axis lines*=left,
+  axis line style={draw=metafg!65,line width=0.55pt},
+  tick label style={font=\footnotesize},
+  label style={font=\footnotesize},
+  clip=false,
+]
+\addplot[fill=metafg!18,draw=metafg!40,line width=0.4pt]
+  coordinates {(1,23) (2,3) (3,6) (4,5) (5,6) (6,6) (7,6) (8,6) (9,5)
+               (10,0) (11,0) (12,0) (13,0) (14,0)};
+\addplot[fill=metablue!45,draw=metablue!70,line width=0.4pt]
+  coordinates {(1,0) (2,0) (3,0) (4,0) (5,0) (6,0) (7,0) (8,0) (9,1)
+               (10,6) (11,6) (12,6) (13,6) (14,6)};
+% schema switch marker between minute 9 and 10
+\draw[metafg!70,line width=0.7pt,dashed] (axis cs:9.5,0) -- (axis cs:9.5,25.5);
+\node[anchor=south west,align=left,font=\sffamily\scriptsize,text=metafg]
+  at (axis cs:9.7,25.6) {perubahan skema dipicu\\tanpa memulai ulang layanan};
+\end{axis}
+\end{tikzpicture}
