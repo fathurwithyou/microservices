@@ -19,9 +19,9 @@
 \node[card,fill=fairamber!9,draw=fairamber!75!black] (rabbit) at (14.15,3.84)
   {\raisebox{-0.12cm}{\includegraphics[height=0.48cm]{assets/rabbitmq-logo.png}}\enspace\textbf{RabbitMQ}};
 
-\node[queue] (dash) at (4.6,1.10) {\textbf{Dashboard}\\antrean tahan lama};
-\node[queue] (notify) at (9.1,1.10) {\textbf{Notifier}\\antrean tahan lama};
-\node[queue] (portal) at (13.6,1.10) {\textbf{Portal}\\antrean tahan lama};
+\node[queue] (dash) at (4.6,1.10) {\textbf{Dashboard}\\antrean durable};
+\node[queue] (notify) at (9.1,1.10) {\textbf{Notifier}\\antrean durable};
+\node[queue] (portal) at (13.6,1.10) {\textbf{Portal}\\antrean durable};
 
 \draw[flow] (bmkg.east) -- (mapping.north west);
 \draw[flow] (pvmbg.east) -- (mapping.south west);

@@ -216,7 +216,7 @@ Aggregator & Polling sumber, pemetaan kanonik, status sumber, Canonical Store, t
 Auth Service & Identitas klien, penerbitan dan validasi token, cakupan akses, serta rotasi token penyegaran.\\
 Client API & Endpoint HTTP untuk klien hilir, validasi token dan cakupan akses, serta proyeksi ringkasan atau data mentah.\\
 \addlinespace[2pt]
-RabbitMQ & Fan-out event ke antrean tahan lama tiap konsumen dan antrean dead-letter.\\
+RabbitMQ & Fan-out event ke antrean durable tiap konsumen dan antrean dead-letter.\\
 Dashboard, Notifier, Portal & Konsumen independen dengan pemeriksaan kesehatan dan pemrosesan event masing-masing.\\
 \bottomrule
 \end{tabularx}
@@ -295,7 +295,7 @@ Client meminta token melalui Client API. Client API meneruskan permintaan penerb
 \end{figure}
 
 
-Aggregator menjalankan polling BMKG dan PVMBG secara independen. Pada siklus BMKG, kejadian gempa dan peringatan tsunami diambil secara terpisah lalu dipadankan berdasarkan kejadian terkait. Pada siklus PVMBG, laporan vulkanik dinormalisasi ke model yang sama. Record baru atau berubah disimpan bersama pesan outbox dalam satu transaksi; broker kemudian menyalurkan salinan kepada antrean tahan lama tiap konsumen.
+Aggregator menjalankan polling BMKG dan PVMBG secara independen. Pada siklus BMKG, kejadian gempa dan peringatan tsunami diambil secara terpisah lalu dipadankan berdasarkan kejadian terkait. Pada siklus PVMBG, laporan vulkanik dinormalisasi ke model yang sama. Record baru atau berubah disimpan bersama pesan outbox dalam satu transaksi; broker kemudian menyalurkan salinan kepada antrean durable tiap konsumen.
 
 \begin{figure}[htbp]
 \centering
@@ -743,7 +743,7 @@ old/new PVMBG records without/with confidence_level: 25/65
 
 \subsection{Produsen, broker, dan konsumen}
 
-Aggregator menyimpan HazardEvent dan pesan outbox dalam satu transaksi. Pekerja outbox menerbitkan pesan persisten ke exchange fanout RabbitMQ yang menyalurkan salinan event ke antrean tahan lama tiap konsumen \cite{rabbit-exchanges}. Produsen tidak memanggil konsumen secara sinkron.
+Aggregator menyimpan HazardEvent dan pesan outbox dalam satu transaksi. Pekerja outbox menerbitkan pesan persisten ke exchange fanout RabbitMQ yang menyalurkan salinan event ke antrean durable tiap konsumen \cite{rabbit-exchanges}. Produsen tidak memanggil konsumen secara sinkron.
 
 Publisher menunggu konfirmasi penerimaan broker, sedangkan konsumen mengakui pesan setelah pemrosesan berhasil. Pesan yang terus gagal dapat dipisahkan dari antrean utama melalui mekanisme dead-letter. Konfirmasi publisher dan acknowledgement konsumen melindungi dua sisi pengiriman yang berbeda \cite{rabbit-confirms}.
 
@@ -760,7 +760,7 @@ RabbitMQ dipilih karena exchange bertipe fanout dan antrean terpisah sesuai deng
 \begin{figure}[htbp]
 \centering
 \input{figures/p5-delivery.tex}
-\caption[Jejak penyampaian event ke tiga konsumen]{\textbf{Event yang terbit saat konsumen berhenti tetap tersusul, bukan hilang.} Jejak pemrosesan pada pengujian ujung ke ujung; sumbu waktu dalam detik relatif. Notifier memproses 4a3a\ldots{} sesaat sebelum dihentikan; selama penghentian Dashboard tetap memproses 3db8\ldots{} dan Notifier menyusul event yang sama 0,9 detik setelah dijalankan kembali, sejalan dengan antrean tahan lama yang berubah dari 0 menjadi 8 lalu kembali 0 pesan. Event ece5\ldots{} diterima ketiga konsumen dengan selisih di bawah 0,1 ms. Rentang penghentian dibatasi oleh log terakhir sebelum penghentian dan log pertama setelah pemulihan.}
+\caption[Jejak penyampaian event ke tiga konsumen]{\textbf{Event yang terbit saat konsumen berhenti tetap tersusul, bukan hilang.} Jejak pemrosesan pada pengujian ujung ke ujung; sumbu waktu dalam detik relatif. Notifier memproses 4a3a\ldots{} sesaat sebelum dihentikan; selama penghentian Dashboard tetap memproses 3db8\ldots{} dan Notifier menyusul event yang sama 0,9 detik setelah dijalankan kembali, sejalan dengan antrean durable yang berubah dari 0 menjadi 8 lalu kembali 0 pesan. Event ece5\ldots{} diterima ketiga konsumen dengan selisih di bawah 0,1 ms. Rentang penghentian dibatasi oleh log terakhir sebelum penghentian dan log pertama setelah pemulihan.}
 \label{fig:p5-delivery}
 \end{figure}
 
