@@ -9,17 +9,42 @@ import (
 )
 
 type enabledRequest struct {
-	Enabled *bool `json:"enabled"`
+	Enabled *bool  `json:"enabled"`
+	Mode    string `json:"mode"`
 }
 
 func (h handler) schemaVersion(c *gin.Context) {
-	enabled, ok := bindEnabled(c)
-	if !ok {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
-	h.state.SetSchemaV2(enabled)
-	c.JSON(http.StatusOK, gin.H{"schema_version": 2, "confidence_level": enabled})
+	request := enabledRequest{}
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+	} else {
+		enabled := true
+		request.Enabled = &enabled
+	}
+	switch request.Mode {
+	case "breaking":
+		h.state.SetBreaking(true)
+		c.JSON(http.StatusOK, gin.H{"schema_version": 3, "mode": "breaking"})
+		return
+	case "":
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be breaking"})
+		return
+	}
+	if request.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	h.state.SetSchemaV2(*request.Enabled)
+	c.JSON(http.StatusOK, gin.H{"schema_version": 2, "confidence_level": *request.Enabled})
 }
 
 func (h handler) outage(c *gin.Context) {

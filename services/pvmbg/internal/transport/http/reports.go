@@ -27,6 +27,11 @@ func (h handler) volcanicReports(c *gin.Context) {
 	}
 
 	started := time.Now()
+	if h.state.IsBreaking() {
+		c.JSON(http.StatusOK, h.state.BreakingReportsSince(since))
+		h.logger.Info("outbound response", "service", serviceName, "component", "http", "operation", "volcanic-reports", "mode", "breaking", "latency_ms", time.Since(started).Milliseconds(), "status", http.StatusOK, "correlation_id", c.GetString(correlation.GinKey))
+		return
+	}
 	c.JSON(http.StatusOK, h.state.ReportsSince(since))
 	h.logger.Info("outbound response", "service", serviceName, "component", "http", "operation", "volcanic-reports", "latency_ms", time.Since(started).Milliseconds(), "status", http.StatusOK, "correlation_id", c.GetString(correlation.GinKey))
 }

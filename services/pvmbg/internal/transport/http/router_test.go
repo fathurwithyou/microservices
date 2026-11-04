@@ -68,6 +68,27 @@ func TestSchemaVersionAddsConfidenceLevel(t *testing.T) {
 	}
 }
 
+func TestAdminBreakingSchemaRenamesAndDropsFields(t *testing.T) {
+	runtime := testRuntime(t)
+	router := testRouter(runtime)
+	adminRequest := httptest.NewRequest(http.MethodPost, "/admin/schema-version", strings.NewReader(`{"mode":"breaking"}`))
+	adminRequest.Header.Set("X-PVMBG-Admin-Key", "admin-key")
+	adminRequest.Header.Set("Content-Type", "application/json")
+	adminResponse := httptest.NewRecorder()
+	router.ServeHTTP(adminResponse, adminRequest)
+	if adminResponse.Code != http.StatusOK {
+		t.Fatalf("admin status = %d", adminResponse.Code)
+	}
+	reportRequest := httptest.NewRequest(http.MethodGet, "/volcanic-reports", nil)
+	reportRequest.Header.Set("Authorization", "Bearer pvmbg-token")
+	reportResponse := httptest.NewRecorder()
+	router.ServeHTTP(reportResponse, reportRequest)
+	body := reportResponse.Body.String()
+	if !strings.Contains(body, `"level"`) || strings.Contains(body, `"alert_level"`) || strings.Contains(body, `"reported_at"`) {
+		t.Fatalf("breaking payload = %s", body)
+	}
+}
+
 func TestAdminRejectsMalformedBody(t *testing.T) {
 	runtime := testRuntime(t)
 	router := testRouter(runtime)

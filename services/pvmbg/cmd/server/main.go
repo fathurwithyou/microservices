@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fathurwithyou/microservices/pkg/observability"
 	"github.com/fathurwithyou/microservices/services/pvmbg/internal/application"
 	"github.com/fathurwithyou/microservices/services/pvmbg/internal/config"
 	"github.com/fathurwithyou/microservices/services/pvmbg/internal/state"
@@ -26,6 +27,12 @@ func main() {
 		logger.Error("configuration failed", "service", serviceName, "error", err)
 		os.Exit(1)
 	}
+	shutdownTracing, err := observability.Setup(context.Background(), "pvmbg")
+	if err != nil {
+		logger.Error("tracing initialization failed", "service", serviceName, "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = shutdownTracing(context.Background()) }()
 
 	runtime, err := state.New(state.Config{MinDelay: cfg.MinDelay, MaxDelay: cfg.MaxDelay, SeedCount: cfg.SeedCount})
 	if err != nil {

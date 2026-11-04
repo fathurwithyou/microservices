@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/fathurwithyou/microservices/pkg/ginmw"
+	"github.com/fathurwithyou/microservices/pkg/observability"
 	"github.com/fathurwithyou/microservices/services/pvmbg/internal/state"
 	"github.com/gin-gonic/gin"
 )
@@ -38,11 +39,14 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	}
 	router := gin.New()
 	router.Use(
+		observability.GinTracing("pvmbg"),
 		ginmw.Correlation(),
 		ginmw.Recovery(serviceName, cfg.Logger),
 		ginmw.RequestLog(serviceName, cfg.Logger),
+		observability.GinMetrics(),
 	)
 	router.GET("/health", handler.health)
+	router.GET("/metrics", gin.WrapH(observability.MetricsHandler()))
 	router.GET("/volcanic-reports", ginmw.RequireHeader(ginmw.HeaderAuth{
 		Header:   "Authorization",
 		Expected: bearerScheme + cfg.Token,

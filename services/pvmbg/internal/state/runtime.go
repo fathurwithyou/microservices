@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ type Runtime struct {
 	mu       sync.RWMutex
 	outage   bool
 	schemaV2 bool
+	breaking bool
 	minDelay time.Duration
 	maxDelay time.Duration
 	now      func() time.Time
@@ -104,7 +106,50 @@ func (r *Runtime) SetOutage(value bool) {
 func (r *Runtime) SetSchemaV2(value bool) {
 	r.mu.Lock()
 	r.schemaV2 = value
+	if value {
+		r.breaking = false
+	}
 	r.mu.Unlock()
+}
+
+// SetBreaking toggles an incompatible schema simulation.
+func (r *Runtime) SetBreaking(value bool) {
+	r.mu.Lock()
+	r.breaking = value
+	if value {
+		r.schemaV2 = false
+	}
+	r.mu.Unlock()
+}
+
+// IsBreaking reports whether incompatible schema mode is active.
+func (r *Runtime) IsBreaking() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.breaking
+}
+
+// BreakingReportsSince returns reports with renamed, retyped, and missing
+// fields so the aggregator must park them.
+func (r *Runtime) BreakingReportsSince(since time.Time) []map[string]any {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]map[string]any, 0)
+	for _, report := range r.reports {
+		reportedAt, err := time.Parse(time.RFC3339, report.ReportedAt)
+		if err != nil || reportedAt.Before(since) {
+			continue
+		}
+		result = append(result, map[string]any{
+			"report_id":              report.ReportID,
+			"volcano_id":             report.VolcanoID,
+			"level":                  report.AlertLevel,
+			"eruption_count_24h":     fmt.Sprintf("%v", report.EruptionCount24H),
+			"ash_column_height_m":    report.AshColumnHeightM,
+			"missing_required_field": true,
+		})
+	}
+	return result
 }
 
 // DelayRange returns the configured artificial delay bounds.
