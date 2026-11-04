@@ -61,6 +61,58 @@ type SourceStatus struct {
 	LastError     string `json:"last_error,omitempty"`
 }
 
+// FieldReportInput is a Tim Lapangan submission forwarded to the aggregator.
+type FieldReportInput struct {
+	ReportID    string  `json:"report_id" binding:"required"`
+	HazardType  string  `json:"hazard_type" binding:"required"`
+	Severity    string  `json:"severity" binding:"required"`
+	AreaName    string  `json:"area_name" binding:"required"`
+	Latitude    float64 `json:"latitude"`
+	Longitude   float64 `json:"longitude"`
+	OccurredAt  string  `json:"occurred_at" binding:"required"`
+	Description string  `json:"description"`
+}
+
+// FieldReport is the accepted submission returned by the aggregator.
+type FieldReport struct {
+	ReportID string `json:"report_id"`
+	Status   string `json:"status"`
+}
+
+// AnalyticsFilter selects the dashboard aggregation window.
+type AnalyticsFilter struct {
+	Since  string
+	Until  string
+	Bucket string
+}
+
+// Analytics is the client-api view of dashboard aggregates.
+type Analytics struct {
+	HazardTypes []AnalyticsTypeCount `json:"hazard_types"`
+	Severities  []AnalyticsSeverity  `json:"severities"`
+	Areas       []AnalyticsArea      `json:"areas"`
+	Buckets     []AnalyticsBucket    `json:"time_buckets"`
+	Partial     bool                 `json:"partial"`
+}
+
+type AnalyticsTypeCount struct {
+	HazardType string `json:"hazard_type"`
+	Count      int64  `json:"count"`
+}
+type AnalyticsSeverity struct {
+	Severity string `json:"severity"`
+	Count    int64  `json:"count"`
+}
+type AnalyticsArea struct {
+	AreaName string `json:"area_name"`
+	Count    int64  `json:"count"`
+}
+type AnalyticsBucket struct {
+	BucketStart string `json:"bucket_start"`
+	HazardType  string `json:"hazard_type"`
+	Count       int64  `json:"count"`
+}
+
 // Auth is the outbound capability required from the auth service.
 type Auth interface {
 	Issue(context.Context, string, string) (*TokenPair, error)
@@ -73,4 +125,6 @@ type Aggregator interface {
 	List(context.Context, HazardFilter) (HazardPage, error)
 	GetHazard(context.Context, string, bool) (Hazard, error)
 	Status(context.Context, string) (SourceStatus, error)
+	SubmitFieldReport(context.Context, FieldReportInput) (FieldReport, error)
+	Analytics(context.Context, AnalyticsFilter) (Analytics, error)
 }

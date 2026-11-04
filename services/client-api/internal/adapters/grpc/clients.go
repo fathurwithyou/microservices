@@ -8,6 +8,7 @@ package grpcadapter
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	aggregatorpb "github.com/fathurwithyou/microservices/contracts/gen/go/aggregator"
@@ -15,6 +16,7 @@ import (
 	eventspb "github.com/fathurwithyou/microservices/contracts/gen/go/events"
 	"github.com/fathurwithyou/microservices/pkg/correlation"
 	"github.com/fathurwithyou/microservices/services/client-api/internal/ports"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -31,11 +33,11 @@ type Clients struct {
 
 // Dial opens gRPC connections to the aggregator and auth services.
 func Dial(aggregatorAddress, authAddress, internalServiceToken string) (*Clients, error) {
-	aggregatorConnection, err := grpc.NewClient(aggregatorAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	aggregatorConnection, err := grpc.NewClient(aggregatorAddress, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		return nil, fmt.Errorf("dial aggregator: %w", err)
 	}
-	authConnection, err := grpc.NewClient(authAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	authConnection, err := grpc.NewClient(authAddress, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		_ = aggregatorConnection.Close()
 		return nil, fmt.Errorf("dial auth: %w", err)
@@ -139,6 +141,51 @@ func (c *aggregatorClient) Status(ctx context.Context, source string) (ports.Sou
 	return ports.SourceStatus{Source: source, Status: response.GetStatus(), LastSuccessAt: response.GetLastSuccessAt(), StaleSince: response.GetStaleSince(), LastError: response.GetLastError()}, nil
 }
 
+func (c *aggregatorClient) SubmitFieldReport(ctx context.Context, input ports.FieldReportInput) (ports.FieldReport, error) {
+	response, err := c.client.SubmitFieldReport(withInternalMetadata(ctx, c.internalServiceToken), &aggregatorpb.SubmitFieldReportRequest{
+		ReportId:    input.ReportID,
+		HazardType:  hazardTypeProto(input.HazardType),
+		Severity:    severityProto(input.Severity),
+		AreaName:    input.AreaName,
+		Latitude:    input.Latitude,
+		Longitude:   input.Longitude,
+		OccurredAt:  input.OccurredAt,
+		Description: input.Description,
+	})
+	if err != nil {
+		return ports.FieldReport{}, grpcError(err)
+	}
+	return ports.FieldReport{ReportID: response.GetReportId(), Status: response.GetStatus()}, nil
+}
+
+func (c *aggregatorClient) Analytics(ctx context.Context, filter ports.AnalyticsFilter) (ports.Analytics, error) {
+	response, err := c.client.GetAnalytics(withInternalMetadata(ctx, c.internalServiceToken), &aggregatorpb.AnalyticsRequest{Since: filter.Since, Until: filter.Until, Bucket: filter.Bucket})
+	if err != nil {
+		return ports.Analytics{}, grpcError(err)
+	}
+	result := ports.Analytics{Partial: response.GetPartial()}
+	for _, item := range response.GetHazardTypes() {
+		result.HazardTypes = append(result.HazardTypes, ports.AnalyticsTypeCount{HazardType: enumName(item.GetHazardType().String()), Count: item.GetCount()})
+	}
+	for _, item := range response.GetSeverities() {
+		result.Severities = append(result.Severities, ports.AnalyticsSeverity{Severity: enumName(item.GetSeverity().String()), Count: item.GetCount()})
+	}
+	for _, item := range response.GetAreas() {
+		result.Areas = append(result.Areas, ports.AnalyticsArea{AreaName: item.GetAreaName(), Count: item.GetCount()})
+	}
+	for _, item := range response.GetTimeBuckets() {
+		result.Buckets = append(result.Buckets, ports.AnalyticsBucket{BucketStart: item.GetBucketStart(), HazardType: enumName(item.GetHazardType().String()), Count: item.GetCount()})
+	}
+	return result, nil
+}
+
+func enumName(value string) string {
+	if index := strings.LastIndexByte(value, '_'); index >= 0 {
+		return value[index+1:]
+	}
+	return value
+}
+
 func toHazard(event *eventspb.HazardEvent) ports.Hazard {
 	attributes := make(map[string]string, len(event.GetAttributes()))
 	for key, value := range event.GetAttributes() {
@@ -165,6 +212,10 @@ func sourceProto(value string) eventspb.Source {
 		return eventspb.Source_SOURCE_BMKG
 	case "PVMBG":
 		return eventspb.Source_SOURCE_PVMBG
+	case "SATELIT":
+		return eventspb.Source_SOURCE_SATELIT
+	case "SENSOR_PANTAI":
+		return eventspb.Source_SOURCE_SENSOR_PANTAI
 	default:
 		return eventspb.Source_SOURCE_UNSPECIFIED
 	}
@@ -176,6 +227,10 @@ func hazardTypeProto(value string) eventspb.HazardType {
 		return eventspb.HazardType_HAZARD_TYPE_SEISMIC
 	case "VOLCANIC":
 		return eventspb.HazardType_HAZARD_TYPE_VOLCANIC
+	case "WILDFIRE":
+		return eventspb.HazardType_HAZARD_TYPE_WILDFIRE
+	case "COASTAL":
+		return eventspb.HazardType_HAZARD_TYPE_COASTAL
 	default:
 		return eventspb.HazardType_HAZARD_TYPE_UNSPECIFIED
 	}

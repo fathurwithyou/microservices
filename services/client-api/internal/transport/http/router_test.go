@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,6 +117,46 @@ func TestPageSizeBounds(t *testing.T) {
 	}
 }
 
+func TestFieldReportRequiresFieldScope(t *testing.T) {
+	router := NewRouter(RouterConfig{API: application.NewAPI(summaryAuth{}, unusedAggregator{}), MaxInflight: 1, Timeout: time.Second, Logger: slog.Default()})
+	request := httptest.NewRequest(http.MethodPost, "/field-reports", strings.NewReader(`{"report_id":"r-1","hazard_type":"WILDFIRE","severity":"SIAGA","area_name":"Kalteng","occurred_at":"2026-11-12T02:43:00Z"}`))
+	request.Header.Set("Authorization", "Bearer media-token")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+}
+
+func TestFieldReportAcceptedForFieldTeam(t *testing.T) {
+	router := NewRouter(RouterConfig{API: application.NewAPI(fieldAuth{}, acceptingAggregator{}), MaxInflight: 1, Timeout: time.Second, Logger: slog.Default()})
+	request := httptest.NewRequest(http.MethodPost, "/field-reports", strings.NewReader(`{"report_id":"r-1","hazard_type":"WILDFIRE","severity":"SIAGA","area_name":"Kalteng","occurred_at":"2026-11-12T02:43:00Z"}`))
+	request.Header.Set("Authorization", "Bearer field-token")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusAccepted, response.Body.String())
+	}
+}
+
+type fieldAuth struct{ summaryAuth }
+
+func (fieldAuth) Validate(context.Context, string) (*ports.ValidatedToken, error) {
+	return &ports.ValidatedToken{Valid: true, Scopes: []string{scopes.HazardReadSummary, scopes.HazardReadRaw, scopes.FieldReportsWrite}}, nil
+}
+
+type acceptingAggregator struct{ unusedAggregator }
+
+func (acceptingAggregator) SubmitFieldReport(_ context.Context, input ports.FieldReportInput) (ports.FieldReport, error) {
+	return ports.FieldReport{ReportID: input.ReportID, Status: "accepted"}, nil
+}
+
 type summaryAuth struct{}
 
 func (summaryAuth) Issue(context.Context, string, string) (*ports.TokenPair, error) {
@@ -146,6 +187,14 @@ func (unusedAggregator) GetHazard(context.Context, string, bool) (ports.Hazard, 
 }
 func (unusedAggregator) Status(context.Context, string) (ports.SourceStatus, error) {
 	return ports.SourceStatus{}, nil
+}
+
+func (unusedAggregator) SubmitFieldReport(context.Context, ports.FieldReportInput) (ports.FieldReport, error) {
+	return ports.FieldReport{}, nil
+}
+
+func (unusedAggregator) Analytics(context.Context, ports.AnalyticsFilter) (ports.Analytics, error) {
+	return ports.Analytics{}, nil
 }
 
 type failingAggregator struct {

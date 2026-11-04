@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fathurwithyou/microservices/pkg/observability"
 	grpcadapter "github.com/fathurwithyou/microservices/services/client-api/internal/adapters/grpc"
 	"github.com/fathurwithyou/microservices/services/client-api/internal/application"
 	"github.com/fathurwithyou/microservices/services/client-api/internal/config"
@@ -23,6 +24,12 @@ func main() {
 		logger.Error("configuration failed", "service", "client-api", "error", err)
 		os.Exit(1)
 	}
+	shutdownTracing, err := observability.Setup(context.Background(), "client-api")
+	if err != nil {
+		logger.Error("tracing initialization failed", "service", "client-api", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = shutdownTracing(context.Background()) }()
 
 	clients, err := grpcadapter.Dial(cfg.AggregatorAddress, cfg.AuthAddress, cfg.InternalServiceToken)
 	if err != nil {

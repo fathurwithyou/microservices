@@ -74,7 +74,7 @@ func listFilter(c *gin.Context) ports.HazardFilter {
 // caller did not restrict it.
 func requestedSource(c *gin.Context) string {
 	switch c.Query("source") {
-	case "BMKG", "PVMBG":
+	case "BMKG", "PVMBG", "SATELIT", "SENSOR_PANTAI":
 		return c.Query("source")
 	default:
 		return ""
@@ -85,7 +85,7 @@ func requestedSource(c *gin.Context) string {
 // when the caller did not restrict it.
 func requestedHazardType(c *gin.Context) string {
 	switch c.Query("hazard_type") {
-	case "SEISMIC", "VOLCANIC":
+	case "SEISMIC", "VOLCANIC", "WILDFIRE", "COASTAL":
 		return c.Query("hazard_type")
 	default:
 		return ""

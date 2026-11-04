@@ -106,6 +106,39 @@ func (a *API) SourceStatus(ctx context.Context, principal Principal, source stri
 	return status, nil
 }
 
+// SubmitFieldReport authorizes and forwards a Tim Lapangan submission.
+func (a *API) SubmitFieldReport(ctx context.Context, principal Principal, input ports.FieldReportInput) (ports.FieldReport, error) {
+	if !hasScope(principal, scopes.FieldReportsWrite) {
+		return ports.FieldReport{}, ErrForbidden
+	}
+	report, err := a.aggregator.SubmitFieldReport(ctx, input)
+	if err != nil {
+		return ports.FieldReport{}, upstreamError(err)
+	}
+	return report, nil
+}
+
+// Analytics returns dashboard aggregates to authorized summary readers.
+func (a *API) Analytics(ctx context.Context, principal Principal, filter ports.AnalyticsFilter) (ports.Analytics, error) {
+	if !hasScope(principal, scopes.HazardReadSummary) {
+		return ports.Analytics{}, ErrForbidden
+	}
+	result, err := a.aggregator.Analytics(ctx, filter)
+	if err != nil {
+		return ports.Analytics{}, upstreamError(err)
+	}
+	return result, nil
+}
+
+func hasScope(principal Principal, required string) bool {
+	for _, scope := range principal.Scopes {
+		if scope == required {
+			return true
+		}
+	}
+	return false
+}
+
 func authorize(principal Principal, raw bool) error {
 	required := scopes.HazardReadSummary
 	if raw {
