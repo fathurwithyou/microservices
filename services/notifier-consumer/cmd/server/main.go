@@ -16,10 +16,7 @@ import (
 	"github.com/fathurwithyou/microservices/services/notifier-consumer/internal/config"
 )
 
-const (
-	queueName   = "notifier.hazard-events"
-	serviceName = "notifier-consumer"
-)
+const serviceName = "notifier-consumer"
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -29,6 +26,7 @@ func main() {
 		logger.Error("configuration load failed", "service", serviceName, "error", err)
 		os.Exit(1)
 	}
+	serviceName := cfg.ServiceName
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -42,10 +40,11 @@ func main() {
 	}()
 
 	consumer, err := consumerkit.New(consumerkit.Config{
-		URL:     cfg.RabbitURL,
-		Queue:   queueName,
-		Service: serviceName,
-		Logger:  logger,
+		URL:      cfg.RabbitURL,
+		Queue:    cfg.QueueName,
+		Service:  serviceName,
+		Exchange: cfg.Exchange,
+		Logger:   logger,
 	})
 	if err != nil {
 		logger.Error("consumer setup failed", "service", serviceName, "error", err)

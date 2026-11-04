@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fathurwithyou/microservices/pkg/ginmw"
+	"github.com/fathurwithyou/microservices/pkg/observability"
 	"github.com/fathurwithyou/microservices/services/bmkg/internal/state"
 	"github.com/gin-gonic/gin"
 )
@@ -31,9 +32,11 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	handler := handler{state: cfg.State, responseDelay: cfg.ResponseDelay, logger: cfg.Logger}
 	router := gin.New()
 	router.Use(
+		observability.GinTracing("bmkg"),
 		ginmw.Correlation(),
 		ginmw.Recovery(serviceName, cfg.Logger),
 		ginmw.RequestLog(serviceName, cfg.Logger),
+		observability.GinMetrics(),
 	)
 	requireAPIKey := ginmw.RequireHeader(ginmw.HeaderAuth{
 		Header:   apiKeyHeader,
@@ -42,6 +45,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 		Message:  "invalid BMKG credential",
 	})
 	router.GET("/health", handler.health)
+	router.GET("/metrics", gin.WrapH(observability.MetricsHandler()))
 	router.GET("/seismic-events", requireAPIKey, handler.seismicEvents)
 	router.GET("/tsunami-warnings", requireAPIKey, handler.tsunamiWarnings)
 	return router

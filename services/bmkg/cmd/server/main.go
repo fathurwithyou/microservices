@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fathurwithyou/microservices/pkg/observability"
 	"github.com/fathurwithyou/microservices/services/bmkg/internal/application"
 	"github.com/fathurwithyou/microservices/services/bmkg/internal/config"
 	"github.com/fathurwithyou/microservices/services/bmkg/internal/state"
@@ -26,6 +27,12 @@ func main() {
 		logger.Error("configuration failed", "service", serviceName, "error", err)
 		os.Exit(1)
 	}
+	shutdownTracing, err := observability.Setup(context.Background(), "bmkg")
+	if err != nil {
+		logger.Error("tracing initialization failed", "service", serviceName, "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = shutdownTracing(context.Background()) }()
 
 	memory := state.New(state.Config{SeedCount: cfg.SeedCount})
 	producer := application.NewEventProducer(application.Config{State: memory, Interval: cfg.NewEventInterval})

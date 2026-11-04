@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/fathurwithyou/microservices/pkg/healthsrv"
+	"github.com/fathurwithyou/microservices/pkg/observability"
 	"github.com/fathurwithyou/microservices/services/auth/internal/adapters/postgres"
 	"github.com/fathurwithyou/microservices/services/auth/internal/application"
 	"github.com/fathurwithyou/microservices/services/auth/internal/config"
@@ -20,6 +25,11 @@ func main() {
 	if err != nil {
 		fatal(logger, "configuration failed", err)
 	}
+	shutdownTracing, err := observability.Setup(context.Background(), "auth")
+	if err != nil {
+		fatal(logger, "tracing initialization failed", err)
+	}
+	defer func() { _ = shutdownTracing(context.Background()) }()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -59,6 +69,7 @@ func main() {
 		ServiceToken: cfg.InternalServiceToken,
 		Logger:       logger,
 	})
+	metricsServer := healthsrv.New(healthsrv.Config{Port: cfg.MetricsPort, Service: "auth"})
 
 	go func() {
 		logger.Info("server started", "service", "auth")
@@ -67,9 +78,18 @@ func main() {
 			stop()
 		}
 	}()
+	go func() {
+		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("metrics server stopped", "service", "auth", "error", err)
+			stop()
+		}
+	}()
 
 	<-ctx.Done()
 	server.GracefulStop()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = metricsServer.Shutdown(shutdownCtx)
 	pool.Close()
 }
 

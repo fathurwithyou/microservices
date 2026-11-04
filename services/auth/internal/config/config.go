@@ -10,6 +10,7 @@ import (
 
 type Config struct {
 	GRPCPort             string
+	MetricsPort          string
 	InternalServiceToken string
 	AccessTokenTTL       time.Duration
 	DatabaseURL          string
@@ -53,12 +54,13 @@ func Load() (Config, error) {
 	}
 	clients := map[string]domain.Client{
 		"media-client":      {Secret: mediaSecret, Scopes: []string{scopes.HazardReadSummary}},
-		"field-team-client": {Secret: fieldTeamSecret, Scopes: []string{scopes.HazardReadSummary, scopes.HazardReadRaw}},
+		"field-team-client": {Secret: fieldTeamSecret, Scopes: []string{scopes.HazardReadSummary, scopes.HazardReadRaw, scopes.FieldReportsWrite}},
 		"bnpb-ops-client":   {Secret: opsSecret, Scopes: []string{scopes.HazardReadSummary, scopes.HazardReadRaw}},
 	}
 
 	return Config{
 		GRPCPort:             grpcPort,
+		MetricsPort:          env.String("AUTH_METRICS_PORT", "9092"),
 		InternalServiceToken: internalServiceToken,
 		AccessTokenTTL:       accessTokenTTL,
 		DatabaseURL:          databaseURL,

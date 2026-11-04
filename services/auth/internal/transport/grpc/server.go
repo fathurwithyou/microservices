@@ -5,6 +5,7 @@ import (
 
 	authpb "github.com/fathurwithyou/microservices/contracts/gen/go/auth"
 	"github.com/fathurwithyou/microservices/pkg/grpckit"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -43,7 +44,7 @@ func NewServer(cfg ServerConfig) *grpc.Server {
 	server := grpc.NewServer(grpc.ChainUnaryInterceptor(
 		grpckit.UnaryObservability(grpckit.Config{Service: "auth", Logger: logger}),
 		grpckit.UnaryAuth(grpckit.AuthConfig{Token: cfg.ServiceToken, PublicMethods: []string{healthMethod}}),
-	))
+	), grpc.StatsHandler(otelgrpc.NewServerHandler()))
 	authpb.RegisterAuthServer(server, newAuthHandler(cfg.Tokens, logger))
 	registerHealth(server)
 	reflection.Register(server)

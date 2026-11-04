@@ -70,7 +70,7 @@ func TestLoadAssignsContractScopes(t *testing.T) {
 		t.Fatalf("media-client scopes = %v, want [%s]", media.Scopes, scopes.HazardReadSummary)
 	}
 	field := cfg.Clients["field-team-client"]
-	if len(field.Scopes) != 2 || field.Scopes[0] != scopes.HazardReadSummary || field.Scopes[1] != scopes.HazardReadRaw {
+	if len(field.Scopes) != 3 || field.Scopes[0] != scopes.HazardReadSummary || field.Scopes[1] != scopes.HazardReadRaw || field.Scopes[2] != scopes.FieldReportsWrite {
 		t.Fatalf("field-team-client scopes = %v", field.Scopes)
 	}
 	if cfg.GRPCPort != "9091" {
