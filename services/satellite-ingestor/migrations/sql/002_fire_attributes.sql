@@ -1,0 +1,9 @@
+-- +goose Up
+ALTER TABLE satellite_fires ADD COLUMN IF NOT EXISTS area_name TEXT NOT NULL DEFAULT 'Unknown';
+ALTER TABLE satellite_fires ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE satellite_fires ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION NOT NULL DEFAULT 0;
+
+-- +goose Down
+ALTER TABLE satellite_fires DROP COLUMN IF EXISTS longitude;
+ALTER TABLE satellite_fires DROP COLUMN IF EXISTS latitude;
+ALTER TABLE satellite_fires DROP COLUMN IF EXISTS area_name;

@@ -11,5 +11,7 @@ use (
 	./services/dashboard-consumer
 	./services/notifier-consumer
 	./services/portal-consumer
+	./services/satellite-ingestor
+	./services/coastal-ingestor
 	./services/demo-api
 )
