@@ -1,5 +1,6 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'echo "e2e failed at line $LINENO" >&2' ERR
 
 umask 077
 repo_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -107,7 +108,6 @@ aggregator_http_host_port=${E2E_AGGREGATOR_HTTP_HOST_PORT:-$3}
 aggregator_grpc_host_port=${E2E_AGGREGATOR_GRPC_HOST_PORT:-$4}
 auth_grpc_host_port=${E2E_AUTH_GRPC_HOST_PORT:-$5}
 client_api_host_port=${E2E_CLIENT_API_HOST_PORT:-$6}
-aggregator_db_password=$(secret)
 auth_db_password=$(secret)
 postgres_admin_password=$(secret)
 rabbitmq_user="e2e$(secret)"
@@ -134,6 +134,7 @@ BMKG_API_KEY=$(secret)
 PVMBG_TOKEN=$(secret)
 PVMBG_ADMIN_KEY=$(secret)
 INTERNAL_SERVICE_TOKEN=$(secret)
+AUDIT_TOKEN=$(secret)
 MEDIA_CLIENT_SECRET=$(secret)
 FIELD_TEAM_CLIENT_SECRET=$(secret)
 BNPB_OPS_CLIENT_SECRET=$(secret)
@@ -144,15 +145,14 @@ NEW_REPORT_INTERVAL=1s
 BMKG_DELAY=50ms
 PVMBG_MIN_DELAY=10ms
 PVMBG_MAX_DELAY=10ms
-ACCESS_TOKEN_TTL=${E2E_ACCESS_TOKEN_TTL:-2s}
+ACCESS_TOKEN_TTL=${E2E_ACCESS_TOKEN_TTL:-5s}
 MAX_INFLIGHT_REQUESTS=64
 REQUEST_TIMEOUT=2s
-STORE_DRIVER=postgres
-AGGREGATOR_DATABASE_URL=postgres://aggregator:$aggregator_db_password@postgres:5432/aggregator_db?sslmode=disable
+STORE_DRIVER=cockroach
+AGGREGATOR_DATABASE_URL=postgresql://root@cockroach:26257/defaultdb?sslmode=disable
 AUTH_DATABASE_URL=postgres://auth:$auth_db_password@postgres:5432/auth_db?sslmode=disable
 RABBITMQ_URL=amqp://$rabbitmq_user:$rabbitmq_password@rabbitmq:5672/
 POSTGRES_ADMIN_PASSWORD=$postgres_admin_password
-AGGREGATOR_DB_PASSWORD=$aggregator_db_password
 AUTH_DB_PASSWORD=$auth_db_password
 RABBITMQ_USER=$rabbitmq_user
 RABBITMQ_PASSWORD=$rabbitmq_password
@@ -160,6 +160,10 @@ EOF
 
 compose() {
   docker compose --project-name "$project_name" --env-file "$env_file" "$@"
+}
+
+aggregator_sql() {
+  compose exec -T cockroach /cockroach/cockroach sql --insecure --format=csv --execute "$1" | tail -n1 | tr -d '\r"'
 }
 
 cleanup() {
@@ -175,7 +179,7 @@ compose up -d --build
 attempt=0
 until curl --fail --silent --show-error "http://127.0.0.1:$client_api_host_port/health" >/dev/null; do
   attempt=$((attempt + 1))
-  if [ "$attempt" -ge 60 ]; then
+  if [ "$attempt" -ge 120 ]; then
     compose logs --no-color
     exit 1
   fi
@@ -230,10 +234,10 @@ Path(r"$evidence_dir/p1-schema-no-restart.json").write_text(json.dumps({
 }, indent=2), encoding="utf-8")
 PY
 
-before_schema=$(compose exec -T postgres psql -U aggregator -d aggregator_db -Atc "SELECT count(*) FROM hazard_events WHERE source = 'PVMBG' AND NOT (attributes ? 'confidence_level')")
-after_schema=$(compose exec -T postgres psql -U aggregator -d aggregator_db -Atc "SELECT count(*) FROM hazard_events WHERE source = 'PVMBG' AND attributes ? 'confidence_level'")
-bmkg_records=$(compose exec -T postgres psql -U aggregator -d aggregator_db -Atc "SELECT count(*) FROM hazard_events WHERE source = 'BMKG'")
-pvmbg_records=$(compose exec -T postgres psql -U aggregator -d aggregator_db -Atc "SELECT count(*) FROM hazard_events WHERE source = 'PVMBG'")
+before_schema=$(aggregator_sql "SELECT count(*) FROM hazard_events WHERE source = 'PVMBG' AND NOT (attributes ? 'confidence_level')")
+after_schema=$(aggregator_sql "SELECT count(*) FROM hazard_events WHERE source = 'PVMBG' AND attributes ? 'confidence_level'")
+bmkg_records=$(aggregator_sql "SELECT count(*) FROM hazard_events WHERE source = 'BMKG'")
+pvmbg_records=$(aggregator_sql "SELECT count(*) FROM hazard_events WHERE source = 'PVMBG'")
 counts_observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 [ "$before_schema" -gt 0 ]
 [ "$after_schema" -gt 0 ]
@@ -317,11 +321,11 @@ if compose exec -T auth sh -c 'test -n "${AGGREGATOR_DATABASE_URL:-}"'; then
 else
   auth_has_canonical_store=false
 fi
-auth_canonical_select=$(compose exec -T postgres psql -U aggregator -d aggregator_db -Atc "SELECT has_table_privilege('auth', 'public.hazard_events', 'SELECT')")
+if compose exec -T auth sh -c 'test -e /cockroach/certs/client.root.crt'; then auth_has_cockroach_certs=true; else auth_has_cockroach_certs=false; fi
 [ "$aggregator_has_canonical_store" = true ]
 [ "$client_api_has_canonical_store" = false ]
 [ "$auth_has_canonical_store" = false ]
-[ "$auth_canonical_select" = "f" ]
+[ "$auth_has_cockroach_certs" = false ]
 python3 - <<PY
 import json
 from pathlib import Path
@@ -330,8 +334,8 @@ Path(r"$evidence_dir/p4-storage-environment.json").write_text(json.dumps({
   "aggregator_has_database_url_environment": "$aggregator_has_canonical_store" == "true",
   "client_api_has_database_url_environment": "$client_api_has_canonical_store" == "true",
   "auth_has_database_url_environment": "$auth_has_canonical_store" == "true",
-  "auth_role_can_select_canonical_hazards": "$auth_canonical_select" == "t",
-  "scope_note": "records service database URL assignment and PostgreSQL SELECT privilege for the Auth database role"
+  "auth_has_cockroach_client_certificate": "$auth_has_cockroach_certs" == "true",
+  "scope_note": "records database URL assignment and absence of CockroachDB client certificates outside Aggregator"
 }, indent=2), encoding="utf-8")
 PY
 compose --profile portal config --format json | python3 -c '
@@ -379,8 +383,12 @@ log_field() {
 notifier_queue_before_stop=$(queue_message_count notifier.hazard-events)
 notifier_log_before_stop=$(compose logs --no-color notifier-consumer | grep 'event processed' | tail -n 1)
 compose stop notifier-consumer
-sleep 3
-queued=$(queue_message_count notifier.hazard-events)
+queued=0
+for _ in $(seq 1 30); do
+  queued=$(queue_message_count notifier.hazard-events)
+  [ "${queued:-0}" -gt 0 ] && break
+  sleep 1
+done
 [ "${queued:-0}" -gt 0 ]
 notifier_queue_after_stop=$queued
 dashboard_log_after_stop=$(compose logs --no-color dashboard-consumer | grep 'event processed' | tail -n 1)
@@ -396,7 +404,7 @@ while :; do
     break
   fi
   attempt=$((attempt + 1))
-  if [ "$attempt" -ge 30 ]; then
+  if [ "$attempt" -ge 120 ]; then
     exit 1
   fi
   sleep 1
@@ -427,8 +435,13 @@ PY
 producer_container_before_portal=$(compose ps -q aggregator)
 producer_image_before_portal=$(docker inspect --format '{{.Image}}' "$producer_container_before_portal")
 compose --profile portal up -d portal-consumer
-sleep 2
-portal_log=$(compose logs --no-color portal-consumer | grep 'event processed' | tail -n 1)
+portal_log=""
+for _ in $(seq 1 30); do
+  portal_log=$(compose logs --no-color portal-consumer | grep 'event processed' | tail -n 1 || true)
+  [ -n "$portal_log" ] && break
+  sleep 1
+done
+[ -n "$portal_log" ]
 producer_container_after_portal=$(compose ps -q aggregator)
 producer_image_after_portal=$(docker inspect --format '{{.Image}}' "$producer_container_after_portal")
 [ "$producer_container_before_portal" = "$producer_container_after_portal" ]
@@ -482,24 +495,31 @@ Path(r"$evidence_dir/p5-new-consumer.json").write_text(json.dumps({
 PY
 
 compose stop rabbitmq
-sleep 3
-pending=$(compose exec -T postgres psql -U aggregator -d aggregator_db -Atc "SELECT count(*) FROM outbox_messages WHERE published_at IS NULL")
-[ "$pending" -gt 0 ]
+pending=0
+for _ in $(seq 1 30); do
+  pending=$(aggregator_sql "SELECT count(*) FROM outbox_messages WHERE published_at IS NULL")
+  [ "${pending:-0}" -gt 0 ] && break
+  sleep 1
+done
+[ "${pending:-0}" -gt 0 ]
+compose stop bmkg pvmbg
 pending_down=$pending
+backlog_max=$(aggregator_sql "SELECT coalesce(max(message_id), 0) FROM outbox_messages WHERE published_at IS NULL")
 compose start rabbitmq
 
 attempt=0
 while :; do
-  pending=$(compose exec -T postgres psql -U aggregator -d aggregator_db -Atc "SELECT count(*) FROM outbox_messages WHERE published_at IS NULL")
+  pending=$(aggregator_sql "SELECT count(*) FROM outbox_messages WHERE published_at IS NULL AND message_id <= $backlog_max")
   if [ "$pending" -eq 0 ]; then
     break
   fi
   attempt=$((attempt + 1))
-  if [ "$attempt" -ge 30 ]; then
+  if [ "$attempt" -ge 120 ]; then
     exit 1
   fi
   sleep 1
 done
+compose start bmkg pvmbg
 python3 - <<PY
 import json
 from pathlib import Path

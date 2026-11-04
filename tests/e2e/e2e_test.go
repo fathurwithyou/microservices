@@ -36,11 +36,11 @@ type httpStatusObservation struct {
 
 func TestP1SchemaEvolutionKeepsPVMBGHazardsValid(t *testing.T) {
 	env := loadEnvironment(t)
-	fieldToken := issueToken(t, env, "field-team-client", env.fieldTeamSecret)
 	postJSON(t, env.pvmbgBaseURL+"/admin/schema-version", map[string]any{"enabled": true}, map[string]string{"X-PVMBG-Admin-Key": env.pvmbgAdminKey}, http.StatusOK)
 
 	var sample map[string]any
 	eventually(t, 15*time.Second, func() bool {
+		fieldToken := issueToken(t, env, "field-team-client", env.fieldTeamSecret)
 		response := getJSON(t, env.apiBaseURL+"/hazards?source=PVMBG&raw=true", fieldToken.AccessToken, http.StatusOK)
 		sample = findAttributeSample(response, "confidence_level")
 		return sample != nil
@@ -136,7 +136,7 @@ func findCanonicalMapping(response map[string]any, source, hazardType string, re
 
 func TestP2PVMBGOutageKeepsBMKGAvailable(t *testing.T) {
 	env := loadEnvironment(t)
-	fieldToken := issueToken(t, env, "field-team-client", env.fieldTeamSecret)
+	fieldToken := func() string { return issueToken(t, env, "field-team-client", env.fieldTeamSecret).AccessToken }
 	observations := map[string]any{
 		"problem":  "P2",
 		"scenario": "PVMBG outage and recovery",
@@ -152,7 +152,7 @@ func TestP2PVMBGOutageKeepsBMKGAvailable(t *testing.T) {
 	var staleStatus map[string]any
 	var staleStatusCode int
 	eventually(t, 10*time.Second, func() bool {
-		status, code := getJSONWithStatus(t, env.apiBaseURL+"/sources/status?source=PVMBG", fieldToken.AccessToken, http.StatusOK)
+		status, code := getJSONWithStatus(t, env.apiBaseURL+"/sources/status?source=PVMBG", fieldToken(), http.StatusOK)
 		if status["status"] != "stale" || status["stale_since"] == "" {
 			return false
 		}
@@ -161,9 +161,9 @@ func TestP2PVMBGOutageKeepsBMKGAvailable(t *testing.T) {
 		return true
 	})
 	recordHTTPStatus(observations, &statusSequence, "PVMBG source status is stale", staleStatusCode)
-	bmkgResponse, bmkgStatus := getJSONWithStatus(t, env.apiBaseURL+"/hazards?source=BMKG", fieldToken.AccessToken, http.StatusOK)
+	bmkgResponse, bmkgStatus := getJSONWithStatus(t, env.apiBaseURL+"/hazards?source=BMKG", fieldToken(), http.StatusOK)
 	recordHTTPStatus(observations, &statusSequence, "read BMKG hazards during outage", bmkgStatus)
-	pvmbgResponse, pvmbgStatus := getJSONWithStatus(t, env.apiBaseURL+"/hazards?source=PVMBG", fieldToken.AccessToken, http.StatusOK)
+	pvmbgResponse, pvmbgStatus := getJSONWithStatus(t, env.apiBaseURL+"/hazards?source=PVMBG", fieldToken(), http.StatusOK)
 	recordHTTPStatus(observations, &statusSequence, "read stored PVMBG hazards during outage", pvmbgStatus)
 
 	_, disabledStatus := postJSONWithStatus(t, env.pvmbgBaseURL+"/admin/outage", map[string]any{"enabled": false}, map[string]string{"X-PVMBG-Admin-Key": env.pvmbgAdminKey}, http.StatusOK)
@@ -171,7 +171,7 @@ func TestP2PVMBGOutageKeepsBMKGAvailable(t *testing.T) {
 	var healthyStatus map[string]any
 	var healthyStatusCode int
 	eventually(t, 10*time.Second, func() bool {
-		status, code := getJSONWithStatus(t, env.apiBaseURL+"/sources/status?source=PVMBG", fieldToken.AccessToken, http.StatusOK)
+		status, code := getJSONWithStatus(t, env.apiBaseURL+"/sources/status?source=PVMBG", fieldToken(), http.StatusOK)
 		if status["status"] != "healthy" {
 			return false
 		}
