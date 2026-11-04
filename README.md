@@ -6,7 +6,7 @@ A microservices architecture for disaster coordination between BMKG, PVMBG, and 
 
 - **BMKG Service**: Mock REST endpoint for seismic event data
 - **PVMBG Service**: Mock REST endpoint with runtime schema evolution and delay simulation
-- **Aggregator Service**: Parallel poller, dynamic JSON mapping, canonical PostgreSQL store, gRPC API
+- **Aggregator Service**: Parallel poller, dynamic JSON mapping, canonical CockroachDB store, gRPC API
 - **Auth Service**: gRPC-based token issue, refresh, and validation with TTL rotation
 - **Client API**: Downstream HTTP entrypoint for authorized consumers
 - **Consumer Services**: Dashboard, Notifier, and Portal — independent fan-out listeners with idempotent processing
@@ -104,7 +104,7 @@ Fallback if a step fails: download Evidence JSON, match `correlation_id` in `doc
    # notifier queue drains (at-least-once; consumers are idempotent)
    docker compose --env-file .env --profile portal up -d portal-consumer
    ```
-3. Outbox-while-broker-down is proven by E2E SQL, not by UI access to Postgres: `artifacts/p5-outbox-recovery.json`.
+3. Outbox-while-broker-down is proven by E2E SQL against the canonical store, not by UI access: `artifacts/p5-outbox-recovery.json`.
 
 ## Database
 
@@ -149,7 +149,23 @@ For local K3d deployment: `make k3d-up` then `make k3d-deploy`.
 
 - Protobuf-defined contracts (gRPC for internal, REST for BMKG/PVMBG)
 - RabbitMQ for fan-out event distribution with durable queues
-- PostgreSQL with JSONB attributes for flexible schema evolution
+- CockroachDB with JSONB attributes for flexible schema evolution and RF=3 replication
 - Per-service Dockerfiles for build isolation
 - Kustomize manifests for local K3d deployment
 - Same-origin Demo Console proxy: `/api/*` → Client API, `/demo/*` → demo-api
+
+## M2 — scalable distributed system
+
+M2 adds CockroachDB storage, leader-elected ingestion, Audit API, field reports,
+satellite ingestion, coastal sensor ingestion, and a critical notification path.
+See [docs/M2.md](docs/M2.md) for architecture, configuration, and the cluster
+deployment procedure.
+
+```bash
+make m2-verify     # format, vet, unit tests, rendered manifests
+make m2-smoke      # live health + Audit API checks
+make m2-evidence   # write artifacts/m2/*
+make m2-load       # 10k VUs with 3->5->2 scaling
+```
+
+M2 local services are behind the Compose profile `m2` and require `FEED_TOKEN`.
