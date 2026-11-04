@@ -3,6 +3,7 @@ import LiveHazards from "./pages/LiveHazards";
 import Overview from "./pages/Overview";
 import ScenarioLab from "./pages/ScenarioLab";
 import TestEvidence from "./pages/TestEvidence";
+import Analytics from "./pages/Analytics";
 import SessionBar from "./components/SessionBar";
 import EvidenceLog from "./components/EvidenceLog";
 
@@ -16,6 +17,7 @@ export default function App() {
         <nav className="nav">
           <NavLink to="/" end title="Overview">OV</NavLink>
           <NavLink to="/hazards" title="Live Hazards">HZ</NavLink>
+          <NavLink to="/analytics" title="Analytics">AN</NavLink>
           <NavLink to="/lab" title="Scenario Lab P1–P5">LAB</NavLink>
           <NavLink to="/evidence" title="Test Evidence">EV</NavLink>
         </nav>
@@ -33,6 +35,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/hazards" element={<LiveHazards />} />
+          <Route path="/analytics" element={<Analytics />} />
           <Route path="/lab" element={<ScenarioLab />} />
           <Route path="/evidence" element={<TestEvidence />} />
         </Routes>

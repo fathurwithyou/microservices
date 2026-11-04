@@ -93,3 +93,15 @@ export type AssertionResult = {
   expected: string;
   actual: string;
 };
+
+export type AnalyticsTypeCount = { hazard_type: string; count: number };
+export type AnalyticsSeverityCount = { severity: string; count: number };
+export type AnalyticsAreaCount = { area_name: string; count: number };
+export type AnalyticsBucket = { bucket_start: string; hazard_type: string; count: number };
+export type AnalyticsResponse = {
+  hazard_types: AnalyticsTypeCount[];
+  severities: AnalyticsSeverityCount[];
+  areas: AnalyticsAreaCount[];
+  time_buckets: AnalyticsBucket[];
+  partial: boolean;
+};

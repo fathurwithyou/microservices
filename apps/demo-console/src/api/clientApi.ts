@@ -48,3 +48,14 @@ export function sourceStatus(accessToken: string, source: "BMKG" | "PVMBG"): Pro
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 }
+
+export type AnalyticsQuery = { since?: string; until?: string; bucket?: "hour" | "day" | "week" };
+
+export function analytics(accessToken: string, query: AnalyticsQuery = {}): Promise<RecordedResponse<import("../types").AnalyticsResponse>> {
+  const params = new URLSearchParams();
+  if (query.since) params.set("since", query.since);
+  if (query.until) params.set("until", query.until);
+  if (query.bucket) params.set("bucket", query.bucket);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson(`/analytics${suffix}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+}
