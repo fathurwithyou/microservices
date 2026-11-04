@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: satellite-ingestor
+  labels: { app: satellite-ingestor, role: sensor }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: satellite-ingestor } }
+  template:
+    metadata:
+      labels: { app: satellite-ingestor, role: sensor }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: satellite-ingestor
+          image: bnpb-m1/satellite-ingestor:local
+          ports: [{ name: health, containerPort: 8086 }]
+          envFrom: [{ configMapRef: { name: bnpb-config } }]
+          env:
+            - { name: SATELIT_INGESTOR_HEALTH_PORT, value: "8086" }
+            - { name: FEED_URL, value: "https://satellite.naufarrel.dev" }
+            - { name: FEED_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: FEED_TOKEN } } }
+            - { name: INTERNAL_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: INTERNAL_SERVICE_TOKEN } } }
+            - { name: SATELLITE_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: SATELLITE_DATABASE_URL } } }
+          readinessProbe: { httpGet: { path: /health, port: health }, initialDelaySeconds: 2 }
+          livenessProbe: { httpGet: { path: /health, port: health }, periodSeconds: 10 }
+          resources:
+            requests: { memory: 128Mi }
+            limits: { memory: 256Mi }
+          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }

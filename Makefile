@@ -1,12 +1,12 @@
-.PHONY: help tools generate test lint build compose-up compose-down k3d-up k3d-deploy k3d-scale k3d-down test-contract test-integration test-e2e test-load test-load-isolation frontend-test demo-up test-demo-e2e migrate-up migrate-down migrate-status seed
+.PHONY: help tools generate test lint build compose-up compose-down k3d-up k3d-deploy k3d-scale k3d-down test-contract test-integration test-e2e test-load test-load-isolation frontend-test demo-up test-demo-e2e migrate-up migrate-down migrate-status seed m2-verify m2-deploy m2-smoke m2-evidence m2-load
 
 K3D_CLUSTER ?= bnpb-m1
 K3D_HOST_PORT ?= 8080
 K3D_IMAGE_PREFIX ?= bnpb-m1
 K3S_NAMESPACE ?= bnpb-m1
 K3S_ENV_FILE ?= .env
-K3D_SERVICES := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer demo-api
-K3D_DEPLOYMENTS := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer rabbitmq demo-api demo-console
+K3D_SERVICES := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer satellite-ingestor coastal-ingestor demo-api
+K3D_DEPLOYMENTS := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer satellite-ingestor coastal-ingestor critical-notifier rabbitmq demo-api demo-console
 K3D_SCALABLE_DEPLOYMENTS := client-api auth dashboard-consumer notifier-consumer portal-consumer
 
 help:
@@ -23,12 +23,12 @@ generate: tools ## Generate protobuf Go code; requires protoc and Go protobuf pl
 
 test: ## Run all Go unit tests
 	@go test ./contracts/...
-	@for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/demo-api; do (cd $$module && go test ./...); done
+	@for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/satellite-ingestor services/coastal-ingestor services/demo-api; do (cd $$module && go test ./...); done
 
 lint: ## Run gofmt, vet, and optional staticcheck
 	@gofmt -w $$(find contracts services -name '*.go')
-	@set -e; go vet ./contracts/...; for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/demo-api; do (cd $$module && go vet ./...); done
-	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./contracts/...; for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/demo-api; do (cd $$module && staticcheck ./...); done; fi
+	@set -e; go vet ./contracts/...; for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/satellite-ingestor services/coastal-ingestor services/demo-api; do (cd $$module && go vet ./...); done
+	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./contracts/...; for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/satellite-ingestor services/coastal-ingestor services/demo-api; do (cd $$module && staticcheck ./...); done; fi
 
 build: generate ## Build every service binary
 	@mkdir -p bin
@@ -40,6 +40,8 @@ build: generate ## Build every service binary
 	@go build -o bin/dashboard-consumer ./services/dashboard-consumer/cmd/server
 	@go build -o bin/notifier-consumer ./services/notifier-consumer/cmd/server
 	@go build -o bin/portal-consumer ./services/portal-consumer/cmd/server
+	@go build -o bin/satellite-ingestor ./services/satellite-ingestor/cmd/server
+	@go build -o bin/coastal-ingestor ./services/coastal-ingestor/cmd/server
 	@go build -o bin/demo-api ./services/demo-api/cmd/server
 
 compose-up: ## Start all local containers; use COMPOSE_ENV_FILE to select an env file
@@ -115,3 +117,22 @@ migrate-status: ## Show applied and pending aggregator migrations
 
 seed: migrate-up ## Apply migrations, then insert minimal reference rows
 	@docker compose --env-file $${COMPOSE_ENV_FILE:-.env} run --rm aggregator seed
+
+m2-verify: ## Format, vet, test, and render M2 cluster manifests
+	@test -z "$$(gofmt -l contracts services pkg)" || (echo "gofmt required:"; gofmt -l contracts services pkg; exit 1)
+	@$(MAKE) test
+	@$(MAKE) lint
+	@kubectl kustomize deploy/kustomize/overlays/cluster >/dev/null
+	@echo "M2 verification passed"
+
+m2-deploy: ## Apply the M2 cluster overlay
+	@kubectl apply -k deploy/kustomize/overlays/cluster
+
+m2-smoke: ## Run health, audit, and field-report smoke checks
+	@./scripts/m2-smoke.sh
+
+m2-evidence: ## Generate M2 evidence artifacts
+	@./scripts/m2-evidence.sh
+
+m2-load: ## Run M2 10k-VU load scenario with 3->5->2 scaling and rolling update
+	@./scripts/m2-load.sh

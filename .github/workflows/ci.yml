@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: |
+            go.work.sum
+            services/*/go.sum
+            pkg/go.sum
+            contracts/go.sum
+      - name: gofmt
+        run: |
+          files=$(gofmt -l contracts services pkg)
+          if [ -n "$files" ]; then
+            echo "gofmt required for:"; echo "$files"; exit 1
+          fi
+      - name: vet
+        run: make lint
+      - name: test
+        run: make test
+
+  manifests:
+    name: Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.0
+      - name: render cluster overlay
+        run: kubectl kustomize deploy/kustomize/overlays/cluster >/dev/null
+      - name: render local overlay
+        run: kubectl kustomize deploy/kustomize/overlays/local >/dev/null
+
+  scripts:
+    name: Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shell syntax
+        run: |
+          bash -n scripts/m2-smoke.sh
+          bash -n scripts/m2-evidence.sh
+          bash -n scripts/m2-load.sh
+          bash -n scripts/test-e2e.sh

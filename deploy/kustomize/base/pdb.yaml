@@ -1,0 +1,53 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: client-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: client-api }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cockroachdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: { app: cockroachdb }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dashboard-consumer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: consumer, consumer: dashboard }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: notifier-consumer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: consumer, consumer: notifier }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: critical-notifier
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: consumer, consumer: critical }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: portal-consumer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: consumer, consumer: portal }

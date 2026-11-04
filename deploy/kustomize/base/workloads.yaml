@@ -5,12 +5,13 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: bmkg } }
   template:
-    metadata: { labels: { app: bmkg } }
+    metadata: { labels: { app: bmkg, role: mock } }
     spec:
       serviceAccountName: bmkg
       containers:
         - name: bmkg
           image: bnpb-m1/bmkg:local
+          resources: { requests: { memory: 64Mi }, limits: { memory: 128Mi } }
           ports: [{ name: http, containerPort: 8081 }]
           envFrom: [{ configMapRef: { name: bnpb-config } }]
           env:
@@ -32,12 +33,13 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: pvmbg } }
   template:
-    metadata: { labels: { app: pvmbg } }
+    metadata: { labels: { app: pvmbg, role: mock } }
     spec:
       serviceAccountName: pvmbg
       containers:
         - name: pvmbg
           image: bnpb-m1/pvmbg:local
+          resources: { requests: { memory: 64Mi }, limits: { memory: 128Mi } }
           ports: [{ name: http, containerPort: 8082 }]
           envFrom: [{ configMapRef: { name: bnpb-config } }]
           env:
@@ -60,68 +62,56 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: aggregator } }
   template:
-    metadata: { labels: { app: aggregator } }
+    metadata: { labels: { app: aggregator, role: aggregator } }
     spec:
       serviceAccountName: aggregator
       initContainers:
-        - name: postgres-bootstrap
-          image: postgres:17-alpine
-          command: ["/bin/sh", "-c"]
-          args:
-            - |-
-              set -eu
-              until pg_isready -h postgres -p 5432 -U aggregator -d aggregator_db; do sleep 2; done
-              PGPASSWORD="$POSTGRES_PASSWORD" psql \
-                --host=postgres \
-                --port=5432 \
-                --username=aggregator \
-                --dbname=aggregator_db \
-                --set=ON_ERROR_STOP=1 \
-                --set=auth_password="$AUTH_DB_PASSWORD" \
-                --file=/bootstrap/bootstrap.sql
-          env:
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_DB_PASSWORD }
-            - name: AUTH_DB_PASSWORD
-              valueFrom:
-                secretKeyRef: { name: bnpb-secrets, key: AUTH_DB_PASSWORD }
-          volumeMounts:
-            - { name: postgres-bootstrap, mountPath: /bootstrap, readOnly: true }
         - name: migrate
           image: bnpb-m1/aggregator:local
+          resources: { requests: { memory: 256Mi }, limits: { memory: 512Mi } }
           args: ["migrate", "up"]
           env:
-            - { name: STORE_DRIVER, value: postgres }
-            - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_DATABASE_URL } } }
+            - { name: STORE_DRIVER, value: cockroach }
+            - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_COCKROACH_URL } } }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
         - name: seed
           image: bnpb-m1/aggregator:local
+          resources: { requests: { memory: 256Mi }, limits: { memory: 512Mi } }
           args: ["seed"]
           env:
-            - { name: STORE_DRIVER, value: postgres }
-            - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_DATABASE_URL } } }
+            - { name: STORE_DRIVER, value: cockroach }
+            - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_COCKROACH_URL } } }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
       containers:
         - name: aggregator
           image: bnpb-m1/aggregator:local
+          resources: { requests: { memory: 256Mi }, limits: { memory: 512Mi } }
           ports: [{ name: grpc, containerPort: 9090 }, { name: http, containerPort: 8090 }]
           envFrom: [{ configMapRef: { name: bnpb-config } }]
           env:
             - { name: AGGREGATOR_GRPC_PORT, value: "9090" }
             - { name: AGGREGATOR_HTTP_PORT, value: "8090" }
             - { name: INTERNAL_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: INTERNAL_SERVICE_TOKEN } } }
+            - { name: AUDIT_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AUDIT_TOKEN } } }
             - { name: BMKG_API_KEY, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: BMKG_API_KEY } } }
             - { name: PVMBG_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: PVMBG_TOKEN } } }
-            - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_DATABASE_URL } } }
+            - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_COCKROACH_URL } } }
             - { name: RABBITMQ_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: RABBITMQ_URL } } }
-            - { name: STORE_DRIVER, value: postgres }
+            - { name: STORE_DRIVER, value: cockroach }
           readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 5 }
           livenessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 10 }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+          volumeMounts:
+            - { name: cockroach-client-certs, mountPath: /cockroach/certs, readOnly: true }
       volumes:
-        - name: postgres-bootstrap
-          configMap: { name: postgres-bootstrap }
+        - name: cockroach-client-certs
+          secret:
+            secretName: bnpb-secrets
+            defaultMode: 0400
+            items:
+              - { key: ca.crt, path: ca.crt }
+              - { key: client.root.crt, path: client.root.crt }
+              - { key: client.root.key, path: client.root.key }
 ---
 apiVersion: v1
 kind: Service
@@ -135,16 +125,24 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: auth } }
   template:
-    metadata: { labels: { app: auth } }
+    metadata: { labels: { app: auth, role: api } }
     spec:
       serviceAccountName: auth
+      initContainers:
+        - name: wait-for-auth-db
+          image: postgres:17-alpine
+          command: ["/bin/sh", "-c", "until pg_isready -h postgres -U auth -d auth_db; do sleep 2; done"]
+          resources: { requests: { memory: 64Mi }, limits: { memory: 128Mi } }
+          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
       containers:
         - name: auth
           image: bnpb-m1/auth:local
-          ports: [{ name: grpc, containerPort: 9091 }]
+          resources: { requests: { memory: 128Mi }, limits: { memory: 256Mi } }
+          ports: [{ name: grpc, containerPort: 9091 }, { name: metrics, containerPort: 9092 }]
           envFrom: [{ configMapRef: { name: bnpb-config } }]
           env:
             - { name: AUTH_GRPC_PORT, value: "9091" }
+            - { name: AUTH_METRICS_PORT, value: "9092" }
             - { name: AUTH_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AUTH_DATABASE_URL } } }
             - { name: INTERNAL_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: INTERNAL_SERVICE_TOKEN } } }
             - { name: MEDIA_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: MEDIA_CLIENT_SECRET } } }
@@ -165,12 +163,13 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: client-api } }
   template:
-    metadata: { labels: { app: client-api } }
+    metadata: { labels: { app: client-api, role: api } }
     spec:
       serviceAccountName: client-api
       containers:
         - name: client-api
           image: bnpb-m1/client-api:local
+          resources: { requests: { memory: 128Mi }, limits: { memory: 256Mi } }
           ports: [{ name: http, containerPort: 8080 }]
           envFrom: [{ configMapRef: { name: bnpb-config } }]
           env:
@@ -191,11 +190,12 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: rabbitmq } }
   template:
-    metadata: { labels: { app: rabbitmq } }
+    metadata: { labels: { app: rabbitmq, role: broker } }
     spec:
       containers:
         - name: rabbitmq
           image: rabbitmq:4-management-alpine
+          resources: { requests: { memory: 512Mi }, limits: { memory: 1Gi } }
           ports: [{ name: amqp, containerPort: 5672 }, { name: management, containerPort: 15672 }]
           volumeMounts:
             - { name: rabbitmq-data, mountPath: /var/lib/rabbitmq }
@@ -235,18 +235,19 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: postgres } }
   template:
-    metadata: { labels: { app: postgres } }
+    metadata: { labels: { app: postgres, role: store } }
     spec:
       containers:
         - name: postgres
           image: postgres:17-alpine
+          resources: { requests: { memory: 512Mi }, limits: { memory: 1Gi } }
           ports: [{ name: postgres, containerPort: 5432 }]
           env:
-            - { name: POSTGRES_USER, value: aggregator }
-            - { name: POSTGRES_DB, value: aggregator_db }
-            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_DB_PASSWORD } } }
-          readinessProbe: { exec: { command: [pg_isready, -U, aggregator, -d, aggregator_db] }, initialDelaySeconds: 5 }
-          livenessProbe: { exec: { command: [pg_isready, -U, aggregator, -d, aggregator_db] }, periodSeconds: 10 }
+            - { name: POSTGRES_USER, value: postgres }
+            - { name: POSTGRES_DB, value: postgres }
+            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: POSTGRES_ADMIN_PASSWORD } } }
+          readinessProbe: { exec: { command: [pg_isready, -U, postgres, -d, postgres] }, initialDelaySeconds: 5 }
+          livenessProbe: { exec: { command: [pg_isready, -U, postgres, -d, postgres] }, periodSeconds: 10 }
   volumeClaimTemplates:
     - metadata: { name: postgres-data }
       spec:
@@ -278,6 +279,7 @@ spec:
       containers:
         - name: dashboard-consumer
           image: bnpb-m1/dashboard-consumer:local
+          resources: { requests: { memory: 128Mi }, limits: { memory: 256Mi } }
           ports: [{ name: health, containerPort: 8083 }]
           env:
             - { name: RABBITMQ_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: RABBITMQ_URL } } }
@@ -298,6 +300,7 @@ spec:
       containers:
         - name: portal-consumer
           image: bnpb-m1/portal-consumer:local
+          resources: { requests: { memory: 128Mi }, limits: { memory: 256Mi } }
           ports: [{ name: health, containerPort: 8085 }]
           env:
             - { name: RABBITMQ_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: RABBITMQ_URL } } }
@@ -318,6 +321,7 @@ spec:
       containers:
         - name: notifier-consumer
           image: bnpb-m1/notifier-consumer:local
+          resources: { requests: { memory: 128Mi }, limits: { memory: 256Mi } }
           ports: [{ name: health, containerPort: 8084 }]
           env:
             - { name: RABBITMQ_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: RABBITMQ_URL } } }

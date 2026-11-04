@@ -1,12 +1,20 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: bnpb-m1
+namespace: sistem-informasi-kebencanaan-bnpb
 resources:
   - namespace.yaml
   - serviceaccounts.yaml
   - configmap.yaml
   - postgres-bootstrap.yaml
+  - auth-db-bootstrap-job.yaml
   - persistentvolumeclaims.yaml
   - workloads.yaml
+  - pdb.yaml
+  - cockroachdb-statefulset.yaml
+  - cockroachdb-certs-job.yaml
+  - satellite-ingestor.yaml
+  - coastal-ingestor.yaml
+  - critical-notifier.yaml
+  - observability.yaml
   - demo.yaml
   - networkpolicy.yaml

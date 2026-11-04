@@ -1,0 +1,100 @@
+# One-shot TLS bootstrap for CockroachDB. Assumes:
+#   - the bnpb-secrets Secret may already exist (k3d-deploy creates it from .env);
+#     this Job merges cert keys into it with `kubectl patch` and never replaces
+#     the other keys, so database/broker credentials are preserved;
+#   - the Job pod can create/patch that Secret (Role below, same namespace);
+#   - the node certificate must match the target namespace DNS names, so it is
+#     generated from the pod's own namespace via the downward API;
+#   - rotation is manual: delete bnpb-secrets keys ca.crt/node.crt/node.key/
+#     client.root.* and re-run the Job, then restart the StatefulSet.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: cockroachdb-certs }
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: cockroachdb-certs }
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: cockroachdb-certs }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: cockroachdb-certs }
+subjects:
+  - { kind: ServiceAccount, name: cockroachdb-certs }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cockroachdb-certs
+  labels: { app: cockroachdb-certs, role: other }
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels: { app: cockroachdb-certs, role: other }
+    spec:
+      serviceAccountName: cockroachdb-certs
+      restartPolicy: OnFailure
+      containers:
+        - name: certs
+          image: cockroachdb/cockroach:v25.4.0
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              /cockroach/cockroach cert create-ca \
+                --certs-dir=/certs --ca-key=/certs/ca.key
+              /cockroach/cockroach cert create-node \
+                localhost 127.0.0.1 \
+                cockroachdb "cockroachdb.${POD_NAMESPACE}" \
+                "cockroachdb.${POD_NAMESPACE}.svc" \
+                "cockroachdb.${POD_NAMESPACE}.svc.cluster.local" \
+                cockroachdb-0.cockroachdb cockroachdb-1.cockroachdb cockroachdb-2.cockroachdb \
+                "*.cockroachdb.${POD_NAMESPACE}.svc" \
+                "*.cockroachdb.${POD_NAMESPACE}.svc.cluster.local" \
+                --certs-dir=/certs --ca-key=/certs/ca.key
+              /cockroach/cockroach cert create-client root \
+                --certs-dir=/certs --ca-key=/certs/ca.key
+          env:
+            - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+          volumeMounts:
+            - { name: certs, mountPath: /certs }
+          resources:
+            requests: { memory: 64Mi }
+            limits: { memory: 128Mi }
+        - name: publish
+          image: alpine/k8s:1.31.0
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              if [ -n "$(kubectl -n "$POD_NAMESPACE" get secret bnpb-secrets -o jsonpath='{.data.node\.key}' 2>/dev/null)" ]; then
+                echo "bnpb-secrets already holds the CockroachDB certs; leaving it untouched"
+                exit 0
+              fi
+              kubectl -n "$POD_NAMESPACE" get secret bnpb-secrets >/dev/null 2>&1 || \
+                kubectl -n "$POD_NAMESPACE" create secret generic bnpb-secrets --dry-run=client -o yaml | kubectl -n "$POD_NAMESPACE" apply -f -
+              patch=$(mktemp)
+              printf '{"data":{' > "$patch"
+              sep=""
+              for f in ca.crt node.crt node.key client.root.crt client.root.key; do
+                b64=$(base64 "/certs/$f" | tr -d '\n')
+                printf '%s"%s":"%s"' "$sep" "$f" "$b64" >> "$patch"
+                sep=","
+              done
+              printf '}}' >> "$patch"
+              kubectl -n "$POD_NAMESPACE" patch secret bnpb-secrets --type merge --patch-file "$patch"
+          env:
+            - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+          volumeMounts:
+            - { name: certs, mountPath: /certs, readOnly: true }
+          resources:
+            requests: { memory: 64Mi }
+            limits: { memory: 128Mi }
+      volumes:
+        - name: certs
+          emptyDir: {}

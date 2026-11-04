@@ -24,3 +24,14 @@ spec:
     - from:
         - { podSelector: { matchLabels: { app: demo-api } } }
       ports: [{ protocol: TCP, port: 15672 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: cockroach-aggregator-only }
+spec:
+  podSelector: { matchLabels: { app: cockroachdb } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - { podSelector: { matchLabels: { app: aggregator } } }
+      ports: [{ protocol: TCP, port: 26257 }]

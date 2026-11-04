@@ -1,4 +1,4 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: bnpb-m1
+  name: sistem-informasi-kebencanaan-bnpb

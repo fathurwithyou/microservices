@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: auth-db-bootstrap
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels: { app: auth-db-bootstrap, role: other }
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: postgres:17-alpine
+          command: ["/bin/sh", "-c"]
+          args:
+            - |-
+              set -eu
+              until pg_isready -h postgres -p 5432 -U postgres -d postgres; do sleep 2; done
+              PGPASSWORD="$POSTGRES_PASSWORD" psql \
+                --host=postgres --port=5432 --username=postgres --dbname=postgres \
+                --set=ON_ERROR_STOP=1 \
+                --set=auth_password="$AUTH_DB_PASSWORD" \
+                --file=/bootstrap/bootstrap.sql
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: bnpb-secrets, key: POSTGRES_ADMIN_PASSWORD }
+            - name: AUTH_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: bnpb-secrets, key: AUTH_DB_PASSWORD }
+          volumeMounts:
+            - { name: bootstrap, mountPath: /bootstrap, readOnly: true }
+          resources: { requests: { memory: 64Mi }, limits: { memory: 128Mi } }
+          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+      volumes:
+        - name: bootstrap
+          configMap: { name: postgres-bootstrap }

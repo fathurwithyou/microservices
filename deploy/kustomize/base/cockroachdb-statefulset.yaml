@@ -1,0 +1,101 @@
+# Secure CockroachDB. TLS material lives in bnpb-secrets and is produced by
+# cockroachdb-certs-job.yaml; run that Job before (or right after) applying
+# this base. Pods stay in ContainerCreating until the secret has the cert keys.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cockroachdb
+  labels: { app: cockroachdb, role: store }
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: { app: cockroachdb }
+  ports:
+    - { name: sql, port: 26257, targetPort: sql }
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cockroachdb-public
+  labels: { app: cockroachdb, role: store }
+spec:
+  selector: { app: cockroachdb }
+  ports:
+    - { name: sql, port: 26257, targetPort: sql }
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cockroachdb
+  labels: { app: cockroachdb, role: store }
+spec:
+  serviceName: cockroachdb
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector: { matchLabels: { app: cockroachdb } }
+  template:
+    metadata:
+      labels: { app: cockroachdb, role: store }
+    spec:
+      # Preferred, not required: a single-node demo cluster must still schedule.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector: { matchLabels: { app: cockroachdb } }
+      containers:
+        - name: cockroachdb
+          image: cockroachdb/cockroach:v25.4.0
+          command: ["/cockroach/cockroach"]
+          args:
+            - start
+            - --certs-dir=/cockroach/certs
+            - --listen-addr=:26257
+            - --advertise-addr=$(POD_NAME).cockroachdb:26257
+            - --http-addr=:8080
+            - --join=cockroachdb-0.cockroachdb:26257,cockroachdb-1.cockroachdb:26257,cockroachdb-2.cockroachdb:26257
+            - --locality=cloud=$(NODE_NAME),rack=$(POD_NAME)
+            - --store=/cockroach/cockroach-data
+          ports:
+            - { name: sql, containerPort: 26257 }
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+            - { name: NODE_NAME, valueFrom: { fieldRef: { fieldPath: spec.nodeName } } }
+          volumeMounts:
+            - { name: data, mountPath: /cockroach/cockroach-data }
+            - { name: certs, mountPath: /cockroach/certs, readOnly: true }
+          readinessProbe:
+            httpGet: { path: "/health?ready=1", port: http, scheme: HTTPS }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /health, port: http, scheme: HTTPS }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests: { memory: 512Mi }
+            limits: { memory: 1Gi }
+      volumes:
+        - name: certs
+          secret:
+            secretName: bnpb-secrets
+            defaultMode: 0400
+            items:
+              - { key: ca.crt, path: ca.crt }
+              - { key: node.crt, path: node.crt }
+              - { key: node.key, path: node.key }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 10Gi

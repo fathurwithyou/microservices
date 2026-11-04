@@ -1,0 +1,256 @@
+# Demo-only observability stack: no storage, no auth hardening, single replica.
+# Prometheus scrapes its own config plus the OTel Collector's Prometheus exporter.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  labels: { app: prometheus }
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+      - job_name: otel-collector
+        static_configs:
+          - targets: ["otel-collector:8889"]
+      - job_name: services
+        static_configs:
+          - targets:
+              - "aggregator:8090"
+              - "client-api:8080"
+              - "auth:9092"
+              - "bmkg:8081"
+              - "pvmbg:8082"
+              - "dashboard-consumer:8083"
+              - "notifier-consumer:8084"
+              - "portal-consumer:8085"
+              - "critical-notifier:8093"
+              - "satellite-ingestor:8086"
+              - "coastal-ingestor:8087"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  labels: { app: otel-collector }
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc: { endpoint: 0.0.0.0:4317 }
+          http: { endpoint: 0.0.0.0:4318 }
+    exporters:
+      otlp/tempo:
+        endpoint: tempo:4317
+        tls: { insecure: true }
+      prometheus:
+        endpoint: 0.0.0.0:8889
+    service:
+      pipelines:
+        traces: { receivers: [otlp], exporters: [otlp/tempo] }
+        metrics: { receivers: [otlp], exporters: [prometheus] }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  labels: { app: tempo }
+data:
+  tempo.yaml: |
+    server: { http_listen_port: 3200 }
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc: { endpoint: 0.0.0.0:4317 }
+            http: { endpoint: 0.0.0.0:4318 }
+    storage:
+      trace:
+        backend: local
+        local: { path: /tmp/tempo/blocks }
+        wal: { path: /tmp/tempo/wal }
+    usage_report: { reporting_enabled: false }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  labels: { app: grafana }
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - { name: Prometheus, type: prometheus, url: "http://prometheus:9090", isDefault: true }
+      - { name: Tempo, type: tempo, url: "http://tempo:3200" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  labels: { app: prometheus, role: other }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: prometheus } }
+  template:
+    metadata:
+      labels: { app: prometheus, role: other }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.55.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/tmp/prometheus
+          ports: [{ name: http, containerPort: 9090 }]
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus, readOnly: true }
+          readinessProbe: { httpGet: { path: /-/ready, port: http }, initialDelaySeconds: 5 }
+          livenessProbe: { httpGet: { path: /-/healthy, port: http }, periodSeconds: 15 }
+          resources:
+            requests: { memory: 128Mi }
+            limits: { memory: 256Mi }
+          securityContext: { allowPrivilegeEscalation: false }
+      volumes:
+        - name: config
+          configMap: { name: prometheus-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  labels: { app: prometheus }
+spec: { selector: { app: prometheus }, ports: [{ name: http, port: 9090, targetPort: http }] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  labels: { app: grafana, role: other }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: grafana } }
+  template:
+    metadata:
+      labels: { app: grafana, role: other }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.3.0
+          ports: [{ name: http, containerPort: 3000 }]
+          env:
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "true" }
+            - { name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Admin }
+          volumeMounts:
+            - { name: datasources, mountPath: /etc/grafana/provisioning/datasources, readOnly: true }
+          readinessProbe: { httpGet: { path: /api/health, port: http }, initialDelaySeconds: 10 }
+          livenessProbe: { httpGet: { path: /api/health, port: http }, periodSeconds: 30 }
+          resources:
+            requests: { memory: 128Mi }
+            limits: { memory: 256Mi }
+          securityContext: { allowPrivilegeEscalation: false }
+      volumes:
+        - name: datasources
+          configMap: { name: grafana-datasources }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  labels: { app: grafana }
+spec: { selector: { app: grafana }, ports: [{ name: http, port: 3000, targetPort: http }] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  labels: { app: otel-collector, role: other }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: otel-collector } }
+  template:
+    metadata:
+      labels: { app: otel-collector, role: other }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.115.1
+          args: ["--config=/etc/otel/config.yaml"]
+          ports:
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: otlp-http, containerPort: 4318 }
+            - { name: prometheus, containerPort: 8889 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/otel, readOnly: true }
+          readinessProbe: { tcpSocket: { port: otlp-grpc }, initialDelaySeconds: 5 }
+          livenessProbe: { tcpSocket: { port: otlp-grpc }, periodSeconds: 15 }
+          resources:
+            requests: { memory: 128Mi }
+            limits: { memory: 256Mi }
+          securityContext: { allowPrivilegeEscalation: false }
+      volumes:
+        - name: config
+          configMap: { name: otel-collector-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  labels: { app: otel-collector }
+spec:
+  selector: { app: otel-collector }
+  ports:
+    - { name: otlp-grpc, port: 4317, targetPort: otlp-grpc }
+    - { name: otlp-http, port: 4318, targetPort: otlp-http }
+    - { name: prometheus, port: 8889, targetPort: prometheus }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  labels: { app: tempo, role: other }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: tempo } }
+  template:
+    metadata:
+      labels: { app: tempo, role: other }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.6.1
+          args: ["-config.file=/etc/tempo/tempo.yaml"]
+          ports:
+            - { name: http, containerPort: 3200 }
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: otlp-http, containerPort: 4318 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/tempo, readOnly: true }
+          readinessProbe: { httpGet: { path: /ready, port: http }, initialDelaySeconds: 10 }
+          livenessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 30 }
+          resources:
+            requests: { memory: 128Mi }
+            limits: { memory: 256Mi }
+          securityContext: { allowPrivilegeEscalation: false }
+      volumes:
+        - name: config
+          configMap: { name: tempo-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  labels: { app: tempo }
+spec:
+  selector: { app: tempo }
+  ports:
+    - { name: http, port: 3200, targetPort: http }
+    - { name: otlp-grpc, port: 4317, targetPort: otlp-grpc }
+    - { name: otlp-http, port: 4318, targetPort: otlp-http }

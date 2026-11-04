@@ -20,12 +20,13 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: demo-api } }
   template:
-    metadata: { labels: { app: demo-api } }
+    metadata: { labels: { app: demo-api, role: other } }
     spec:
       serviceAccountName: demo-api
       containers:
         - name: demo-api
           image: bnpb-m1/demo-api:local
+          resources: { requests: { memory: 128Mi }, limits: { memory: 256Mi } }
           ports: [{ name: http, containerPort: 8086 }]
           envFrom: [{ configMapRef: { name: bnpb-config } }]
           env:
@@ -57,11 +58,12 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: demo-console } }
   template:
-    metadata: { labels: { app: demo-console } }
+    metadata: { labels: { app: demo-console, role: other } }
     spec:
       containers:
         - name: demo-console
           image: bnpb-m1/demo-console:local
+          resources: { requests: { memory: 128Mi }, limits: { memory: 256Mi } }
           ports: [{ name: http, containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /, port: http }, initialDelaySeconds: 2 }
 ---
