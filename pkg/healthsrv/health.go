@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/fathurwithyou/microservices/pkg/observability"
 )
 
 // Config configures the health server.
@@ -27,5 +29,6 @@ func New(cfg Config) *http.Server {
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = response.Write(body)
 	})
-	return &http.Server{Addr: ":" + cfg.Port, Handler: mux, ReadHeaderTimeout: 2 * time.Second}
+	mux.Handle("GET /metrics", observability.MetricsHandler())
+	return &http.Server{Addr: ":" + cfg.Port, Handler: observability.HTTPMetrics(mux), ReadHeaderTimeout: 2 * time.Second}
 }
