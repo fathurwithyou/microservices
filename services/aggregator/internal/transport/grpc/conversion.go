@@ -9,23 +9,33 @@ import (
 )
 
 func sourceFromProto(value eventspb.Source) domain.Source {
-	if value == eventspb.Source_SOURCE_BMKG {
+	switch value {
+	case eventspb.Source_SOURCE_BMKG:
 		return domain.SourceBMKG
-	}
-	if value == eventspb.Source_SOURCE_PVMBG {
+	case eventspb.Source_SOURCE_PVMBG:
 		return domain.SourcePVMBG
+	case eventspb.Source_SOURCE_SATELIT:
+		return domain.SourceSatellite
+	case eventspb.Source_SOURCE_SENSOR_PANTAI:
+		return domain.SourceCoastalSensor
+	default:
+		return ""
 	}
-	return ""
 }
 
 func hazardTypeFromProto(value eventspb.HazardType) domain.HazardType {
-	if value == eventspb.HazardType_HAZARD_TYPE_SEISMIC {
+	switch value {
+	case eventspb.HazardType_HAZARD_TYPE_SEISMIC:
 		return domain.HazardSeismic
-	}
-	if value == eventspb.HazardType_HAZARD_TYPE_VOLCANIC {
+	case eventspb.HazardType_HAZARD_TYPE_VOLCANIC:
 		return domain.HazardVolcanic
+	case eventspb.HazardType_HAZARD_TYPE_WILDFIRE:
+		return domain.HazardWildfire
+	case eventspb.HazardType_HAZARD_TYPE_COASTAL:
+		return domain.HazardCoastal
+	default:
+		return ""
 	}
-	return ""
 }
 
 func severityFromProto(value eventspb.Severity) domain.Severity {
@@ -68,6 +78,10 @@ func sourceToProto(value domain.Source) eventspb.Source {
 		return eventspb.Source_SOURCE_BMKG
 	case domain.SourcePVMBG:
 		return eventspb.Source_SOURCE_PVMBG
+	case domain.SourceSatellite:
+		return eventspb.Source_SOURCE_SATELIT
+	case domain.SourceCoastalSensor:
+		return eventspb.Source_SOURCE_SENSOR_PANTAI
 	default:
 		return eventspb.Source_SOURCE_UNSPECIFIED
 	}
@@ -79,6 +93,10 @@ func hazardTypeToProto(value domain.HazardType) eventspb.HazardType {
 		return eventspb.HazardType_HAZARD_TYPE_SEISMIC
 	case domain.HazardVolcanic:
 		return eventspb.HazardType_HAZARD_TYPE_VOLCANIC
+	case domain.HazardWildfire:
+		return eventspb.HazardType_HAZARD_TYPE_WILDFIRE
+	case domain.HazardCoastal:
+		return eventspb.HazardType_HAZARD_TYPE_COASTAL
 	default:
 		return eventspb.HazardType_HAZARD_TYPE_UNSPECIFIED
 	}

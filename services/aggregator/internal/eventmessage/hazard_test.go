@@ -4,7 +4,9 @@ import (
 	"testing"
 	"time"
 
+	eventspb "github.com/fathurwithyou/microservices/contracts/gen/go/events"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
+	"google.golang.org/protobuf/proto"
 )
 
 func testEvent() domain.HazardEvent {
@@ -25,6 +27,37 @@ func TestMarshalHazardRoundTrip(t *testing.T) {
 	}
 	if len(payload) == 0 {
 		t.Fatal("empty payload")
+	}
+}
+
+func TestMarshalHazardAcceptsM2Enums(t *testing.T) {
+	tests := []struct {
+		name   string
+		source domain.Source
+		kind   domain.HazardType
+		wantS  eventspb.Source
+		wantH  eventspb.HazardType
+	}{
+		{"wildfire", domain.SourceSatellite, domain.HazardWildfire, eventspb.Source_SOURCE_SATELIT, eventspb.HazardType_HAZARD_TYPE_WILDFIRE},
+		{"coastal", domain.SourceCoastalSensor, domain.HazardCoastal, eventspb.Source_SOURCE_SENSOR_PANTAI, eventspb.HazardType_HAZARD_TYPE_COASTAL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event := testEvent()
+			event.Source = tt.source
+			event.HazardType = tt.kind
+			payload, err := MarshalHazard(event)
+			if err != nil {
+				t.Fatalf("MarshalHazard: %v", err)
+			}
+			var decoded eventspb.HazardEvent
+			if err := proto.Unmarshal(payload, &decoded); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			if decoded.GetSource() != tt.wantS || decoded.GetHazardType() != tt.wantH {
+				t.Fatalf("enums = %s/%s, want %s/%s", decoded.GetSource(), decoded.GetHazardType(), tt.wantS, tt.wantH)
+			}
+		})
 	}
 }
 

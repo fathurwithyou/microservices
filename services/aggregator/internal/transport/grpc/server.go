@@ -6,7 +6,11 @@ import (
 
 	aggregatorpb "github.com/fathurwithyou/microservices/contracts/gen/go/aggregator"
 	"github.com/fathurwithyou/microservices/pkg/grpckit"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/analytics"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/fieldreports"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/hazards"
+	applicationingest "github.com/fathurwithyou/microservices/services/aggregator/internal/application/ingest"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -21,6 +25,12 @@ const HealthMethod = "/bnpb.aggregator.Aggregator/HealthCheck"
 type ServerConfig struct {
 	// Queries backs the hazard read API. Required.
 	Queries *hazards.Queries
+	// FieldReports accepts durable field-report submissions. Required.
+	FieldReports *fieldreports.Service
+	// Analytics backs the dashboard aggregation API. Required.
+	Analytics *analytics.Queries
+	// Submitter accepts HazardEvents from internal ingress services. Required.
+	Submitter *applicationingest.Submitter
 	// ServiceToken is the internal bearer token clients must present.
 	ServiceToken string
 	// Logger receives structured logs. Defaults to slog.Default().
@@ -37,8 +47,8 @@ func NewServer(cfg ServerConfig) *grpc.Server {
 	server := grpc.NewServer(grpc.ChainUnaryInterceptor(
 		grpckit.UnaryObservability(grpckit.Config{Service: "aggregator", Logger: logger}),
 		grpckit.UnaryAuth(grpckit.AuthConfig{Token: cfg.ServiceToken, PublicMethods: []string{HealthMethod}}),
-	))
-	aggregatorpb.RegisterAggregatorServer(server, newQueryHandler(cfg.Queries))
+	), grpc.StatsHandler(otelgrpc.NewServerHandler()))
+	aggregatorpb.RegisterAggregatorServer(server, newQueryHandler(cfg.Queries, cfg.FieldReports, cfg.Analytics, cfg.Submitter))
 	registerHealth(server)
 	reflection.Register(server)
 	return server

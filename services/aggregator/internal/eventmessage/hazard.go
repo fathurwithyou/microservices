@@ -10,8 +10,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// RoutingKey is the AMQP routing key for hazard event messages.
+// RoutingKey is the AMQP routing key for normal hazard event messages.
 const RoutingKey = "hazard.event"
+
+// CriticalRoutingKey routes field-critical events to the priority exchange.
+const CriticalRoutingKey = "hazard.critical"
 
 // MarshalHazard serializes a domain event into the wire-format protobuf
 // payload published to consumers. Unknown enum values are rejected instead
@@ -47,6 +50,10 @@ func sourceProto(value domain.Source) (eventspb.Source, error) {
 		return eventspb.Source_SOURCE_BMKG, nil
 	case domain.SourcePVMBG:
 		return eventspb.Source_SOURCE_PVMBG, nil
+	case domain.SourceSatellite:
+		return eventspb.Source_SOURCE_SATELIT, nil
+	case domain.SourceCoastalSensor:
+		return eventspb.Source_SOURCE_SENSOR_PANTAI, nil
 	default:
 		return eventspb.Source_SOURCE_UNSPECIFIED, fmt.Errorf("unknown source %q: %w", value, domain.ErrInvalidSourcePayload)
 	}
@@ -58,6 +65,10 @@ func hazardTypeProto(value domain.HazardType) (eventspb.HazardType, error) {
 		return eventspb.HazardType_HAZARD_TYPE_SEISMIC, nil
 	case domain.HazardVolcanic:
 		return eventspb.HazardType_HAZARD_TYPE_VOLCANIC, nil
+	case domain.HazardWildfire:
+		return eventspb.HazardType_HAZARD_TYPE_WILDFIRE, nil
+	case domain.HazardCoastal:
+		return eventspb.HazardType_HAZARD_TYPE_COASTAL, nil
 	default:
 		return eventspb.HazardType_HAZARD_TYPE_UNSPECIFIED, fmt.Errorf("unknown hazard type %q: %w", value, domain.ErrInvalidSourcePayload)
 	}

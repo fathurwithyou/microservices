@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,6 +52,12 @@ func testPoller(repository Repository) *Poller {
 type observingRepository struct {
 	*memory.Repository
 	advanced chan time.Time
+	failures []domain.IngestFailure
+}
+
+func (s *observingRepository) SaveIngestFailure(_ context.Context, failure domain.IngestFailure) error {
+	s.failures = append(s.failures, failure)
+	return nil
 }
 
 func (s *observingRepository) AdvancePollCursor(ctx context.Context, source domain.Source, cursor time.Time) error {
@@ -206,5 +213,82 @@ func TestNewPollerValidatesConfig(t *testing.T) {
 	}
 	if poller == nil || len(poller.sources) != 1 {
 		t.Fatalf("poller = %+v", poller)
+	}
+}
+
+type atomicLeadership struct{ value atomic.Bool }
+
+func (l *atomicLeadership) Allowed() bool { return l.value.Load() }
+
+func TestRunSourceDoesNotFetchWithoutLeadership(t *testing.T) {
+	repository := &observingRepository{Repository: memory.NewRepository(), advanced: make(chan time.Time, 1)}
+	leadership := &atomicLeadership{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller := testPoller(repository)
+	poller.leadership = leadership
+	poller.interval = 10 * time.Millisecond
+
+	called := make(chan struct{}, 1)
+	source := &fakeSource{name: domain.SourceBMKG, fetch: func(context.Context, time.Time, string) ([]domain.HazardEvent, error) {
+		called <- struct{}{}
+		return nil, nil
+	}}
+	go poller.runSource(ctx, source)
+
+	select {
+	case <-called:
+		t.Fatal("source was fetched without leadership")
+	case <-time.After(60 * time.Millisecond):
+	}
+}
+
+func TestRunSourceDropsBatchWhenLeadershipIsLostDuringFetch(t *testing.T) {
+	repository := &observingRepository{Repository: memory.NewRepository(), advanced: make(chan time.Time, 1)}
+	leadership := &atomicLeadership{}
+	leadership.value.Store(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller := testPoller(repository)
+	poller.leadership = leadership
+	poller.interval = 10 * time.Millisecond
+
+	source := &fakeSource{name: domain.SourceBMKG, fetch: func(context.Context, time.Time, string) ([]domain.HazardEvent, error) {
+		leadership.value.Store(false)
+		return []domain.HazardEvent{testEvent("h-lost", domain.SourceBMKG)}, nil
+	}}
+	go poller.runSource(ctx, source)
+
+	select {
+	case <-repository.advanced:
+		t.Fatal("cursor advanced after leadership was lost")
+	case <-time.After(80 * time.Millisecond):
+	}
+	if _, err := repository.GetHazard(context.Background(), "h-lost"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("event persisted after leadership was lost: %v", err)
+	}
+}
+
+func TestRunSourcePersistsRejectedPayloadForReplay(t *testing.T) {
+	repository := &observingRepository{Repository: memory.NewRepository(), advanced: make(chan time.Time, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller := testPoller(repository)
+	raw := map[string]json.RawMessage{"report_id": json.RawMessage(`"r-1"`), "level": json.RawMessage(`"Awas"`)}
+	source := &fakeSource{name: domain.SourcePVMBG, fetch: func(context.Context, time.Time, string) ([]domain.HazardEvent, error) {
+		return nil, &MappingError{Source: domain.SourcePVMBG, Err: errors.New("missing alert_level"), Rejected: []RejectedPayload{{Source: domain.SourcePVMBG, Raw: raw, Err: errors.New("missing alert_level")}}}
+	}}
+	go poller.runSource(ctx, source)
+
+	select {
+	case <-repository.advanced:
+	case <-time.After(time.Second):
+		t.Fatal("cursor did not advance after rejected payload")
+	}
+	if len(repository.failures) != 1 {
+		t.Fatalf("failures = %d, want 1", len(repository.failures))
+	}
+	if repository.failures[0].Status != domain.FailureParked || repository.failures[0].Retryable {
+		t.Fatalf("failure = %+v", repository.failures[0])
 	}
 }

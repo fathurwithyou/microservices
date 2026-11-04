@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -51,11 +52,33 @@ func (p *Poller) runSource(ctx context.Context, source Source) {
 
 		correlationID := uuid.NewString()
 		batchUpperBound := time.Now().UTC()
+		if !p.leaderAllowed() {
+			select {
+			case <-ticker.C:
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
 		pollCtx, cancel := context.WithTimeout(ctx, p.timeout)
 		events, fetchErr := source.Fetch(pollCtx, cursor.Add(-cursorOverlap), correlationID)
 		cancel()
 
+		// Ownership can change while a fetch is in flight. Do not persist or
+		// advance the cursor after losing the lease.
+		if !p.leaderAllowed() {
+			select {
+			case <-ticker.C:
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
+
 		batchErr := p.persistBatch(ctx, events, correlationID)
+		if mappingErr, ok := fetchErr.(*MappingError); ok {
+			p.recordFailures(ctx, mappingErr, correlationID)
+		}
 		switch {
 		case batchErr != nil:
 			// Persistence is on the critical path: never advance past events
@@ -108,6 +131,32 @@ func (p *Poller) persistBatch(ctx context.Context, events []domain.HazardEvent, 
 func isMappingError(err error) bool {
 	var mappingErr *MappingError
 	return errors.As(err, &mappingErr)
+}
+
+func (p *Poller) leaderAllowed() bool {
+	return p.leadership == nil || p.leadership.Allowed()
+}
+
+func (p *Poller) recordFailures(ctx context.Context, mappingErr *MappingError, correlationID string) {
+	for _, rejected := range mappingErr.Rejected {
+		payload, err := json.Marshal(rejected.Raw)
+		if err != nil {
+			p.logger.Error("failed payload marshal", "component", "poller", "source", rejected.Source, "error", err)
+			continue
+		}
+		messageID := uuid.NewSHA1(uuid.NameSpaceURL, append([]byte(string(rejected.Source)+":"), payload...)).String()
+		if err := p.repository.SaveIngestFailure(ctx, domain.IngestFailure{
+			MessageID:  messageID,
+			Source:     rejected.Source,
+			ReceivedAt: time.Now().UTC(),
+			Reason:     rejected.Err.Error(),
+			Retryable:  false,
+			Status:     domain.FailureParked,
+			Payload:    payload,
+		}); err != nil {
+			p.logger.Error("failed payload persist", "component", "poller", "source", rejected.Source, "correlation_id", correlationID, "error", err)
+		}
+	}
 }
 
 func (p *Poller) markStale(ctx context.Context, source domain.Source, lastSuccess, now time.Time, correlationID string, pollErr error) {

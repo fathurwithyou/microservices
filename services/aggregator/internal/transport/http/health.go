@@ -5,13 +5,26 @@ import (
 	"time"
 
 	"github.com/fathurwithyou/microservices/pkg/correlation"
+	"github.com/fathurwithyou/microservices/pkg/observability"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/audit"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/failures"
 )
 
-// NewHealthServer returns the aggregator liveness HTTP server.
-func NewHealthServer(port string) *http.Server {
+// NewServer returns the aggregator HTTP server with health and Audit API
+// routes.
+func NewServer(port string, auditQueries *audit.Queries, auditToken string, replayer *failures.Replayer) *http.Server {
 	router := http.NewServeMux()
 	router.HandleFunc("GET /health", health)
-	return &http.Server{Addr: ":" + port, Handler: router, ReadHeaderTimeout: 2 * time.Second, WriteTimeout: 3 * time.Second}
+	router.Handle("GET /metrics", observability.MetricsHandler())
+	if auditQueries != nil {
+		auditHandler := newAuditHandler(auditQueries, replayer)
+		router.HandleFunc("GET /internal/audit/events", auditAuth(auditToken, auditHandler.events))
+		router.HandleFunc("GET /internal/audit/checksum", auditAuth(auditToken, auditHandler.checksum))
+		router.HandleFunc("GET /internal/audit/location", auditAuth(auditToken, auditHandler.location))
+		router.HandleFunc("GET /internal/audit/unprocessed", auditAuth(auditToken, auditHandler.unprocessed))
+		router.HandleFunc("POST /internal/ops/replay", auditAuth(auditToken, auditHandler.replay))
+	}
+	return &http.Server{Addr: ":" + port, Handler: observability.HTTPTracing(observability.HTTPMetrics(router), "aggregator"), ReadHeaderTimeout: 2 * time.Second, WriteTimeout: 10 * time.Second}
 }
 
 func health(response http.ResponseWriter, request *http.Request) {

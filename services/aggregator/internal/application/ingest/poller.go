@@ -26,6 +26,7 @@ type Poller struct {
 	sources    []Source
 	interval   time.Duration
 	timeout    time.Duration
+	leadership Leadership
 	logger     *slog.Logger
 }
 
@@ -39,6 +40,9 @@ type PollerConfig struct {
 	Interval time.Duration
 	// Timeout bounds a single poll cycle. Must be positive.
 	Timeout time.Duration
+	// Leadership gates polling to the current leader. When nil, every
+	// instance polls (useful for the memory driver and tests).
+	Leadership Leadership
 	// Logger receives structured logs. Defaults to slog.Default().
 	Logger *slog.Logger
 }
@@ -60,7 +64,7 @@ func NewPoller(cfg PollerConfig) (*Poller, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	return &Poller{repository: cfg.Repository, sources: cfg.Sources, interval: cfg.Interval, timeout: cfg.Timeout, logger: cfg.Logger}, nil
+	return &Poller{repository: cfg.Repository, sources: cfg.Sources, interval: cfg.Interval, timeout: cfg.Timeout, leadership: cfg.Leadership, logger: cfg.Logger}, nil
 }
 
 // Run polls every registered source concurrently until ctx is cancelled.

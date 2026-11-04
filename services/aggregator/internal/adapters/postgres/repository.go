@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/analytics"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/audit"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/hazards"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 	"github.com/google/uuid"
@@ -68,6 +70,217 @@ func (s *Repository) PersistHazardAndEnqueue(ctx context.Context, event domain.H
 func (s *Repository) GetHazard(ctx context.Context, id string) (domain.HazardEvent, error) {
 	row := s.pool.QueryRow(ctx, `SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes FROM hazard_events WHERE hazard_id=$1`, id)
 	return scan(row)
+}
+
+// ListAuditEvents returns events ordered by ingested_at and hazard_id. The
+// cursor is the last hazard_id on the previous page.
+func (s *Repository) ListAuditEvents(ctx context.Context, filter audit.Filter) ([]domain.HazardEvent, error) {
+	rows, err := s.pool.Query(ctx, `SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes
+FROM hazard_events
+WHERE ($1 = '' OR source = $1)
+  AND ingested_at >= $2
+  AND ($3 = '' OR ingested_at > $2 OR (ingested_at = $2 AND hazard_id > $3))
+ORDER BY ingested_at ASC, hazard_id ASC
+LIMIT $4`, string(filter.Source), filter.Since, filter.Cursor, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]domain.HazardEvent, 0, filter.Limit)
+	for rows.Next() {
+		item, scanErr := scan(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// SourceRefIDs returns the source_ref_id values for checksum computation.
+func (s *Repository) SourceRefIDs(ctx context.Context, source domain.Source) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT source_ref_id FROM hazard_events WHERE ($1 = '' OR source = $1) ORDER BY source_ref_id`, string(source))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// SaveIngestFailure stores a raw rejected payload idempotently.
+func (s *Repository) SaveIngestFailure(ctx context.Context, failure domain.IngestFailure) error {
+	_, err := s.pool.Exec(ctx, `INSERT INTO ingest_failures (message_id, source, received_at, reason, retryable, attempts, status, payload)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+ON CONFLICT (message_id) DO NOTHING`, failure.MessageID, failure.Source, failure.ReceivedAt, failure.Reason, failure.Retryable, failure.Attempts, failure.Status, failure.Payload)
+	return err
+}
+
+// ListIngestFailures returns parked/retrying payloads for audit.
+func (s *Repository) ListIngestFailures(ctx context.Context, source domain.Source, limit int) ([]domain.IngestFailure, error) {
+	rows, err := s.pool.Query(ctx, `SELECT message_id, source, received_at, reason, retryable, attempts, status, payload
+FROM ingest_failures WHERE ($1 = '' OR source = $1) AND status IN ('parked','retrying')
+ORDER BY received_at ASC, message_id ASC LIMIT $2`, string(source), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]domain.IngestFailure, 0, limit)
+	for rows.Next() {
+		var item domain.IngestFailure
+		if err := rows.Scan(&item.MessageID, &item.Source, &item.ReceivedAt, &item.Reason, &item.Retryable, &item.Attempts, &item.Status, &item.Payload); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// MarkIngestFailureRecovered removes a replayed payload from the active queue.
+func (s *Repository) MarkIngestFailureRecovered(ctx context.Context, messageID string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE ingest_failures SET status = 'recovered', attempts = attempts + 1 WHERE message_id = $1`, messageID)
+	return err
+}
+
+// HazardExists reports whether the canonical store contains hazard_id.
+func (s *Repository) HazardExists(ctx context.Context, hazardID string) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM hazard_events WHERE hazard_id = $1)`, hazardID).Scan(&exists)
+	return exists, err
+}
+
+// CountByHazardType aggregates events in the requested window.
+func (s *Repository) CountByHazardType(ctx context.Context, filter analytics.Filter) ([]analytics.TypeCount, error) {
+	rows, err := s.pool.Query(ctx, `SELECT hazard_type, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY hazard_type ORDER BY hazard_type`, filter.Since, filter.Until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]analytics.TypeCount, 0)
+	for rows.Next() {
+		var item analytics.TypeCount
+		if err := rows.Scan(&item.HazardType, &item.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+// CountBySeverity aggregates events in the requested window.
+func (s *Repository) CountBySeverity(ctx context.Context, filter analytics.Filter) ([]analytics.SeverityCount, error) {
+	rows, err := s.pool.Query(ctx, `SELECT severity, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY severity ORDER BY severity`, filter.Since, filter.Until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]analytics.SeverityCount, 0)
+	for rows.Next() {
+		var item analytics.SeverityCount
+		if err := rows.Scan(&item.Severity, &item.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+// CountByArea aggregates events in the requested window.
+func (s *Repository) CountByArea(ctx context.Context, filter analytics.Filter) ([]analytics.AreaCount, error) {
+	rows, err := s.pool.Query(ctx, `SELECT area_name, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY area_name ORDER BY count(*) DESC, area_name`, filter.Since, filter.Until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]analytics.AreaCount, 0)
+	for rows.Next() {
+		var item analytics.AreaCount
+		if err := rows.Scan(&item.AreaName, &item.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+// CountByTimeBucket aggregates events per bucket and hazard type.
+func (s *Repository) CountByTimeBucket(ctx context.Context, filter analytics.Filter) ([]analytics.TimeBucket, error) {
+	bucket := "day"
+	switch filter.Bucket {
+	case analytics.BucketHour:
+		bucket = "hour"
+	case analytics.BucketWeek:
+		bucket = "week"
+	}
+	rows, err := s.pool.Query(ctx, `SELECT date_trunc($3, occurred_at) AS bucket, hazard_type, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY bucket, hazard_type ORDER BY bucket, hazard_type`, filter.Since, filter.Until, bucket)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]analytics.TimeBucket, 0)
+	for rows.Next() {
+		var item analytics.TimeBucket
+		if err := rows.Scan(&item.Start, &item.HazardType, &item.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+// SaveFieldReport inserts a field report once. The bool reports whether this
+// call created the record; a repeated report_id is an idempotent no-op.
+func (s *Repository) SaveFieldReport(ctx context.Context, report domain.FieldReport) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `INSERT INTO field_reports (report_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, received_at, description, status)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT (report_id) DO NOTHING`, report.ReportID, report.HazardType, report.Severity, report.AreaName, report.Latitude, report.Longitude, report.OccurredAt, report.ReceivedAt, report.Description, report.Status)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ListAcceptedFieldReports returns accepted reports in arrival order.
+func (s *Repository) ListAcceptedFieldReports(ctx context.Context, limit int) ([]domain.FieldReport, error) {
+	rows, err := s.pool.Query(ctx, `SELECT report_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, received_at, description, status, attempts, processed_at
+FROM field_reports WHERE status = 'accepted' ORDER BY received_at ASC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	reports := make([]domain.FieldReport, 0, limit)
+	for rows.Next() {
+		report, scanErr := scanFieldReport(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		reports = append(reports, report)
+	}
+	return reports, rows.Err()
+}
+
+// MarkFieldReport records the terminal state of one accepted report.
+func (s *Repository) MarkFieldReport(ctx context.Context, reportID string, status domain.FieldReportStatus, processedAt time.Time) error {
+	_, err := s.pool.Exec(ctx, `UPDATE field_reports SET status = $2, attempts = attempts + 1, processed_at = $3 WHERE report_id = $1 AND status = 'accepted'`, reportID, status, processedAt)
+	return err
+}
+
+func scanFieldReport(row scanner) (domain.FieldReport, error) {
+	var report domain.FieldReport
+	var processedAt *time.Time
+	err := row.Scan(&report.ReportID, &report.HazardType, &report.Severity, &report.AreaName, &report.Latitude, &report.Longitude, &report.OccurredAt, &report.ReceivedAt, &report.Description, &report.Status, &report.Attempts, &processedAt)
+	if err != nil {
+		return domain.FieldReport{}, err
+	}
+	report.ProcessedAt = processedAt
+	return report, nil
 }
 
 func (s *Repository) ListHazards(ctx context.Context, filter hazards.ListFilter) ([]domain.HazardEvent, error) {

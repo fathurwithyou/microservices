@@ -8,8 +8,10 @@ import (
 type Source string
 
 const (
-	SourceBMKG  Source = "BMKG"
-	SourcePVMBG Source = "PVMBG"
+	SourceBMKG          Source = "BMKG"
+	SourcePVMBG         Source = "PVMBG"
+	SourceSatellite     Source = "SATELIT"
+	SourceCoastalSensor Source = "SENSOR_PANTAI"
 )
 
 type HazardType string
@@ -17,6 +19,8 @@ type HazardType string
 const (
 	HazardSeismic  HazardType = "SEISMIC"
 	HazardVolcanic HazardType = "VOLCANIC"
+	HazardWildfire HazardType = "WILDFIRE"
+	HazardCoastal  HazardType = "COASTAL"
 )
 
 type Severity string

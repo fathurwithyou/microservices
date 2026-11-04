@@ -60,17 +60,19 @@ func (s *BMKGSource) Fetch(ctx context.Context, since time.Time, correlationID s
 	now := time.Now().UTC()
 	events := make([]domain.HazardEvent, 0, len(rawEvents))
 	var mappingErrs []error
+	var rejected []RejectedPayload
 	for _, raw := range rawEvents {
 		event, err := mapping.Seismic(raw, warningsByEvent[rawString(raw, "event_id")], now)
 		if err != nil {
 			s.logger.Error("source payload rejected", "component", "mapping", "source", domain.SourceBMKG, "correlation_id", correlationID, "error", err)
 			mappingErrs = append(mappingErrs, fmt.Errorf("map BMKG event: %w", err))
+			rejected = append(rejected, RejectedPayload{Source: domain.SourceBMKG, Raw: raw, Err: err})
 			continue
 		}
 		events = append(events, event)
 	}
 	if len(mappingErrs) > 0 {
-		return events, &MappingError{Source: domain.SourceBMKG, Err: errors.Join(mappingErrs...)}
+		return events, &MappingError{Source: domain.SourceBMKG, Err: errors.Join(mappingErrs...), Rejected: rejected}
 	}
 	return events, nil
 }

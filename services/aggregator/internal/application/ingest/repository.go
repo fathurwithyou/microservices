@@ -13,4 +13,5 @@ type Repository interface {
 	GetSourceStatus(context.Context, domain.Source) (domain.SourceStatus, error)
 	GetPollCursor(context.Context, domain.Source) (time.Time, error)
 	AdvancePollCursor(context.Context, domain.Source, time.Time) error
+	SaveIngestFailure(context.Context, domain.IngestFailure) error
 }

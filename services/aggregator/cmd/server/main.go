@@ -14,10 +14,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fathurwithyou/microservices/pkg/lease"
+	"github.com/fathurwithyou/microservices/pkg/observability"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/adapters/memory"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/adapters/postgres"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/adapters/rabbitmq"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/adapters/sources"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/analytics"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/audit"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/failures"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/fieldreports"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/hazards"
 	applicationingest "github.com/fathurwithyou/microservices/services/aggregator/internal/application/ingest"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/outbox"
@@ -64,6 +70,12 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("configuration failed", "service", "aggregator", "error", err)
 		return 1
 	}
+	shutdownTracing, err := observability.Setup(ctx, "aggregator")
+	if err != nil {
+		logger.Error("tracing initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	defer func() { _ = shutdownTracing(context.Background()) }()
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -108,11 +120,19 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("pvmbg source initialization failed", "service", "aggregator", "error", err)
 		return 1
 	}
+	var leadership applicationingest.Leadership
+	if repository, ok := persistence.(*postgres.Repository); ok {
+		leader := applicationingest.NewLeader()
+		coordinator := lease.New(repository.LeaseStore("ingestion"))
+		go leader.Run(ctx, coordinator, leaderHolder(), cfg.LeaderTTL, cfg.LeaderRenew, logger)
+		leadership = leader
+	}
 	poller, err := applicationingest.NewPoller(applicationingest.PollerConfig{
 		Repository: persistence,
 		Sources:    []applicationingest.Source{bmkgSource, pvmbgSource},
 		Interval:   cfg.PollInterval,
 		Timeout:    cfg.RequestTimeout,
+		Leadership: leadership,
 		Logger:     logger,
 	})
 	if err != nil {
@@ -125,17 +145,40 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		return 1
 	}
 	queries := hazards.NewQueries(persistence)
+	auditQueries := audit.NewQueries(persistence)
+	analyticsQueries := analytics.NewQueries(persistence)
+	submitter, err := applicationingest.NewSubmitter(persistence, logger)
+	if err != nil {
+		logger.Error("hazard submitter initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	replayer, err := failures.New(failures.Config{Repository: persistence, Submitter: submitter, Volcanoes: volcanoes, Logger: logger})
+	if err != nil {
+		logger.Error("failure replayer initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	fieldReportService, err := fieldreports.New(fieldreports.Config{Repository: persistence, Logger: logger})
+	if err != nil {
+		logger.Error("field report service initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	fieldReportWorker, err := fieldreports.NewWorker(fieldreports.WorkerConfig{Repository: persistence, Logger: logger})
+	if err != nil {
+		logger.Error("field report worker initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
 
 	grpcListener, err := net.Listen("tcp", ":"+cfg.GRPCPort)
 	if err != nil {
 		logger.Error("gRPC listen failed", "service", "aggregator", "error", err)
 		return 1
 	}
-	grpcServer := grpctransport.NewServer(grpctransport.ServerConfig{Queries: queries, ServiceToken: cfg.InternalServiceToken, Logger: logger})
-	httpServer := httptransport.NewHealthServer(cfg.HTTPPort)
+	grpcServer := grpctransport.NewServer(grpctransport.ServerConfig{Queries: queries, FieldReports: fieldReportService, Analytics: analyticsQueries, Submitter: submitter, ServiceToken: cfg.InternalServiceToken, Logger: logger})
+	httpServer := httptransport.NewServer(cfg.HTTPPort, auditQueries, cfg.AuditToken, replayer)
 
 	go poller.Run(ctx)
 	go outboxWorker.Run(ctx)
+	go fieldReportWorker.Run(ctx)
 	go func() {
 		logger.Info("gRPC server started", "service", "aggregator", "port", cfg.GRPCPort)
 		if err := grpcServer.Serve(grpcListener); err != nil {
@@ -243,7 +286,7 @@ func databaseURLOrNoop(logger *slog.Logger, action string) (string, error) {
 	}
 	databaseURL := os.Getenv("AGGREGATOR_DATABASE_URL")
 	if databaseURL == "" {
-		return "", errors.New("AGGREGATOR_DATABASE_URL is required when STORE_DRIVER=postgres")
+		return "", errors.New("AGGREGATOR_DATABASE_URL is required for a database store driver")
 	}
 	return databaseURL, nil
 }
@@ -261,22 +304,37 @@ func isMemoryDriver() bool {
 	return driver == "memory"
 }
 
+func leaderHolder() string {
+	if hostname := strings.TrimSpace(os.Getenv("HOSTNAME")); hostname != "" {
+		return hostname
+	}
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		return "aggregator"
+	}
+	return hostname
+}
+
 type persistence interface {
 	hazards.Repository
+	audit.Repository
+	analytics.Repository
 	applicationingest.Repository
 	outbox.Repository
+	fieldreports.Repository
+	failures.Repository
 	LoadVolcanoReferences(context.Context) (map[string]domain.VolcanoReference, error)
 }
 
 func newPersistence(ctx context.Context, cfg config.Config, wait time.Duration) (persistence, func(), error) {
 	switch strings.ToLower(cfg.StoreDriver) {
-	case "postgres":
+	case "postgres", "cockroach":
 		if cfg.DatabaseURL == "" {
-			return nil, nil, errors.New("AGGREGATOR_DATABASE_URL is required when STORE_DRIVER=postgres")
+			return nil, nil, errors.New("AGGREGATOR_DATABASE_URL is required for a database store driver")
 		}
 		postgresRepository, err := postgres.NewRepositoryWithWait(ctx, cfg.DatabaseURL, wait)
 		if err != nil {
-			return nil, nil, fmt.Errorf("connect PostgreSQL: %w", err)
+			return nil, nil, fmt.Errorf("connect database: %w", err)
 		}
 		return postgresRepository, postgresRepository.Close, nil
 	case "memory":

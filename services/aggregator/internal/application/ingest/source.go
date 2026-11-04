@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -27,9 +28,17 @@ type Source interface {
 // MappingError reports source payloads that could not be mapped to domain
 // events. It is returned together with the events that did map, allowing
 // the poller to advance past poison payloads instead of retrying them
-// forever. Rejected payloads are logged by the Source that produced them.
+// forever. Rejected payloads are retained for inspection and replay.
 type MappingError struct {
+	Source   domain.Source
+	Err      error
+	Rejected []RejectedPayload
+}
+
+// RejectedPayload is one raw source record that failed mapping.
+type RejectedPayload struct {
 	Source domain.Source
+	Raw    map[string]json.RawMessage
 	Err    error
 }
 

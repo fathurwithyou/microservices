@@ -60,17 +60,19 @@ func (s *PVMBGSource) Fetch(ctx context.Context, since time.Time, correlationID 
 	now := time.Now().UTC()
 	events := make([]domain.HazardEvent, 0, len(reports))
 	var mappingErrs []error
+	var rejected []RejectedPayload
 	for _, raw := range reports {
 		event, err := mapping.Volcanic(raw, s.volcanoes, now)
 		if err != nil {
 			s.logger.Error("source payload rejected", "component", "mapping", "source", domain.SourcePVMBG, "correlation_id", correlationID, "error", err)
 			mappingErrs = append(mappingErrs, fmt.Errorf("map PVMBG report: %w", err))
+			rejected = append(rejected, RejectedPayload{Source: domain.SourcePVMBG, Raw: raw, Err: err})
 			continue
 		}
 		events = append(events, event)
 	}
 	if len(mappingErrs) > 0 {
-		return events, &MappingError{Source: domain.SourcePVMBG, Err: errors.Join(mappingErrs...)}
+		return events, &MappingError{Source: domain.SourcePVMBG, Err: errors.Join(mappingErrs...), Rejected: rejected}
 	}
 	return events, nil
 }

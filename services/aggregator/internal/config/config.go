@@ -20,9 +20,12 @@ type Config struct {
 	DatabaseURL          string
 	StoreDriver          string
 	RabbitURL            string
+	AuditToken           string
 	PollInterval         time.Duration
 	OutboxPollInterval   time.Duration
 	RequestTimeout       time.Duration
+	LeaderTTL            time.Duration
+	LeaderRenew          time.Duration
 }
 
 // Load reads configuration from the environment. Malformed values are
@@ -49,6 +52,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	leaderTTL, err := env.Duration("LEADER_TTL", 15*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	leaderRenew, err := env.Duration("LEADER_RENEW", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		GRPCPort:             env.String("AGGREGATOR_GRPC_PORT", "9090"),
 		HTTPPort:             env.String("AGGREGATOR_HTTP_PORT", "8090"),
@@ -60,9 +71,12 @@ func Load() (Config, error) {
 		DatabaseURL:          env.String("AGGREGATOR_DATABASE_URL", ""),
 		StoreDriver:          env.String("STORE_DRIVER", "postgres"),
 		RabbitURL:            rabbitURL,
+		AuditToken:           env.String("AUDIT_TOKEN", ""),
 		PollInterval:         pollInterval,
 		OutboxPollInterval:   outboxPollInterval,
 		RequestTimeout:       requestTimeout,
+		LeaderTTL:            leaderTTL,
+		LeaderRenew:          leaderRenew,
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -81,8 +95,14 @@ func (cfg Config) Validate() error {
 	if cfg.RequestTimeout <= 0 {
 		return fmt.Errorf("REQUEST_TIMEOUT must be positive, got %s", cfg.RequestTimeout)
 	}
+	if cfg.LeaderTTL <= 0 {
+		return fmt.Errorf("LEADER_TTL must be positive, got %s", cfg.LeaderTTL)
+	}
+	if cfg.LeaderRenew <= 0 || cfg.LeaderRenew >= cfg.LeaderTTL {
+		return fmt.Errorf("LEADER_RENEW must be positive and less than LEADER_TTL, got %s/%s", cfg.LeaderRenew, cfg.LeaderTTL)
+	}
 	switch cfg.StoreDriver {
-	case "postgres", "memory":
+	case "postgres", "cockroach", "memory":
 	default:
 		return fmt.Errorf("unsupported STORE_DRIVER %q", cfg.StoreDriver)
 	}

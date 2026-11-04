@@ -11,7 +11,10 @@ import (
 	"github.com/rabbitmq/amqp091-go"
 )
 
-const exchange = "hazard.events"
+const (
+	exchange         = "hazard.events"
+	criticalExchange = "hazard.events.critical"
+)
 
 type Publisher struct {
 	mu            sync.Mutex
@@ -35,7 +38,7 @@ func (p *Publisher) Publish(ctx context.Context, message domain.OutboxMessage) e
 	}
 	confirmCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if err := p.channel.PublishWithContext(confirmCtx, exchange, message.RoutingKey, false, false, amqp091.Publishing{ContentType: "application/protobuf", DeliveryMode: amqp091.Persistent, CorrelationId: message.CorrelationID, MessageId: message.HazardID, Body: message.Payload}); err != nil {
+	if err := p.channel.PublishWithContext(confirmCtx, exchangeFor(message.RoutingKey), message.RoutingKey, false, false, amqp091.Publishing{ContentType: "application/protobuf", DeliveryMode: amqp091.Persistent, CorrelationId: message.CorrelationID, MessageId: message.HazardID, Body: message.Payload}); err != nil {
 		p.resetLocked()
 		return err
 	}
@@ -81,6 +84,11 @@ func (p *Publisher) ensureChannelLocked() error {
 		_ = connection.Close()
 		return err
 	}
+	if err := channel.ExchangeDeclare(criticalExchange, amqp091.ExchangeFanout, true, false, false, false, nil); err != nil {
+		_ = channel.Close()
+		_ = connection.Close()
+		return err
+	}
 	if err := channel.Confirm(false); err != nil {
 		_ = channel.Close()
 		_ = connection.Close()
@@ -91,6 +99,13 @@ func (p *Publisher) ensureChannelLocked() error {
 	p.confirmations = channel.NotifyPublish(make(chan amqp091.Confirmation, 1))
 	p.closed = channel.NotifyClose(make(chan *amqp091.Error, 1))
 	return nil
+}
+
+func exchangeFor(routingKey string) string {
+	if routingKey == "hazard.critical" {
+		return criticalExchange
+	}
+	return exchange
 }
 
 func (p *Publisher) resetLocked() {

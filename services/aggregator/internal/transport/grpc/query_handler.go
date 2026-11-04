@@ -5,18 +5,24 @@ import (
 
 	aggregatorpb "github.com/fathurwithyou/microservices/contracts/gen/go/aggregator"
 	eventspb "github.com/fathurwithyou/microservices/contracts/gen/go/events"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/analytics"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/fieldreports"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/hazards"
+	applicationingest "github.com/fathurwithyou/microservices/services/aggregator/internal/application/ingest"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 type queryHandler struct {
 	aggregatorpb.UnimplementedAggregatorServer
-	queries *hazards.Queries
+	queries      *hazards.Queries
+	fieldReports *fieldreports.Service
+	analytics    *analytics.Queries
+	submitter    *applicationingest.Submitter
 }
 
-func newQueryHandler(queries *hazards.Queries) *queryHandler {
-	return &queryHandler{queries: queries}
+func newQueryHandler(queries *hazards.Queries, reports *fieldreports.Service, metrics *analytics.Queries, submitter *applicationingest.Submitter) *queryHandler {
+	return &queryHandler{queries: queries, fieldReports: reports, analytics: metrics, submitter: submitter}
 }
 
 func (h *queryHandler) ListHazards(ctx context.Context, request *aggregatorpb.ListHazardsRequest) (*aggregatorpb.ListHazardsResponse, error) {

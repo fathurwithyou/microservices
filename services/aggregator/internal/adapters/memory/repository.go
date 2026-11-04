@@ -9,34 +9,40 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/analytics"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/audit"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/hazards"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 	"github.com/google/uuid"
 )
 
 type Repository struct {
-	mu          sync.RWMutex
-	events      map[string]domain.HazardEvent
-	bySource    map[string]string
-	status      map[domain.Source]domain.SourceStatus
-	outbox      map[int64]domain.OutboxMessage
-	cursors     map[domain.Source]time.Time
-	volcanoes   map[string]domain.VolcanoReference
-	availableAt map[int64]time.Time
-	leaseUntil  map[int64]time.Time
-	nextID      int64
+	mu           sync.RWMutex
+	events       map[string]domain.HazardEvent
+	bySource     map[string]string
+	status       map[domain.Source]domain.SourceStatus
+	outbox       map[int64]domain.OutboxMessage
+	cursors      map[domain.Source]time.Time
+	volcanoes    map[string]domain.VolcanoReference
+	fieldReports map[string]domain.FieldReport
+	failures     map[string]domain.IngestFailure
+	availableAt  map[int64]time.Time
+	leaseUntil   map[int64]time.Time
+	nextID       int64
 }
 
 func NewRepository() *Repository {
 	return &Repository{
-		events:      make(map[string]domain.HazardEvent),
-		bySource:    make(map[string]string),
-		status:      make(map[domain.Source]domain.SourceStatus),
-		outbox:      make(map[int64]domain.OutboxMessage),
-		cursors:     make(map[domain.Source]time.Time),
-		volcanoes:   defaultVolcanoes(),
-		availableAt: make(map[int64]time.Time),
-		leaseUntil:  make(map[int64]time.Time),
+		events:       make(map[string]domain.HazardEvent),
+		bySource:     make(map[string]string),
+		status:       make(map[domain.Source]domain.SourceStatus),
+		outbox:       make(map[int64]domain.OutboxMessage),
+		cursors:      make(map[domain.Source]time.Time),
+		volcanoes:    defaultVolcanoes(),
+		fieldReports: make(map[string]domain.FieldReport),
+		failures:     make(map[string]domain.IngestFailure),
+		availableAt:  make(map[int64]time.Time),
+		leaseUntil:   make(map[int64]time.Time),
 	}
 }
 
@@ -76,6 +82,256 @@ func (s *Repository) GetHazard(_ context.Context, id string) (domain.HazardEvent
 		return domain.HazardEvent{}, domain.ErrNotFound
 	}
 	return clone(event), nil
+}
+
+// SaveFieldReport stores a field report once by ReportID.
+func (s *Repository) SaveFieldReport(_ context.Context, report domain.FieldReport) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.fieldReports[report.ReportID]; exists {
+		return false, nil
+	}
+	s.fieldReports[report.ReportID] = report
+	return true, nil
+}
+
+// ListAcceptedFieldReports returns accepted reports in arrival order.
+func (s *Repository) ListAcceptedFieldReports(_ context.Context, limit int) ([]domain.FieldReport, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	reports := make([]domain.FieldReport, 0)
+	for _, report := range s.fieldReports {
+		if report.Status == domain.FieldReportAccepted {
+			reports = append(reports, report)
+		}
+	}
+	sort.Slice(reports, func(i, j int) bool { return reports[i].ReceivedAt.Before(reports[j].ReceivedAt) })
+	if limit > 0 && len(reports) > limit {
+		reports = reports[:limit]
+	}
+	return reports, nil
+}
+
+// MarkFieldReport records the terminal state of one accepted report.
+func (s *Repository) MarkFieldReport(_ context.Context, reportID string, status domain.FieldReportStatus, processedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	report, ok := s.fieldReports[reportID]
+	if !ok || report.Status != domain.FieldReportAccepted {
+		return nil
+	}
+	report.Status = status
+	report.Attempts++
+	report.ProcessedAt = &processedAt
+	s.fieldReports[reportID] = report
+	return nil
+}
+
+// ListAuditEvents returns events ordered by ingested_at then hazard_id.
+func (s *Repository) ListAuditEvents(_ context.Context, filter audit.Filter) ([]domain.HazardEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]domain.HazardEvent, 0, len(s.events))
+	for _, event := range s.events {
+		if filter.Source != "" && event.Source != filter.Source {
+			continue
+		}
+		if event.IngestedAt.Before(filter.Since) {
+			continue
+		}
+		if filter.Cursor != "" {
+			if event.IngestedAt.Before(filter.Since) || (event.IngestedAt.Equal(filter.Since) && event.HazardID <= filter.Cursor) {
+				continue
+			}
+		}
+		items = append(items, clone(event))
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if !items[i].IngestedAt.Equal(items[j].IngestedAt) {
+			return items[i].IngestedAt.Before(items[j].IngestedAt)
+		}
+		return items[i].HazardID < items[j].HazardID
+	})
+	if filter.Limit > 0 && len(items) > filter.Limit {
+		items = items[:filter.Limit]
+	}
+	return items, nil
+}
+
+// SourceRefIDs returns sorted source_ref_id values for checksum.
+func (s *Repository) SourceRefIDs(_ context.Context, source domain.Source) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make([]string, 0, len(s.events))
+	for _, event := range s.events {
+		if source != "" && event.Source != source {
+			continue
+		}
+		ids = append(ids, event.SourceRefID)
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// SaveIngestFailure stores a raw rejected payload idempotently.
+func (s *Repository) SaveIngestFailure(_ context.Context, failure domain.IngestFailure) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.failures[failure.MessageID]; !exists {
+		s.failures[failure.MessageID] = failure
+	}
+	return nil
+}
+
+// MarkIngestFailureRecovered removes a replayed payload from the active queue.
+func (s *Repository) MarkIngestFailureRecovered(_ context.Context, messageID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	failure, ok := s.failures[messageID]
+	if !ok {
+		return nil
+	}
+	failure.Status = domain.FailureRecovered
+	failure.Attempts++
+	s.failures[messageID] = failure
+	return nil
+}
+
+// ListIngestFailures returns parked/retrying payloads for audit.
+func (s *Repository) ListIngestFailures(_ context.Context, source domain.Source, limit int) ([]domain.IngestFailure, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]domain.IngestFailure, 0)
+	for _, failure := range s.failures {
+		if source != "" && failure.Source != source {
+			continue
+		}
+		if failure.Status != domain.FailureParked && failure.Status != domain.FailureRetrying {
+			continue
+		}
+		items = append(items, failure)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if !items[i].ReceivedAt.Equal(items[j].ReceivedAt) {
+			return items[i].ReceivedAt.Before(items[j].ReceivedAt)
+		}
+		return items[i].MessageID < items[j].MessageID
+	})
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
+// HazardExists reports whether the canonical store contains hazard_id.
+func (s *Repository) HazardExists(_ context.Context, hazardID string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.events[hazardID]
+	return ok, nil
+}
+
+func (s *Repository) CountByHazardType(_ context.Context, filter analytics.Filter) ([]analytics.TypeCount, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	counts := map[domain.HazardType]int64{}
+	for _, event := range s.events {
+		if inWindow(event, filter) {
+			counts[event.HazardType]++
+		}
+	}
+	result := make([]analytics.TypeCount, 0, len(counts))
+	for kind, count := range counts {
+		result = append(result, analytics.TypeCount{HazardType: kind, Count: count})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].HazardType < result[j].HazardType })
+	return result, nil
+}
+
+func (s *Repository) CountBySeverity(_ context.Context, filter analytics.Filter) ([]analytics.SeverityCount, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	counts := map[domain.Severity]int64{}
+	for _, event := range s.events {
+		if inWindow(event, filter) {
+			counts[event.Severity]++
+		}
+	}
+	result := make([]analytics.SeverityCount, 0, len(counts))
+	for severity, count := range counts {
+		result = append(result, analytics.SeverityCount{Severity: severity, Count: count})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Severity < result[j].Severity })
+	return result, nil
+}
+
+func (s *Repository) CountByArea(_ context.Context, filter analytics.Filter) ([]analytics.AreaCount, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	counts := map[string]int64{}
+	for _, event := range s.events {
+		if inWindow(event, filter) {
+			counts[event.AreaName]++
+		}
+	}
+	result := make([]analytics.AreaCount, 0, len(counts))
+	for area, count := range counts {
+		result = append(result, analytics.AreaCount{AreaName: area, Count: count})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Count != result[j].Count {
+			return result[i].Count > result[j].Count
+		}
+		return result[i].AreaName < result[j].AreaName
+	})
+	return result, nil
+}
+
+func (s *Repository) CountByTimeBucket(_ context.Context, filter analytics.Filter) ([]analytics.TimeBucket, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	type key struct {
+		start time.Time
+		kind  domain.HazardType
+	}
+	counts := map[key]int64{}
+	for _, event := range s.events {
+		if inWindow(event, filter) {
+			counts[key{start: bucketStart(event.OccurredAt, filter.Bucket), kind: event.HazardType}]++
+		}
+	}
+	result := make([]analytics.TimeBucket, 0, len(counts))
+	for k, count := range counts {
+		result = append(result, analytics.TimeBucket{Start: k.start, HazardType: k.kind, Count: count})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if !result[i].Start.Equal(result[j].Start) {
+			return result[i].Start.Before(result[j].Start)
+		}
+		return result[i].HazardType < result[j].HazardType
+	})
+	return result, nil
+}
+
+func inWindow(event domain.HazardEvent, filter analytics.Filter) bool {
+	return !event.OccurredAt.Before(filter.Since) && event.OccurredAt.Before(filter.Until)
+}
+
+func bucketStart(at time.Time, bucket analytics.Bucket) time.Time {
+	at = at.UTC()
+	switch bucket {
+	case analytics.BucketHour:
+		return at.Truncate(time.Hour)
+	case analytics.BucketWeek:
+		day := at.Truncate(24 * time.Hour)
+		weekday := int(day.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		return day.AddDate(0, 0, -(weekday - 1))
+	default:
+		return at.Truncate(24 * time.Hour)
+	}
 }
 
 func (s *Repository) ListHazards(_ context.Context, filter hazards.ListFilter) ([]domain.HazardEvent, error) {
