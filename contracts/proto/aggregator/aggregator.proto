@@ -10,6 +10,9 @@ service Aggregator {
   rpc ListHazards(ListHazardsRequest) returns (ListHazardsResponse);
   rpc GetHazard(GetHazardRequest) returns (bnpb.events.HazardEvent);
   rpc GetSourceStatus(GetSourceStatusRequest) returns (bnpb.events.SourceStatus);
+  rpc SubmitFieldReport(SubmitFieldReportRequest) returns (SubmitFieldReportResponse);
+  rpc GetAnalytics(AnalyticsRequest) returns (AnalyticsResponse);
+  rpc SubmitHazard(SubmitHazardRequest) returns (SubmitHazardResponse);
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
 }
 
@@ -29,5 +32,41 @@ message ListHazardsResponse {
 
 message GetHazardRequest { string hazard_id = 1; bool raw = 2; }
 message GetSourceStatusRequest { bnpb.events.Source source = 1; }
+message SubmitFieldReportRequest {
+  string report_id = 1;
+  bnpb.events.HazardType hazard_type = 2;
+  bnpb.events.Severity severity = 3;
+  string area_name = 4;
+  double latitude = 5;
+  double longitude = 6;
+  string occurred_at = 7;
+  string description = 8;
+}
+message SubmitFieldReportResponse {
+  string report_id = 1;
+  string status = 2;
+}
+message AnalyticsRequest {
+  string since = 1;
+  string until = 2;
+  string bucket = 3;
+}
+message AnalyticsResponse {
+  repeated HazardTypeCount hazard_types = 1;
+  repeated SeverityCount severities = 2;
+  repeated AreaCount areas = 3;
+  repeated TimeBucket time_buckets = 4;
+  bool partial = 5;
+  repeated string unavailable_units = 6;
+}
+message HazardTypeCount { bnpb.events.HazardType hazard_type = 1; int64 count = 2; }
+message SeverityCount { bnpb.events.Severity severity = 1; int64 count = 2; }
+message AreaCount { string area_name = 1; int64 count = 2; }
+message TimeBucket { string bucket_start = 1; bnpb.events.HazardType hazard_type = 2; int64 count = 3; }
+message SubmitHazardRequest {
+  bnpb.events.HazardEvent event = 1;
+  string correlation_id = 2;
+}
+message SubmitHazardResponse { string hazard_id = 1; }
 message HealthCheckRequest {}
 message HealthCheckResponse { string status = 1; }

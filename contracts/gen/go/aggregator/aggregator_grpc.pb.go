@@ -20,10 +20,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Aggregator_ListHazards_FullMethodName     = "/bnpb.aggregator.Aggregator/ListHazards"
-	Aggregator_GetHazard_FullMethodName       = "/bnpb.aggregator.Aggregator/GetHazard"
-	Aggregator_GetSourceStatus_FullMethodName = "/bnpb.aggregator.Aggregator/GetSourceStatus"
-	Aggregator_HealthCheck_FullMethodName     = "/bnpb.aggregator.Aggregator/HealthCheck"
+	Aggregator_ListHazards_FullMethodName       = "/bnpb.aggregator.Aggregator/ListHazards"
+	Aggregator_GetHazard_FullMethodName         = "/bnpb.aggregator.Aggregator/GetHazard"
+	Aggregator_GetSourceStatus_FullMethodName   = "/bnpb.aggregator.Aggregator/GetSourceStatus"
+	Aggregator_SubmitFieldReport_FullMethodName = "/bnpb.aggregator.Aggregator/SubmitFieldReport"
+	Aggregator_GetAnalytics_FullMethodName      = "/bnpb.aggregator.Aggregator/GetAnalytics"
+	Aggregator_SubmitHazard_FullMethodName      = "/bnpb.aggregator.Aggregator/SubmitHazard"
+	Aggregator_HealthCheck_FullMethodName       = "/bnpb.aggregator.Aggregator/HealthCheck"
 )
 
 // AggregatorClient is the client API for Aggregator service.
@@ -33,6 +36,9 @@ type AggregatorClient interface {
 	ListHazards(ctx context.Context, in *ListHazardsRequest, opts ...grpc.CallOption) (*ListHazardsResponse, error)
 	GetHazard(ctx context.Context, in *GetHazardRequest, opts ...grpc.CallOption) (*events.HazardEvent, error)
 	GetSourceStatus(ctx context.Context, in *GetSourceStatusRequest, opts ...grpc.CallOption) (*events.SourceStatus, error)
+	SubmitFieldReport(ctx context.Context, in *SubmitFieldReportRequest, opts ...grpc.CallOption) (*SubmitFieldReportResponse, error)
+	GetAnalytics(ctx context.Context, in *AnalyticsRequest, opts ...grpc.CallOption) (*AnalyticsResponse, error)
+	SubmitHazard(ctx context.Context, in *SubmitHazardRequest, opts ...grpc.CallOption) (*SubmitHazardResponse, error)
 	HealthCheck(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error)
 }
 
@@ -74,6 +80,36 @@ func (c *aggregatorClient) GetSourceStatus(ctx context.Context, in *GetSourceSta
 	return out, nil
 }
 
+func (c *aggregatorClient) SubmitFieldReport(ctx context.Context, in *SubmitFieldReportRequest, opts ...grpc.CallOption) (*SubmitFieldReportResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SubmitFieldReportResponse)
+	err := c.cc.Invoke(ctx, Aggregator_SubmitFieldReport_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aggregatorClient) GetAnalytics(ctx context.Context, in *AnalyticsRequest, opts ...grpc.CallOption) (*AnalyticsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AnalyticsResponse)
+	err := c.cc.Invoke(ctx, Aggregator_GetAnalytics_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aggregatorClient) SubmitHazard(ctx context.Context, in *SubmitHazardRequest, opts ...grpc.CallOption) (*SubmitHazardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SubmitHazardResponse)
+	err := c.cc.Invoke(ctx, Aggregator_SubmitHazard_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *aggregatorClient) HealthCheck(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthCheckResponse)
@@ -91,6 +127,9 @@ type AggregatorServer interface {
 	ListHazards(context.Context, *ListHazardsRequest) (*ListHazardsResponse, error)
 	GetHazard(context.Context, *GetHazardRequest) (*events.HazardEvent, error)
 	GetSourceStatus(context.Context, *GetSourceStatusRequest) (*events.SourceStatus, error)
+	SubmitFieldReport(context.Context, *SubmitFieldReportRequest) (*SubmitFieldReportResponse, error)
+	GetAnalytics(context.Context, *AnalyticsRequest) (*AnalyticsResponse, error)
+	SubmitHazard(context.Context, *SubmitHazardRequest) (*SubmitHazardResponse, error)
 	HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error)
 	mustEmbedUnimplementedAggregatorServer()
 }
@@ -110,6 +149,15 @@ func (UnimplementedAggregatorServer) GetHazard(context.Context, *GetHazardReques
 }
 func (UnimplementedAggregatorServer) GetSourceStatus(context.Context, *GetSourceStatusRequest) (*events.SourceStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSourceStatus not implemented")
+}
+func (UnimplementedAggregatorServer) SubmitFieldReport(context.Context, *SubmitFieldReportRequest) (*SubmitFieldReportResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitFieldReport not implemented")
+}
+func (UnimplementedAggregatorServer) GetAnalytics(context.Context, *AnalyticsRequest) (*AnalyticsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAnalytics not implemented")
+}
+func (UnimplementedAggregatorServer) SubmitHazard(context.Context, *SubmitHazardRequest) (*SubmitHazardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitHazard not implemented")
 }
 func (UnimplementedAggregatorServer) HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HealthCheck not implemented")
@@ -189,6 +237,60 @@ func _Aggregator_GetSourceStatus_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Aggregator_SubmitFieldReport_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitFieldReportRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AggregatorServer).SubmitFieldReport(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Aggregator_SubmitFieldReport_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AggregatorServer).SubmitFieldReport(ctx, req.(*SubmitFieldReportRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Aggregator_GetAnalytics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AnalyticsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AggregatorServer).GetAnalytics(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Aggregator_GetAnalytics_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AggregatorServer).GetAnalytics(ctx, req.(*AnalyticsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Aggregator_SubmitHazard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitHazardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AggregatorServer).SubmitHazard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Aggregator_SubmitHazard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AggregatorServer).SubmitHazard(ctx, req.(*SubmitHazardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Aggregator_HealthCheck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(HealthCheckRequest)
 	if err := dec(in); err != nil {
@@ -225,6 +327,18 @@ var Aggregator_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSourceStatus",
 			Handler:    _Aggregator_GetSourceStatus_Handler,
+		},
+		{
+			MethodName: "SubmitFieldReport",
+			Handler:    _Aggregator_SubmitFieldReport_Handler,
+		},
+		{
+			MethodName: "GetAnalytics",
+			Handler:    _Aggregator_GetAnalytics_Handler,
+		},
+		{
+			MethodName: "SubmitHazard",
+			Handler:    _Aggregator_SubmitHazard_Handler,
 		},
 		{
 			MethodName: "HealthCheck",

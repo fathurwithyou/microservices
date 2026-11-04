@@ -8,4 +8,6 @@ const (
 	HazardReadSummary = "hazard:read:summary"
 	// HazardReadRaw permits reading raw hazard payloads.
 	HazardReadRaw = "hazard:read:raw"
+	// FieldReportsWrite permits submitting reports from the field.
+	FieldReportsWrite = "field-reports:write"
 )

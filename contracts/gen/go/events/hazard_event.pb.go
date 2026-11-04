@@ -24,9 +24,11 @@ const (
 type Source int32
 
 const (
-	Source_SOURCE_UNSPECIFIED Source = 0
-	Source_SOURCE_BMKG        Source = 1
-	Source_SOURCE_PVMBG       Source = 2
+	Source_SOURCE_UNSPECIFIED   Source = 0
+	Source_SOURCE_BMKG          Source = 1
+	Source_SOURCE_PVMBG         Source = 2
+	Source_SOURCE_SATELIT       Source = 3
+	Source_SOURCE_SENSOR_PANTAI Source = 4
 )
 
 // Enum value maps for Source.
@@ -35,11 +37,15 @@ var (
 		0: "SOURCE_UNSPECIFIED",
 		1: "SOURCE_BMKG",
 		2: "SOURCE_PVMBG",
+		3: "SOURCE_SATELIT",
+		4: "SOURCE_SENSOR_PANTAI",
 	}
 	Source_value = map[string]int32{
-		"SOURCE_UNSPECIFIED": 0,
-		"SOURCE_BMKG":        1,
-		"SOURCE_PVMBG":       2,
+		"SOURCE_UNSPECIFIED":   0,
+		"SOURCE_BMKG":          1,
+		"SOURCE_PVMBG":         2,
+		"SOURCE_SATELIT":       3,
+		"SOURCE_SENSOR_PANTAI": 4,
 	}
 )
 
@@ -76,6 +82,8 @@ const (
 	HazardType_HAZARD_TYPE_UNSPECIFIED HazardType = 0
 	HazardType_HAZARD_TYPE_SEISMIC     HazardType = 1
 	HazardType_HAZARD_TYPE_VOLCANIC    HazardType = 2
+	HazardType_HAZARD_TYPE_WILDFIRE    HazardType = 3
+	HazardType_HAZARD_TYPE_COASTAL     HazardType = 4
 )
 
 // Enum value maps for HazardType.
@@ -84,11 +92,15 @@ var (
 		0: "HAZARD_TYPE_UNSPECIFIED",
 		1: "HAZARD_TYPE_SEISMIC",
 		2: "HAZARD_TYPE_VOLCANIC",
+		3: "HAZARD_TYPE_WILDFIRE",
+		4: "HAZARD_TYPE_COASTAL",
 	}
 	HazardType_value = map[string]int32{
 		"HAZARD_TYPE_UNSPECIFIED": 0,
 		"HAZARD_TYPE_SEISMIC":     1,
 		"HAZARD_TYPE_VOLCANIC":    2,
+		"HAZARD_TYPE_WILDFIRE":    3,
+		"HAZARD_TYPE_COASTAL":     4,
 	}
 )
 
@@ -407,16 +419,20 @@ const file_events_hazard_event_proto_rawDesc = "" +
 	"\vstale_since\x18\x04 \x01(\tR\n" +
 	"staleSince\x12\x1d\n" +
 	"\n" +
-	"last_error\x18\x05 \x01(\tR\tlastError*C\n" +
+	"last_error\x18\x05 \x01(\tR\tlastError*q\n" +
 	"\x06Source\x12\x16\n" +
 	"\x12SOURCE_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vSOURCE_BMKG\x10\x01\x12\x10\n" +
-	"\fSOURCE_PVMBG\x10\x02*\\\n" +
+	"\fSOURCE_PVMBG\x10\x02\x12\x12\n" +
+	"\x0eSOURCE_SATELIT\x10\x03\x12\x18\n" +
+	"\x14SOURCE_SENSOR_PANTAI\x10\x04*\x8f\x01\n" +
 	"\n" +
 	"HazardType\x12\x1b\n" +
 	"\x17HAZARD_TYPE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13HAZARD_TYPE_SEISMIC\x10\x01\x12\x18\n" +
-	"\x14HAZARD_TYPE_VOLCANIC\x10\x02*v\n" +
+	"\x14HAZARD_TYPE_VOLCANIC\x10\x02\x12\x18\n" +
+	"\x14HAZARD_TYPE_WILDFIRE\x10\x03\x12\x17\n" +
+	"\x13HAZARD_TYPE_COASTAL\x10\x04*v\n" +
 	"\bSeverity\x12\x18\n" +
 	"\x14SEVERITY_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fSEVERITY_NORMAL\x10\x01\x12\x14\n" +
