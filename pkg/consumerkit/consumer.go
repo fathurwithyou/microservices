@@ -18,6 +18,9 @@ import (
 	"time"
 
 	"github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Topology and policy defaults.
@@ -204,6 +207,16 @@ func (c *Consumer) consume(ctx context.Context, process ProcessFunc) (bool, erro
 
 // handle processes one delivery and applies the acknowledgement outcome.
 func (c *Consumer) handle(ctx context.Context, process ProcessFunc, delivery amqp091.Delivery) {
+	carrier := propagation.MapCarrier{}
+	for key, value := range delivery.Headers {
+		if text, ok := value.(string); ok {
+			carrier[key] = text
+		}
+	}
+	ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+	ctx, span := otel.Tracer("consumerkit").Start(ctx, "consume "+c.cfg.Queue, trace.WithSpanKind(trace.SpanKindConsumer))
+	defer span.End()
+
 	if len(delivery.Body) == 0 {
 		c.cfg.Logger.Warn("discarding empty delivery", "service", c.cfg.Service, "queue", c.cfg.Queue, "correlation_id", delivery.CorrelationId)
 		if err := delivery.Ack(false); err != nil {

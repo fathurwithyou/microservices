@@ -9,6 +9,7 @@ import (
 
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 	"github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel"
 )
 
 const (
@@ -38,7 +39,9 @@ func (p *Publisher) Publish(ctx context.Context, message domain.OutboxMessage) e
 	}
 	confirmCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if err := p.channel.PublishWithContext(confirmCtx, exchangeFor(message.RoutingKey), message.RoutingKey, false, false, amqp091.Publishing{ContentType: "application/protobuf", DeliveryMode: amqp091.Persistent, CorrelationId: message.CorrelationID, MessageId: message.HazardID, Body: message.Payload}); err != nil {
+	headers := amqp091.Table{}
+	otel.GetTextMapPropagator().Inject(ctx, tableCarrier(headers))
+	if err := p.channel.PublishWithContext(confirmCtx, exchangeFor(message.RoutingKey), message.RoutingKey, false, false, amqp091.Publishing{ContentType: "application/protobuf", DeliveryMode: amqp091.Persistent, CorrelationId: message.CorrelationID, MessageId: message.HazardID, Headers: headers, Body: message.Payload}); err != nil {
 		p.resetLocked()
 		return err
 	}
@@ -99,6 +102,24 @@ func (p *Publisher) ensureChannelLocked() error {
 	p.confirmations = channel.NotifyPublish(make(chan amqp091.Confirmation, 1))
 	p.closed = channel.NotifyClose(make(chan *amqp091.Error, 1))
 	return nil
+}
+
+// tableCarrier adapts AMQP headers to the OpenTelemetry propagator.
+type tableCarrier amqp091.Table
+
+func (c tableCarrier) Get(key string) string {
+	value, _ := c[key].(string)
+	return value
+}
+
+func (c tableCarrier) Set(key, value string) { c[key] = value }
+
+func (c tableCarrier) Keys() []string {
+	keys := make([]string, 0, len(c))
+	for key := range c {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func exchangeFor(routingKey string) string {
