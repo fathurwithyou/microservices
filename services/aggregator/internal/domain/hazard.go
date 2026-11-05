@@ -115,3 +115,16 @@ func SeverityFromAlert(alert string) (Severity, bool) {
 		return "", false
 	}
 }
+
+// MalformedPayloadError carries the raw body when a source response cannot be
+// decoded, so the poller can park it intact instead of dropping it.
+type MalformedPayloadError struct {
+	Body []byte
+	Err  error
+}
+
+func (e *MalformedPayloadError) Error() string {
+	return "malformed source payload: " + e.Err.Error()
+}
+
+func (e *MalformedPayloadError) Unwrap() error { return e.Err }

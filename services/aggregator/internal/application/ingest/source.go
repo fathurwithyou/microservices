@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -39,7 +40,9 @@ type MappingError struct {
 type RejectedPayload struct {
 	Source domain.Source
 	Raw    map[string]json.RawMessage
-	Err    error
+	// Payload overrides Raw for a body that could not be decoded into a map.
+	Payload []byte
+	Err     error
 }
 
 func (e *MappingError) Error() string {
@@ -47,3 +50,20 @@ func (e *MappingError) Error() string {
 }
 
 func (e *MappingError) Unwrap() error { return e.Err }
+
+// malformedPayload converts a decode failure into a parked mapping failure.
+func malformedPayload(source domain.Source, err error) (*MappingError, bool) {
+	var bad *domain.MalformedPayloadError
+	if !errors.As(err, &bad) {
+		return nil, false
+	}
+	return &MappingError{
+		Source: source,
+		Err:    bad,
+		Rejected: []RejectedPayload{{
+			Source:  source,
+			Payload: bad.Body,
+			Err:     domain.ErrInvalidSourcePayload,
+		}},
+	}, true
+}

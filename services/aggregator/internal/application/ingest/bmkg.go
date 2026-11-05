@@ -49,6 +49,9 @@ func (s *BMKGSource) Fetch(ctx context.Context, since time.Time, correlationID s
 	query := "?since=" + url.QueryEscape(since.Format(time.RFC3339))
 	rawEvents, err := s.client.Get(ctx, "/seismic-events"+query, correlationID)
 	if err != nil {
+		if malformed, ok := malformedPayload(domain.SourceBMKG, err); ok {
+			return nil, malformed
+		}
 		return nil, err
 	}
 	rawWarnings, err := s.client.Get(ctx, "/tsunami-warnings"+query, correlationID)

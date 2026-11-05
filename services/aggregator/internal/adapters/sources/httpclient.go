@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fathurwithyou/microservices/pkg/correlation"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 )
 
 // Client performs authenticated GET requests against one external feed and
@@ -86,12 +87,18 @@ func (c *Client) Get(ctx context.Context, path, correlationID string) ([]map[str
 		c.log(correlationID, started, response.StatusCode, fmt.Errorf("upstream status %d", response.StatusCode))
 		return nil, fmt.Errorf("%s returned status %d", c.name, response.StatusCode)
 	}
-	var result []map[string]json.RawMessage
 	// Bound one response so a broken or hostile upstream cannot exhaust the
-	// aggregator heap with a giant JSON document.
-	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&result); err != nil {
+	// aggregator heap with a giant JSON document. Keep the body on decode
+	// failure so the poller can park it instead of discarding it.
+	body, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+	if err != nil {
 		c.log(correlationID, started, response.StatusCode, err)
-		return nil, err
+		return nil, fmt.Errorf("%s read body: %w", c.name, err)
+	}
+	var result []map[string]json.RawMessage
+	if err := json.Unmarshal(body, &result); err != nil {
+		c.log(correlationID, started, response.StatusCode, err)
+		return nil, &domain.MalformedPayloadError{Body: body, Err: err}
 	}
 	c.log(correlationID, started, response.StatusCode, nil)
 	return result, nil

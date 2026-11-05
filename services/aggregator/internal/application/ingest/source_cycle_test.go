@@ -352,3 +352,14 @@ func TestRecordFailuresMarksTransientAsRetrying(t *testing.T) {
 		t.Fatalf("failure = %+v, want retrying", items[0])
 	}
 }
+
+func TestMalformedPayloadKeepsRawBodyForParking(t *testing.T) {
+	bad := &domain.MalformedPayloadError{Body: []byte(`{"broken"`), Err: errors.New("unexpected end")}
+	mapping, ok := malformedPayload(domain.SourceBMKG, bad)
+	if !ok {
+		t.Fatal("malformed payload was not recognised")
+	}
+	if len(mapping.Rejected) != 1 || string(mapping.Rejected[0].Payload) != `{"broken"` {
+		t.Fatalf("rejected = %+v", mapping.Rejected)
+	}
+}

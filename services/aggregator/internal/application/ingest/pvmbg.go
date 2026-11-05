@@ -55,6 +55,9 @@ func (s *PVMBGSource) Name() domain.Source { return domain.SourcePVMBG }
 func (s *PVMBGSource) Fetch(ctx context.Context, since time.Time, correlationID string) ([]domain.HazardEvent, error) {
 	reports, err := s.client.Get(ctx, "/volcanic-reports?since="+url.QueryEscape(since.Format(time.RFC3339)), correlationID)
 	if err != nil {
+		if malformed, ok := malformedPayload(domain.SourcePVMBG, err); ok {
+			return nil, malformed
+		}
 		return nil, err
 	}
 	now := time.Now().UTC()

@@ -156,10 +156,14 @@ func (p *Poller) stillLeader(ctx context.Context) bool {
 
 func (p *Poller) recordFailures(ctx context.Context, mappingErr *MappingError, correlationID string) {
 	for _, rejected := range mappingErr.Rejected {
-		payload, err := json.Marshal(rejected.Raw)
-		if err != nil {
-			p.logger.Error("failed payload marshal", "component", "poller", "source", rejected.Source, "error", err)
-			continue
+		payload := rejected.Payload
+		if payload == nil {
+			var err error
+			payload, err = json.Marshal(rejected.Raw)
+			if err != nil {
+				p.logger.Error("failed payload marshal", "component", "poller", "source", rejected.Source, "error", err)
+				continue
+			}
 		}
 		messageID := uuid.NewSHA1(uuid.NameSpaceURL, append([]byte(string(rejected.Source)+":"), payload...)).String()
 		// A schema violation never succeeds until the mapping changes; any
