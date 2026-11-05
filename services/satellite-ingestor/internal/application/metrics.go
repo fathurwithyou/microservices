@@ -14,4 +14,8 @@ var (
 		Name: "satellite_fires_submitted_total",
 		Help: "Fire updates sent to the Aggregator, by status.",
 	}, []string{"status"})
+	feedLag = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "satellite_feed_lag_events",
+		Help: "Feed offsets between the latest event and the committed offset.",
+	})
 )

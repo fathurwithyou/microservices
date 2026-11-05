@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/fathurwithyou/microservices/pkg/healthsrv"
+	"github.com/fathurwithyou/microservices/pkg/lease"
 	feed "github.com/fathurwithyou/microservices/services/satellite-ingestor/internal/adapters/feed"
 	"github.com/fathurwithyou/microservices/services/satellite-ingestor/internal/adapters/memory"
 	"github.com/fathurwithyou/microservices/services/satellite-ingestor/internal/adapters/postgres"
@@ -47,6 +49,17 @@ func run(ctx context.Context, args []string, logger *slog.Logger) int {
 	}
 }
 
+func holderName(fallback string) string {
+	if hostname := strings.TrimSpace(os.Getenv("HOSTNAME")); hostname != "" {
+		return hostname
+	}
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		return fallback
+	}
+	return hostname
+}
+
 func runServe(ctx context.Context, logger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -72,6 +85,7 @@ func runServe(ctx context.Context, logger *slog.Logger) error {
 	defer grpcSink.Close()
 
 	var state ports.State = memory.New()
+	var leadership application.Leadership
 	if cfg.DatabaseURL != "" {
 		pgState, err := postgres.New(ctx, cfg.DatabaseURL)
 		if err != nil {
@@ -79,6 +93,10 @@ func runServe(ctx context.Context, logger *slog.Logger) error {
 		}
 		defer pgState.Close()
 		state = pgState
+		coordinator := lease.New(pgState.LeaseStore("satellite-ingestion"))
+		leader := application.NewLeader(coordinator)
+		go leader.Run(ctx, holderName("satellite-ingestor"), cfg.LeaderTTL, cfg.LeaderRenew, logger)
+		leadership = leader
 		logger.Info("durable state enabled", "service", serviceName, "component", "state")
 	}
 
@@ -93,6 +111,7 @@ func runServe(ctx context.Context, logger *slog.Logger) error {
 		Logger:     logger,
 		LateWindow: cfg.LateWindow,
 		MaxAge:     cfg.MaxAge,
+		Leadership: leadership,
 		MinBackoff: cfg.MinBackoff,
 		MaxBackoff: cfg.MaxBackoff,
 	})

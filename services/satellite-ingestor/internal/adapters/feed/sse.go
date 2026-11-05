@@ -43,6 +43,41 @@ func New(cfg Config) *Client {
 	}
 }
 
+// Session reads the feed state used for lag and demo diagnostics.
+func (c *Client) Session(ctx context.Context) (ports.Session, error) {
+	endpoint, err := c.endpoint("/v1/session")
+	if err != nil {
+		return ports.Session{}, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return ports.Session{}, fmt.Errorf("build session request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	response, err := c.client.Do(request)
+	if err != nil {
+		return ports.Session{}, fmt.Errorf("connect session: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return ports.Session{}, fmt.Errorf("session status %d", response.StatusCode)
+	}
+	var session ports.Session
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&session); err != nil {
+		return ports.Session{}, fmt.Errorf("decode session: %w", err)
+	}
+	return session, nil
+}
+
+func (c *Client) endpoint(path string) (string, error) {
+	parsed, err := url.Parse(c.url)
+	if err != nil {
+		return "", err
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + path
+	return parsed.String(), nil
+}
+
 // Stream opens the SSE endpoint at offset and dispatches decoded events.
 func (c *Client) Stream(ctx context.Context, offset int64, handler ports.EventHandler) error {
 	endpoint, err := streamURL(c.url, offset)

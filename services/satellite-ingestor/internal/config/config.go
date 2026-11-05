@@ -35,6 +35,9 @@ type Config struct {
 	// MinBackoff and MaxBackoff bound the reconnect delay.
 	MinBackoff time.Duration
 	MaxBackoff time.Duration
+	// LeaderTTL and LeaderRenew control the single-writer lease.
+	LeaderTTL   time.Duration
+	LeaderRenew time.Duration
 }
 
 // Load reads configuration from environment variables. Missing required
@@ -73,6 +76,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("load config: %w", err)
 	}
+	leaderTTL, err := env.Duration("LEADER_TTL", 15*time.Second)
+	if err != nil {
+		return Config{}, fmt.Errorf("load config: %w", err)
+	}
+	leaderRenew, err := env.Duration("LEADER_RENEW", 5*time.Second)
+	if err != nil {
+		return Config{}, fmt.Errorf("load config: %w", err)
+	}
 
 	cfg := Config{
 		FeedURL:        feedURL,
@@ -86,6 +97,8 @@ func Load() (Config, error) {
 		HTTPTimeout:    httpTimeout,
 		MinBackoff:     minBackoff,
 		MaxBackoff:     maxBackoff,
+		LeaderTTL:      leaderTTL,
+		LeaderRenew:    leaderRenew,
 	}
 	return cfg, cfg.Validate()
 }
@@ -101,6 +114,8 @@ func (c Config) Validate() error {
 		{"SATELLITE_HTTP_TIMEOUT", c.HTTPTimeout},
 		{"SATELLITE_MIN_BACKOFF", c.MinBackoff},
 		{"SATELLITE_MAX_BACKOFF", c.MaxBackoff},
+		{"LEADER_TTL", c.LeaderTTL},
+		{"LEADER_RENEW", c.LeaderRenew},
 	}
 	for _, duration := range durations {
 		if duration.value <= 0 {

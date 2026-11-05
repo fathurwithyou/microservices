@@ -99,6 +99,10 @@ type recordingFeed struct {
 	once    sync.Once
 }
 
+func (f *recordingFeed) Session(context.Context) (ports.Session, error) {
+	return ports.Session{}, nil
+}
+
 func (f *recordingFeed) Stream(ctx context.Context, offset int64, _ ports.EventHandler) error {
 	f.mu.Lock()
 	f.offsets = append(f.offsets, offset)
@@ -160,5 +164,86 @@ func TestRunReconnectsFromLastOffset(t *testing.T) {
 	}
 	if feed.offsets[1] != 42 {
 		t.Errorf("reconnect offset = %d, want checkpoint 42", feed.offsets[1])
+	}
+}
+
+type recordingSink struct{ batches [][]domain.Fire }
+
+func (s *recordingSink) Submit(_ context.Context, fires []domain.Fire) error {
+	s.batches = append(s.batches, append([]domain.Fire(nil), fires...))
+	return nil
+}
+
+func TestProcessBatchesDetectionsIntoOneWrite(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	state := memory.New()
+	if err := state.SaveDetections(ctx, []domain.Detection{detection(now, -6.2, domain.ConfidenceHigh)}); err != nil {
+		t.Fatal(err)
+	}
+	sink := &recordingSink{}
+	stream := NewStream(StreamConfig{
+		State:      state,
+		Sink:       sink,
+		Logger:     testLogger(),
+		LateWindow: 6 * time.Hour,
+		MaxAge:     24 * time.Hour,
+		MinBackoff: time.Millisecond,
+		MaxBackoff: time.Millisecond,
+		Now:        func() time.Time { return now },
+	})
+
+	events := []ports.Event{
+		{Offset: 10, Kind: ports.KindDetection, Detection: detection(now, -6.201, domain.ConfidenceHigh)},
+		{Offset: 11, Kind: ports.KindDetection, Detection: detection(now, -6.202, domain.ConfidenceNominal)},
+	}
+	if err := stream.process(ctx, events); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.batches) != 1 {
+		t.Fatalf("sink calls = %d, want 1", len(sink.batches))
+	}
+	if len(sink.batches[0]) != 1 || sink.batches[0][0].DetectionCount != 3 {
+		t.Fatalf("fire = %+v, want one fire of three detections", sink.batches[0])
+	}
+	offset, err := state.Offset(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offset != 11 {
+		t.Fatalf("offset = %d, want 11", offset)
+	}
+}
+
+type fakeLeadership struct{ allowed bool }
+
+func (l *fakeLeadership) Allowed() bool { return l.allowed }
+func (l *fakeLeadership) StillLeader(context.Context) (bool, error) {
+	return l.allowed, nil
+}
+
+func TestProcessRefusesWorkWithoutLeadership(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	state := memory.New()
+	stream := NewStream(StreamConfig{
+		State:      state,
+		Sink:       &recordingSink{},
+		Logger:     testLogger(),
+		LateWindow: 6 * time.Hour,
+		MaxAge:     24 * time.Hour,
+		Now:        func() time.Time { return now },
+		Leadership: &fakeLeadership{},
+	})
+	event := ports.Event{Offset: 9, Kind: ports.KindDetection, Detection: detection(now, -6.2, domain.ConfidenceHigh)}
+	if err := stream.process(ctx, []ports.Event{event}); !errors.Is(err, ErrNotLeader) {
+		t.Fatalf("err = %v, want ErrNotLeader", err)
+	}
+	offset, err := state.Offset(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offset != 0 {
+		t.Fatalf("offset = %d, want 0", offset)
 	}
 }

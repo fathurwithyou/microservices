@@ -2,8 +2,10 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/fathurwithyou/microservices/services/satellite-ingestor/internal/domain"
@@ -22,6 +24,10 @@ type StreamConfig struct {
 	MaxAge     time.Duration
 	MinBackoff time.Duration
 	MaxBackoff time.Duration
+	// SessionInterval is how often the feed session is polled for lag.
+	SessionInterval time.Duration
+	// Leadership gates the stream to one active replica.
+	Leadership Leadership
 	// Now and Sleep are optional test seams; production uses time.Now and a
 	// context-aware timer.
 	Now   func() time.Time
@@ -31,16 +37,19 @@ type StreamConfig struct {
 // Stream consumes the feed, clusters detections, and checkpoints the feed
 // offset only after state and the sink have both accepted an event.
 type Stream struct {
-	feed       ports.Feed
-	state      ports.State
-	sink       ports.HazardSink
-	logger     *slog.Logger
-	lateWindow time.Duration
-	maxAge     time.Duration
-	minBackoff time.Duration
-	maxBackoff time.Duration
-	now        func() time.Time
-	sleep      func(ctx context.Context, delay time.Duration) error
+	feed            ports.Feed
+	state           ports.State
+	sink            ports.HazardSink
+	logger          *slog.Logger
+	lateWindow      time.Duration
+	maxAge          time.Duration
+	minBackoff      time.Duration
+	maxBackoff      time.Duration
+	now             func() time.Time
+	sleep           func(ctx context.Context, delay time.Duration) error
+	sessionInterval time.Duration
+	leadership      Leadership
+	committed       atomic.Int64
 }
 
 // NewStream builds a consume loop.
@@ -53,40 +62,91 @@ func NewStream(cfg StreamConfig) *Stream {
 	if sleep == nil {
 		sleep = sleepContext
 	}
+	sessionInterval := cfg.SessionInterval
+	if sessionInterval <= 0 {
+		sessionInterval = 5 * time.Second
+	}
 	return &Stream{
-		feed:       cfg.Feed,
-		state:      cfg.State,
-		sink:       cfg.Sink,
-		logger:     cfg.Logger,
-		lateWindow: cfg.LateWindow,
-		maxAge:     cfg.MaxAge,
-		minBackoff: cfg.MinBackoff,
-		maxBackoff: cfg.MaxBackoff,
-		now:        now,
-		sleep:      sleep,
+		feed:            cfg.Feed,
+		state:           cfg.State,
+		sink:            cfg.Sink,
+		logger:          cfg.Logger,
+		lateWindow:      cfg.LateWindow,
+		maxAge:          cfg.MaxAge,
+		minBackoff:      cfg.MinBackoff,
+		maxBackoff:      cfg.MaxBackoff,
+		now:             now,
+		sleep:           sleep,
+		sessionInterval: sessionInterval,
+		leadership:      cfg.Leadership,
 	}
 }
 
+const (
+	// batchBuffer bounds events waiting for the processor.
+	batchBuffer = 4096
+	// maxBatchSize bounds one state rewrite while catching up.
+	maxBatchSize = 512
+)
+
+// ErrNotLeader stops the current stream when the lease is lost so the next
+// replica can take over.
+var ErrNotLeader = errors.New("not leader")
+
 // Run reconnects from the last committed offset until ctx is cancelled.
 func (s *Stream) Run(ctx context.Context) error {
+	go s.reportLag(ctx)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	attempt := 0
 	for {
-		offset, err := s.state.Offset(ctx)
+		if !s.waitLeader(runCtx) {
+			return nil
+		}
+		attemptCtx, attemptCancel := context.WithCancel(runCtx)
+		events := make(chan ports.Event, batchBuffer)
+		results := make(chan error, 1)
+		go func() {
+			results <- s.consume(attemptCtx, events)
+			attemptCancel()
+		}()
+		handler := func(streamCtx context.Context, event ports.Event) error {
+			select {
+			case events <- event:
+				return nil
+			case <-streamCtx.Done():
+				return streamCtx.Err()
+			}
+		}
+
+		offset, err := s.state.Offset(attemptCtx)
 		if err != nil {
+			attemptCancel()
+			<-results
 			return fmt.Errorf("load feed offset: %w", err)
 		}
-		err = s.feed.Stream(ctx, offset, s.handle)
+		streamErr := s.feed.Stream(attemptCtx, offset, handler)
+		attemptCancel()
+		processErr := <-results
 		if ctx.Err() != nil {
 			return nil
 		}
-		if err == nil {
+		if errors.Is(processErr, ErrNotLeader) {
+			attempt = 0
+			continue
+		}
+		if processErr != nil {
+			return processErr
+		}
+		if streamErr == nil {
 			attempt = 0
 		}
 		s.logger.Warn("feed stream ended",
 			"service", "satellite-ingestor",
 			"component", "stream",
 			"offset", offset,
-			"error", err,
+			"error", streamErr,
 		)
 		delay := s.backoff(attempt)
 		attempt++
@@ -94,6 +154,29 @@ func (s *Stream) Run(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+func (s *Stream) waitLeader(ctx context.Context) bool {
+	if s.leadership == nil {
+		return true
+	}
+	for !s.leadership.Allowed() {
+		if err := s.sleep(ctx, time.Second); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Stream) stillLeader(ctx context.Context) bool {
+	if s.leadership == nil {
+		return true
+	}
+	if !s.leadership.Allowed() {
+		return false
+	}
+	valid, err := s.leadership.StillLeader(ctx)
+	return err == nil && valid
 }
 
 func (s *Stream) backoff(attempt int) time.Duration {
@@ -118,30 +201,86 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func (s *Stream) handle(ctx context.Context, event ports.Event) error {
-	if event.Kind == ports.KindHeartbeat {
-		return s.state.SaveOffset(ctx, event.Offset)
-	}
-
-	detections, err := s.state.Detections(ctx)
-	if err != nil {
-		return fmt.Errorf("load detections: %w", err)
-	}
-	previous, err := s.state.Fires(ctx)
-	if err != nil {
-		return fmt.Errorf("load fires: %w", err)
-	}
-
-	switch event.Kind {
-	case ports.KindDetection, ports.KindUpdate:
-		if !s.accept(event.Detection) {
-			return s.state.SaveOffset(ctx, event.Offset)
+// consume drains bursts so one state rewrite covers many detections.
+func (s *Stream) consume(ctx context.Context, events <-chan ports.Event) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case event := <-events:
+			batch := []ports.Event{event}
+		drain:
+			for len(batch) < maxBatchSize {
+				select {
+				case next := <-events:
+					batch = append(batch, next)
+				default:
+					break drain
+				}
+			}
+			if err := s.process(ctx, batch); err != nil {
+				return err
+			}
 		}
-		detections = upsertDetection(detections, event.Detection)
-	case ports.KindRetract:
-		detections = removeDetection(detections, event.DetectionKey)
-	default:
+	}
+}
+
+func (s *Stream) handle(ctx context.Context, event ports.Event) error {
+	return s.process(ctx, []ports.Event{event})
+}
+
+func (s *Stream) process(ctx context.Context, events []ports.Event) error {
+	if len(events) == 0 {
 		return nil
+	}
+	if !s.stillLeader(ctx) {
+		return ErrNotLeader
+	}
+	var maxOffset int64
+	loaded := false
+	changed := false
+	var detections []domain.Detection
+	var previous []domain.Fire
+
+	for _, event := range events {
+		if event.Offset > maxOffset {
+			maxOffset = event.Offset
+		}
+		switch event.Kind {
+		case ports.KindHeartbeat:
+			continue
+		case ports.KindDetection, ports.KindUpdate:
+			if !s.accept(event.Detection) {
+				continue
+			}
+			if !loaded {
+				var err error
+				detections, previous, err = s.load(ctx)
+				if err != nil {
+					return err
+				}
+				loaded = true
+			}
+			detections = upsertDetection(detections, event.Detection)
+			changed = true
+		case ports.KindRetract:
+			if !loaded {
+				var err error
+				detections, previous, err = s.load(ctx)
+				if err != nil {
+					return err
+				}
+				loaded = true
+			}
+			detections = removeDetection(detections, event.DetectionKey)
+			changed = true
+		}
+	}
+	if !loaded || !changed {
+		return s.saveOffset(ctx, maxOffset)
+	}
+	if !s.stillLeader(ctx) {
+		return ErrNotLeader
 	}
 
 	detections = s.prune(detections)
@@ -153,6 +292,9 @@ func (s *Stream) handle(ctx context.Context, event ports.Event) error {
 	}
 	// Submit before saving the fire snapshot so a failed send is retried from
 	// the previous snapshot, including retraction tombstones.
+	if !s.stillLeader(ctx) {
+		return ErrNotLeader
+	}
 	if len(changes) > 0 {
 		if err := s.sink.Submit(ctx, changes); err != nil {
 			return fmt.Errorf("submit fires: %w", err)
@@ -164,7 +306,47 @@ func (s *Stream) handle(ctx context.Context, event ports.Event) error {
 	if err := s.state.SaveFires(ctx, current); err != nil {
 		return fmt.Errorf("save fires: %w", err)
 	}
-	return s.state.SaveOffset(ctx, event.Offset)
+	return s.saveOffset(ctx, maxOffset)
+}
+
+func (s *Stream) load(ctx context.Context) ([]domain.Detection, []domain.Fire, error) {
+	detections, err := s.state.Detections(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load detections: %w", err)
+	}
+	previous, err := s.state.Fires(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load fires: %w", err)
+	}
+	return detections, previous, nil
+}
+
+func (s *Stream) saveOffset(ctx context.Context, offset int64) error {
+	if err := s.state.SaveOffset(ctx, offset); err != nil {
+		return err
+	}
+	s.committed.Store(offset)
+	return nil
+}
+
+func (s *Stream) reportLag(ctx context.Context) {
+	ticker := time.NewTicker(s.sessionInterval)
+	defer ticker.Stop()
+	for {
+		session, err := s.feed.Session(ctx)
+		if err == nil {
+			lag := session.LatestOffset - s.committed.Load()
+			if lag < 0 {
+				lag = 0
+			}
+			feedLag.Set(float64(lag))
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (s *Stream) accept(detection domain.Detection) bool {

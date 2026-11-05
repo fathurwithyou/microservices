@@ -111,3 +111,24 @@ func TestStreamResumesWithLastEventID(t *testing.T) {
 		t.Fatalf("offsets = %v, want [10]", offsets)
 	}
 }
+
+func TestSessionReportsLatestOffset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/session" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Errorf("Authorization = %q", got)
+		}
+		_, _ = io.WriteString(w, `{"group":"sidequestproxy","profile":"practice","speed":60,"virtual_now":"2026-11-12T03:00:00Z","latest_offset":4096}`)
+	}))
+	defer server.Close()
+
+	session, err := New(Config{URL: server.URL, Token: "secret", Timeout: 5 * time.Second}).Session(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.LatestOffset != 4096 || session.Speed != 60 || session.Profile != "practice" {
+		t.Fatalf("session = %+v", session)
+	}
+}
