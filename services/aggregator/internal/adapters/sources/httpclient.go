@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -86,7 +87,9 @@ func (c *Client) Get(ctx context.Context, path, correlationID string) ([]map[str
 		return nil, fmt.Errorf("%s returned status %d", c.name, response.StatusCode)
 	}
 	var result []map[string]json.RawMessage
-	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+	// Bound one response so a broken or hostile upstream cannot exhaust the
+	// aggregator heap with a giant JSON document.
+	if err := json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&result); err != nil {
 		c.log(correlationID, started, response.StatusCode, err)
 		return nil, err
 	}
