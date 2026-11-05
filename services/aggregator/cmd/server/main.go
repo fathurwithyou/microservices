@@ -29,6 +29,7 @@ import (
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/outbox"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/config"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/importer"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/ports"
 	grpctransport "github.com/fathurwithyou/microservices/services/aggregator/internal/transport/grpc"
 	httptransport "github.com/fathurwithyou/microservices/services/aggregator/internal/transport/http"
@@ -53,6 +54,8 @@ func run(ctx context.Context, args []string, logger *slog.Logger) int {
 		return runMigrate(ctx, rest, logger)
 	case "seed":
 		return runSeed(ctx, rest, logger)
+	case "import-catalog":
+		return runImportCatalog(ctx, rest, logger)
 	default:
 		logger.Error("unknown command", "service", "aggregator", "command", command)
 		return 2
@@ -276,6 +279,56 @@ func runSeed(ctx context.Context, args []string, logger *slog.Logger) int {
 		return 1
 	}
 	logger.Info("seeding completed", "service", "aggregator")
+	return 0
+}
+
+func runImportCatalog(ctx context.Context, args []string, logger *slog.Logger) int {
+	flags := flag.NewFlagSet("import-catalog", flag.ContinueOnError)
+	path := flags.String("file", "", "JSON array or NDJSON catalog file")
+	wait := flags.Duration("wait", 60*time.Second, "how long to wait for PostgreSQL")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *path == "" {
+		logger.Error("catalog file is required", "service", "aggregator", "flag", "-file")
+		return 2
+	}
+	databaseURL, err := databaseURLOrNoop(logger, "catalog import")
+	if err != nil || databaseURL == "" {
+		return noOpExit(err)
+	}
+	file, err := os.Open(*path)
+	if err != nil {
+		logger.Error("catalog open failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	defer file.Close()
+	rows, err := importer.Read(file)
+	if err != nil {
+		logger.Error("catalog decode failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	events, failures := importer.Events(rows, time.Now().UTC())
+	pool, err := postgres.Connect(ctx, databaseURL, *wait)
+	if err != nil {
+		logger.Error("catalog connection failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	defer pool.Close()
+	inserted, err := postgres.NewRepositoryFromPool(pool).BulkPersistHazards(ctx, events)
+	if err != nil {
+		logger.Error("catalog insert failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	logger.Info("catalog import completed", "service", "aggregator",
+		"rows", len(rows), "mapped", len(events), "inserted", inserted, "rejected", len(failures))
+	for index, failure := range failures {
+		if index >= 5 {
+			logger.Warn("additional catalog rows rejected", "service", "aggregator", "remaining", len(failures)-index)
+			break
+		}
+		logger.Warn("catalog row rejected", "service", "aggregator", "error", failure)
+	}
 	return 0
 }
 

@@ -558,3 +558,46 @@ func (s *Repository) UnavailableUnits(ctx context.Context) ([]string, error) {
 	sort.Strings(units)
 	return units, rows.Err()
 }
+
+// BulkPersistHazards inserts a historical catalog without emitting outbox
+// messages. Existing rows are left untouched.
+func (s *Repository) BulkPersistHazards(ctx context.Context, events []domain.HazardEvent) (int, error) {
+	if len(events) == 0 {
+		return 0, nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	batch := &pgx.Batch{}
+	for _, event := range events {
+		attributes, err := json.Marshal(event.Attributes)
+		if err != nil {
+			return 0, err
+		}
+		batch.Queue(`INSERT INTO hazard_events (hazard_id, source, source_ref_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+ON CONFLICT (source, source_ref_id) DO NOTHING`,
+			event.HazardID, event.Source, event.SourceRefID, event.HazardType, event.Severity,
+			event.AreaName, event.Latitude, event.Longitude, event.OccurredAt, event.IngestedAt, attributes)
+	}
+	results := tx.SendBatch(ctx, batch)
+	inserted := 0
+	for range events {
+		tag, err := results.Exec()
+		if err != nil {
+			_ = results.Close()
+			return 0, err
+		}
+		inserted += int(tag.RowsAffected())
+	}
+	if err := results.Close(); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return inserted, nil
+}
