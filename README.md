@@ -169,3 +169,43 @@ make m2-load       # 10k VUs with 3->5->2 scaling
 ```
 
 M2 local services are behind the Compose profile `m2` and require `FEED_TOKEN`.
+
+### M2 topology declaration
+
+Fill this table before the demo. The spec requires node count, node type, host,
+and host CPU/RAM. Do not claim a physical host split unless the nodes actually
+run on separate hosts.
+
+| Node | Role | Type | Physical host | CPU | RAM | Notes |
+|---|---|---|---|---|---|---|
+| node-a | control plane + worker | [VM/native] | [host] | [n] vCPU | [n] GiB | |
+| node-b | worker | [VM/native] | [host] | [n] vCPU | [n] GiB | |
+| node-c | worker | [VM/native] | [host] | [n] vCPU | [n] GiB | optional |
+
+Cluster requirements used by the manifests: namespace
+`sistem-informasi-kebencanaan-bnpb`, a `local-path` StorageClass, and nodes
+labelled by Kubernetes. Tester Agent is installed outside the application
+namespace:
+
+```sh
+kubectl apply -f https://raw.githubusercontent.com/susTuna/if4031-tester-agent/ebb55261711123a9a211739ffbf140a275caa6da/manifest.yaml
+kubectl -n tester-agent exec daemonset/tester-agent -- /app list
+```
+
+### M2 scenario triggers
+
+| Scenario | Command |
+|---|---|
+| Deploy the cluster overlay | `make m2-deploy` |
+| Health and Audit API | `make m2-smoke` |
+| Evidence files | `make m2-evidence` |
+| 10k VU, 3 to 5 to 2, rolling update | `make m2-load` |
+| PVMBG incompatible schema | `curl -X POST -H "X-PVMBG-Admin-Key: $PVMBG_ADMIN_KEY" -d '{"mode":"breaking"}' http://pvmbg:8082/admin/schema-version` |
+| PVMBG outage | `curl -X POST -H "X-PVMBG-Admin-Key: $PVMBG_ADMIN_KEY" -d '{"enabled":true}' http://pvmbg:8082/admin/outage` |
+| Replay parked PVMBG payloads | `curl -X POST -H "Authorization: Bearer $AUDIT_TOKEN" "http://aggregator:8090/internal/ops/replay?source=PVMBG"` |
+| Coastal sensor (Compose) | `docker compose --env-file .env --profile m2 up -d sensor-pantai coastal-ingestor` |
+
+The sensor image is pinned by digest in `deploy/kustomize/base/sensor-pantai.yaml`
+and in the Compose `m2` profile. Both read the same `SENSOR_TOKEN`, which is
+also the image's `PANTAI_AUTH_TOKEN`.
+
