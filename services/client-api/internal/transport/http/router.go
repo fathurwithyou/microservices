@@ -33,6 +33,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	protected.GET("/hazards", handler.listHazards)
 	protected.GET("/hazards/:hazard_id", handler.getHazard)
 	protected.GET("/sources/status", handler.sourceStatus)
+	protected.GET("/coastal/latest", handler.latestCoastal)
 	protected.GET("/analytics", handler.analytics)
 	protected.POST("/field-reports", handler.submitFieldReport)
 	return router

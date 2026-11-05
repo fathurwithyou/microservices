@@ -101,3 +101,19 @@ func requestedHazardType(c *gin.Context) string {
 func requestedStatusSource(c *gin.Context) string {
 	return requestedSource(c)
 }
+
+func (h handler) latestCoastal(c *gin.Context) {
+	principal, ok := requestPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	ctx, cancel := h.contextWithCorrelation(c)
+	defer cancel()
+	latest, err := h.api.LatestCoastal(ctx, principal)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, latest)
+}

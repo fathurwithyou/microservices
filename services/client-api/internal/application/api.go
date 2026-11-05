@@ -111,6 +111,35 @@ func (a *API) SourceStatus(ctx context.Context, principal Principal, source stri
 	return status, nil
 }
 
+// CoastalLatest is the last coastal hazard plus the sensor feed status.
+type CoastalLatest struct {
+	Latest           any                `json:"latest"`
+	Status           ports.SourceStatus `json:"status"`
+	Partial          bool               `json:"partial"`
+	UnavailableUnits []string           `json:"unavailable_units"`
+}
+
+// LatestCoastal answers with the last stored coastal event so clients do not
+// wait for a failing sensor.
+func (a *API) LatestCoastal(ctx context.Context, principal Principal) (CoastalLatest, error) {
+	if err := authorize(principal, false); err != nil {
+		return CoastalLatest{}, err
+	}
+	page, err := a.aggregator.List(ctx, ports.HazardFilter{Source: "SENSOR_PANTAI", PageSize: 1})
+	if err != nil {
+		return CoastalLatest{}, upstreamError(err)
+	}
+	status, err := a.aggregator.Status(ctx, "SENSOR_PANTAI")
+	if err != nil {
+		return CoastalLatest{}, upstreamError(err)
+	}
+	result := CoastalLatest{Status: status, Partial: page.Partial, UnavailableUnits: page.UnavailableUnits}
+	if len(page.Hazards) > 0 {
+		result.Latest = projection.ToSummary(page.Hazards[0])
+	}
+	return result, nil
+}
+
 // SubmitFieldReport authorizes and forwards a Tim Lapangan submission.
 func (a *API) SubmitFieldReport(ctx context.Context, principal Principal, input ports.FieldReportInput) (ports.FieldReport, error) {
 	if !hasScope(principal, scopes.FieldReportsWrite) {
