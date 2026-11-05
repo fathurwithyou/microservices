@@ -10,9 +10,15 @@ const (
 	SeverityAwas    Severity = "AWAS"
 )
 
+const (
+	StatusActive    = "active"
+	StatusRetracted = "retracted"
+)
+
 // Fire is a cluster of at least two connected detections.
 type Fire struct {
 	SourceRefID    string
+	Status         string
 	OccurredAt     time.Time
 	AreaName       string
 	Latitude       float64

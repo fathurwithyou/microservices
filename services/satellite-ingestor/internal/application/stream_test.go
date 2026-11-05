@@ -84,8 +84,10 @@ func TestOffsetNotAdvancedWhenSinkFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fires) != 1 {
-		t.Errorf("stored fires = %d, want 1", len(fires))
+	// The fire snapshot is checkpointed only after the sink accepts it, so a
+	// retry still sees the previous snapshot and resends the same update.
+	if len(fires) != 0 {
+		t.Errorf("stored fires = %d, want 0 until the sink succeeds", len(fires))
 	}
 }
 

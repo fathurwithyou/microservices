@@ -166,23 +166,37 @@ func decodeEvent(kind, id string, data []string) (ports.Event, bool, error) {
 }
 
 type detectionPayload struct {
-	Satellite  string  `json:"satellite"`
-	AcqDate    string  `json:"acq_date"`
-	AcqTime    string  `json:"acq_time"`
-	Latitude   float64 `json:"latitude"`
-	Longitude  float64 `json:"longitude"`
-	Confidence string  `json:"confidence"`
-	FRP        float64 `json:"frp"`
+	Satellite  string          `json:"satellite"`
+	AcqDate    string          `json:"acq_date"`
+	AcqTime    string          `json:"acq_time"`
+	Latitude   json.RawMessage `json:"latitude"`
+	Longitude  json.RawMessage `json:"longitude"`
+	Confidence string          `json:"confidence"`
+	FRP        float64         `json:"frp"`
 }
 
 func (p detectionPayload) detection() domain.Detection {
+	latitude, rawLatitude := rawCoordinate(p.Latitude)
+	longitude, rawLongitude := rawCoordinate(p.Longitude)
 	return domain.Detection{
-		Satellite:  domain.Satellite(p.Satellite),
-		AcqDate:    p.AcqDate,
-		AcqTime:    p.AcqTime,
-		Latitude:   p.Latitude,
-		Longitude:  p.Longitude,
-		Confidence: domain.Confidence(p.Confidence),
-		FRP:        p.FRP,
+		Satellite:    domain.Satellite(p.Satellite),
+		AcqDate:      p.AcqDate,
+		AcqTime:      p.AcqTime,
+		Latitude:     latitude,
+		Longitude:    longitude,
+		RawLatitude:  rawLatitude,
+		RawLongitude: rawLongitude,
+		Confidence:   domain.Confidence(p.Confidence),
+		FRP:          p.FRP,
 	}
+}
+
+// rawCoordinate parses a JSON number while keeping the exact token text.
+func rawCoordinate(value json.RawMessage) (float64, string) {
+	raw := strings.TrimSpace(string(value))
+	parsed, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, ""
+	}
+	return parsed, raw
 }

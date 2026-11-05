@@ -86,7 +86,7 @@ func (s *State) SaveOffset(ctx context.Context, offset int64) error {
 
 func (s *State) Detections(ctx context.Context) ([]domain.Detection, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT satellite, acq_date, acq_time, latitude, longitude, confidence, frp
+		`SELECT satellite, acq_date, acq_time, latitude, longitude, raw_latitude, raw_longitude, confidence, frp
 		 FROM satellite_detections ORDER BY detection_key`)
 	if err != nil {
 		return nil, fmt.Errorf("query detections: %w", err)
@@ -101,7 +101,8 @@ func (s *State) Detections(ctx context.Context) ([]domain.Detection, error) {
 			confidence string
 		)
 		if err := rows.Scan(&satellite, &detection.AcqDate, &detection.AcqTime,
-			&detection.Latitude, &detection.Longitude, &confidence, &detection.FRP); err != nil {
+			&detection.Latitude, &detection.Longitude, &detection.RawLatitude, &detection.RawLongitude,
+			&confidence, &detection.FRP); err != nil {
 			return nil, fmt.Errorf("scan detection: %w", err)
 		}
 		detection.Satellite = domain.Satellite(satellite)
@@ -131,10 +132,11 @@ func (s *State) SaveDetections(ctx context.Context, detections []domain.Detectio
 		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO satellite_detections
-			 (detection_key, satellite, acq_date, acq_time, latitude, longitude, confidence, frp, observed_at)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			 (detection_key, satellite, acq_date, acq_time, latitude, longitude, raw_latitude, raw_longitude, confidence, frp, observed_at)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 			detection.Key(), string(detection.Satellite), detection.AcqDate, detection.AcqTime,
-			detection.Latitude, detection.Longitude, string(detection.Confidence), detection.FRP, observedAt); err != nil {
+			detection.Latitude, detection.Longitude, detection.RawLatitude, detection.RawLongitude,
+			string(detection.Confidence), detection.FRP, observedAt); err != nil {
 			return fmt.Errorf("insert detection %q: %w", detection.Key(), err)
 		}
 	}

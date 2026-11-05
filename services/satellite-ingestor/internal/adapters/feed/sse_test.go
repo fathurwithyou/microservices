@@ -34,7 +34,7 @@ func TestStreamParsesEvents(t *testing.T) {
 		_, _ = io.WriteString(w, ": keepalive comment\n\n")
 		_, _ = io.WriteString(w, "event: detection\nid: 1\n"+
 			"data: {\"satellite\":\"NOAA-20\",\"acq_date\":\"2026-11-04\",\"acq_time\":\"1230\","+
-			"\"latitude\":-6.2,\"longitude\":106.8,\"confidence\":\"h\",\"frp\":12.5}\n\n")
+			"\"latitude\":-6.20,\"longitude\":106.80,\"confidence\":\"h\",\"frp\":12.5}\n\n")
 		_, _ = io.WriteString(w, "event: heartbeat\nid: 2\n\n")
 		_, _ = io.WriteString(w, "event: update\nid: 3\n"+
 			"data: {\"satellite\":\"NOAA-20\",\"acq_date\":\"2026-11-04\",\"acq_time\":\"1230\","+
@@ -61,13 +61,15 @@ func TestStreamParsesEvents(t *testing.T) {
 		t.Errorf("event 0 = %+v, want detection at offset 1", events[0])
 	}
 	wantDetection := domain.Detection{
-		Satellite:  "NOAA-20",
-		AcqDate:    "2026-11-04",
-		AcqTime:    "1230",
-		Latitude:   -6.2,
-		Longitude:  106.8,
-		Confidence: domain.ConfidenceHigh,
-		FRP:        12.5,
+		Satellite:    "NOAA-20",
+		AcqDate:      "2026-11-04",
+		AcqTime:      "1230",
+		Latitude:     -6.2,
+		Longitude:    106.8,
+		RawLatitude:  "-6.20",
+		RawLongitude: "106.80",
+		Confidence:   domain.ConfidenceHigh,
+		FRP:          12.5,
 	}
 	if events[0].Detection != wantDetection {
 		t.Errorf("detection = %+v, want %+v", events[0].Detection, wantDetection)

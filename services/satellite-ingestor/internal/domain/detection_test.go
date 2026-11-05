@@ -20,6 +20,22 @@ func TestDetectionKey(t *testing.T) {
 	}
 }
 
+func TestDetectionKeyKeepsRawCoordinateText(t *testing.T) {
+	d := Detection{
+		Satellite:    "N20",
+		AcqDate:      "2026-11-12",
+		AcqTime:      "243",
+		Latitude:     -2.5123,
+		Longitude:    113.8044,
+		RawLatitude:  "-2.51230",
+		RawLongitude: "113.80440",
+	}
+	want := "N20|2026-11-12|243|-2.51230|113.80440"
+	if got := d.Key(); got != want {
+		t.Fatalf("Key() = %q, want %q", got, want)
+	}
+}
+
 func TestDetectionIgnored(t *testing.T) {
 	tests := []struct {
 		name       string

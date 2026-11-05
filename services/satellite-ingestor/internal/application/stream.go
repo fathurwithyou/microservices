@@ -127,36 +127,42 @@ func (s *Stream) handle(ctx context.Context, event ports.Event) error {
 	if err != nil {
 		return fmt.Errorf("load detections: %w", err)
 	}
+	previous, err := s.state.Fires(ctx)
+	if err != nil {
+		return fmt.Errorf("load fires: %w", err)
+	}
 
-	var changed string
 	switch event.Kind {
 	case ports.KindDetection, ports.KindUpdate:
 		if !s.accept(event.Detection) {
 			return s.state.SaveOffset(ctx, event.Offset)
 		}
 		detections = upsertDetection(detections, event.Detection)
-		changed = event.Detection.Key()
 	case ports.KindRetract:
 		detections = removeDetection(detections, event.DetectionKey)
-		changed = event.DetectionKey
 	default:
 		return nil
 	}
 
 	detections = s.prune(detections)
 	fires, _ := Cluster(detections)
-	affected := affectedFires(fires, changed)
+	current, changes := reconcile(previous, fires)
 
 	if err := s.state.SaveDetections(ctx, detections); err != nil {
 		return fmt.Errorf("save detections: %w", err)
 	}
-	if err := s.state.SaveFires(ctx, fires); err != nil {
-		return fmt.Errorf("save fires: %w", err)
-	}
-	if len(affected) > 0 {
-		if err := s.sink.Submit(ctx, affected); err != nil {
+	// Submit before saving the fire snapshot so a failed send is retried from
+	// the previous snapshot, including retraction tombstones.
+	if len(changes) > 0 {
+		if err := s.sink.Submit(ctx, changes); err != nil {
 			return fmt.Errorf("submit fires: %w", err)
 		}
+		for _, fire := range changes {
+			firesSubmitted.WithLabelValues(fire.Status).Inc()
+		}
+	}
+	if err := s.state.SaveFires(ctx, current); err != nil {
+		return fmt.Errorf("save fires: %w", err)
 	}
 	return s.state.SaveOffset(ctx, event.Offset)
 }
@@ -164,9 +170,14 @@ func (s *Stream) handle(ctx context.Context, event ports.Event) error {
 func (s *Stream) accept(detection domain.Detection) bool {
 	at, err := detection.Time()
 	if err != nil {
+		droppedDetections.WithLabelValues("invalid_time").Inc()
 		return false
 	}
-	return s.now().Sub(at) <= s.lateWindow
+	if s.now().Sub(at) > s.lateWindow {
+		droppedDetections.WithLabelValues("late").Inc()
+		return false
+	}
+	return true
 }
 
 func (s *Stream) prune(detections []domain.Detection) []domain.Detection {
@@ -201,18 +212,4 @@ func removeDetection(detections []domain.Detection, key string) []domain.Detecti
 		}
 	}
 	return kept
-}
-
-// affectedFires returns the fires whose detection set contains changedKey.
-func affectedFires(fires []domain.Fire, changedKey string) []domain.Fire {
-	var affected []domain.Fire
-	for _, fire := range fires {
-		for _, key := range fire.DetectionKeys {
-			if key == changedKey {
-				affected = append(affected, fire)
-				break
-			}
-		}
-	}
-	return affected
 }

@@ -25,23 +25,35 @@ var ErrInvalidDetectionTime = errors.New("invalid detection time")
 // Detection is one raw satellite hotspot observation. AcqDate and AcqTime keep
 // the source strings so the detection key stays stable across feeds.
 type Detection struct {
-	Satellite  Satellite
-	AcqDate    string
-	AcqTime    string
-	Latitude   float64
-	Longitude  float64
-	Confidence Confidence
-	FRP        float64
+	Satellite Satellite
+	AcqDate   string
+	AcqTime   string
+	Latitude  float64
+	Longitude float64
+	// RawLatitude and RawLongitude keep the lexical form from the feed so
+	// detection keys match the audit contract without rounding.
+	RawLatitude  string
+	RawLongitude string
+	Confidence   Confidence
+	FRP          float64
 }
 
 // Key is the stable identity of a detection, built from unrounded source values.
 func (d Detection) Key() string {
+	latitude := d.RawLatitude
+	if latitude == "" {
+		latitude = strconv.FormatFloat(d.Latitude, 'f', -1, 64)
+	}
+	longitude := d.RawLongitude
+	if longitude == "" {
+		longitude = strconv.FormatFloat(d.Longitude, 'f', -1, 64)
+	}
 	return strings.Join([]string{
 		string(d.Satellite),
 		d.AcqDate,
 		d.AcqTime,
-		strconv.FormatFloat(d.Latitude, 'f', -1, 64),
-		strconv.FormatFloat(d.Longitude, 'f', -1, 64),
+		latitude,
+		longitude,
 	}, "|")
 }
 

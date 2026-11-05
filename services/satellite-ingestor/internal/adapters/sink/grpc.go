@@ -64,7 +64,11 @@ func fireEvent(fire domain.Fire) *eventspb.HazardEvent {
 	put("max_confidence", string(fire.MaxConfidence))
 	put("total_frp_mw", fire.TotalFRP)
 	put("detection_keys", fire.DetectionKeys)
-	put("status", "active")
+	status := fire.Status
+	if status == "" {
+		status = domain.StatusActive
+	}
+	put("status", status)
 
 	sum := sha256.Sum256([]byte("SATELIT:" + fire.SourceRefID))
 	return &eventspb.HazardEvent{

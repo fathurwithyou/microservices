@@ -126,6 +126,7 @@ func newFire(group []node) domain.Fire {
 	sum := sha256.Sum256([]byte(group[0].key))
 	return domain.Fire{
 		SourceRefID:    "fire-" + hex.EncodeToString(sum[:]),
+		Status:         domain.StatusActive,
 		OccurredAt:     group[0].at,
 		AreaName:       domain.NearestProvince(latitude/count, longitude/count),
 		Latitude:       latitude / count,
