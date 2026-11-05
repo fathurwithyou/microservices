@@ -28,6 +28,8 @@ message ListHazardsRequest {
 message ListHazardsResponse {
   repeated bnpb.events.HazardEvent hazards = 1;
   string next_page_token = 2;
+  bool partial = 3;
+  repeated string unavailable_units = 4;
 }
 
 message GetHazardRequest { string hazard_id = 1; bool raw = 2; }

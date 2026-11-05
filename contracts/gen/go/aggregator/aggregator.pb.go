@@ -107,11 +107,13 @@ func (x *ListHazardsRequest) GetRaw() bool {
 }
 
 type ListHazardsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Hazards       []*events.HazardEvent  `protobuf:"bytes,1,rep,name=hazards,proto3" json:"hazards,omitempty"`
-	NextPageToken string                 `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Hazards          []*events.HazardEvent  `protobuf:"bytes,1,rep,name=hazards,proto3" json:"hazards,omitempty"`
+	NextPageToken    string                 `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	Partial          bool                   `protobuf:"varint,3,opt,name=partial,proto3" json:"partial,omitempty"`
+	UnavailableUnits []string               `protobuf:"bytes,4,rep,name=unavailable_units,json=unavailableUnits,proto3" json:"unavailable_units,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ListHazardsResponse) Reset() {
@@ -156,6 +158,20 @@ func (x *ListHazardsResponse) GetNextPageToken() string {
 		return x.NextPageToken
 	}
 	return ""
+}
+
+func (x *ListHazardsResponse) GetPartial() bool {
+	if x != nil {
+		return x.Partial
+	}
+	return false
+}
+
+func (x *ListHazardsResponse) GetUnavailableUnits() []string {
+	if x != nil {
+		return x.UnavailableUnits
+	}
+	return nil
 }
 
 type GetHazardRequest struct {
@@ -955,10 +971,12 @@ const file_aggregator_aggregator_proto_rawDesc = "" +
 	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\x05 \x01(\tR\tpageToken\x12\x10\n" +
-	"\x03raw\x18\x06 \x01(\bR\x03raw\"q\n" +
+	"\x03raw\x18\x06 \x01(\bR\x03raw\"\xb8\x01\n" +
 	"\x13ListHazardsResponse\x122\n" +
 	"\ahazards\x18\x01 \x03(\v2\x18.bnpb.events.HazardEventR\ahazards\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"A\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x12\x18\n" +
+	"\apartial\x18\x03 \x01(\bR\apartial\x12+\n" +
+	"\x11unavailable_units\x18\x04 \x03(\tR\x10unavailableUnits\"A\n" +
 	"\x10GetHazardRequest\x12\x1b\n" +
 	"\thazard_id\x18\x01 \x01(\tR\bhazardId\x12\x10\n" +
 	"\x03raw\x18\x02 \x01(\bR\x03raw\"E\n" +
