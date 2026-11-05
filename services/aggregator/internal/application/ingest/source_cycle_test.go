@@ -220,6 +220,14 @@ type atomicLeadership struct{ value atomic.Bool }
 
 func (l *atomicLeadership) Allowed() bool { return l.value.Load() }
 
+// staleLeadership looks healthy locally but fails the database-clock check,
+// the state of a process that was frozen past its lease TTL.
+type staleLeadership struct{}
+
+func (staleLeadership) Allowed() bool { return true }
+
+func (staleLeadership) StillLeader(context.Context) (bool, error) { return false, nil }
+
 func TestRunSourceDoesNotFetchWithoutLeadership(t *testing.T) {
 	repository := &observingRepository{Repository: memory.NewRepository(), advanced: make(chan time.Time, 1)}
 	leadership := &atomicLeadership{}
@@ -266,6 +274,29 @@ func TestRunSourceDropsBatchWhenLeadershipIsLostDuringFetch(t *testing.T) {
 	}
 	if _, err := repository.GetHazard(context.Background(), "h-lost"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("event persisted after leadership was lost: %v", err)
+	}
+}
+
+func TestRunSourceDoesNotPersistWithStaleLease(t *testing.T) {
+	repository := &observingRepository{Repository: memory.NewRepository(), advanced: make(chan time.Time, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller := testPoller(repository)
+	poller.leadership = staleLeadership{}
+	poller.interval = 10 * time.Millisecond
+
+	source := &fakeSource{name: domain.SourceBMKG, fetch: func(context.Context, time.Time, string) ([]domain.HazardEvent, error) {
+		return []domain.HazardEvent{testEvent("h-stale", domain.SourceBMKG)}, nil
+	}}
+	go poller.runSource(ctx, source)
+
+	select {
+	case <-repository.advanced:
+		t.Fatal("cursor advanced with a stale lease")
+	case <-time.After(80 * time.Millisecond):
+	}
+	if _, err := repository.GetHazard(context.Background(), "h-stale"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("event persisted with a stale lease: %v", err)
 	}
 }
 

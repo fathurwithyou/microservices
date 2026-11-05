@@ -71,6 +71,21 @@ func (s *LeaseStore) Release(ctx context.Context, token lease.Token) error {
 	return nil
 }
 
+// Valid reports whether token still owns an unexpired lease. The database
+// clock is authoritative, so a frozen process cannot renew a lease it lost.
+func (s *LeaseStore) Valid(ctx context.Context, token lease.Token) (bool, error) {
+	var valid bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS (
+  SELECT 1 FROM leader_lease
+  WHERE name = $1 AND holder = $2 AND fence = $3 AND expires_at > clock_timestamp()
+)`, s.name, token.Holder, token.Fence).Scan(&valid)
+	if err != nil {
+		return false, fmt.Errorf("validate leader lease: %w", err)
+	}
+	return valid, nil
+}
+
 func intervalLiteral(ttl time.Duration) string {
 	return fmt.Sprintf("%.6f seconds", ttl.Seconds())
 }

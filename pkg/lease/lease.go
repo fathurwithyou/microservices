@@ -26,6 +26,9 @@ type Store interface {
 	Acquire(ctx context.Context, holder string, ttl time.Duration) (Token, bool, error)
 	Renew(ctx context.Context, token Token, ttl time.Duration) (Token, bool, error)
 	Release(ctx context.Context, token Token) error
+	// Valid reports whether token still owns an unexpired lease according to
+	// the database clock. It never extends the lease.
+	Valid(ctx context.Context, token Token) (bool, error)
 }
 
 // Coordinator tracks the token this process currently holds and refuses to
@@ -86,6 +89,23 @@ func (c *Coordinator) Release(ctx context.Context, token Token) error {
 	}
 	c.clear(token)
 	return nil
+}
+
+// Valid reports whether the held token still owns an unexpired lease. A stale
+// token is cleared so later writes are denied until a new acquisition.
+func (c *Coordinator) Valid(ctx context.Context) (bool, error) {
+	token := c.Fence()
+	if token.Holder == "" {
+		return false, nil
+	}
+	valid, err := c.store.Valid(ctx, token)
+	if err != nil {
+		return false, fmt.Errorf("validate lease: %w", err)
+	}
+	if !valid {
+		c.clear(token)
+	}
+	return valid, nil
 }
 
 // Fence returns the token this coordinator currently holds, or the zero Token

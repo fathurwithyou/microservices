@@ -17,14 +17,31 @@ type Leadership interface {
 
 // Leader acquires and renews a lease, flipping Allowed as ownership changes.
 type Leader struct {
-	allowed atomic.Bool
+	allowed     atomic.Bool
+	coordinator *lease.Coordinator
 }
 
 // NewLeader returns a leader that denies work until the lease is acquired.
-func NewLeader() *Leader { return &Leader{} }
+func NewLeader(coordinator *lease.Coordinator) *Leader {
+	return &Leader{coordinator: coordinator}
+}
 
-// Allowed reports whether this instance currently owns the lease.
+// Allowed reports whether this instance believes it owns the lease.
 func (l *Leader) Allowed() bool { return l.allowed.Load() }
+
+// StillLeader revalidates the lease against the database clock. A process that
+// was frozen past the TTL fails this check before its next write.
+func (l *Leader) StillLeader(ctx context.Context) (bool, error) {
+	if !l.allowed.Load() || l.coordinator == nil {
+		return false, nil
+	}
+	valid, err := l.coordinator.Valid(ctx)
+	if err != nil || !valid {
+		l.allowed.Store(false)
+		return false, err
+	}
+	return true, nil
+}
 
 // Run owns the acquire/renew loop until ctx is cancelled. The database clock,
 // not the local clock, governs expiry and fencing.

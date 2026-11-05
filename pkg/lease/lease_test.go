@@ -74,6 +74,12 @@ func (s *fakeStore) Release(_ context.Context, token Token) error {
 	return nil
 }
 
+func (s *fakeStore) Valid(_ context.Context, token Token) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sameToken(token) && s.clock.Now().Before(s.token.Expiry), nil
+}
+
 func (s *fakeStore) sameToken(token Token) bool {
 	return s.held && s.token.Holder == token.Holder && s.token.Fence == token.Fence
 }
@@ -255,5 +261,23 @@ func TestConcurrentAcquireHasOneWinner(t *testing.T) {
 		if fence != 1 {
 			t.Fatalf("winner fence = %d, want 1", fence)
 		}
+	}
+}
+
+func TestCoordinatorValidRejectsExpiredLease(t *testing.T) {
+	clock := &fakeClock{now: time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)}
+	coordinator := New(newFakeStore(clock))
+	if _, ok, err := coordinator.Acquire(context.Background(), "node-a", time.Second); err != nil || !ok {
+		t.Fatalf("acquire: ok=%v err=%v", ok, err)
+	}
+	if valid, err := coordinator.Valid(context.Background()); err != nil || !valid {
+		t.Fatalf("valid immediately: ok=%v err=%v", valid, err)
+	}
+	clock.Advance(2 * time.Second)
+	if valid, err := coordinator.Valid(context.Background()); err != nil || valid {
+		t.Fatalf("valid after expiry: ok=%v err=%v", valid, err)
+	}
+	if token := coordinator.Fence(); token.Holder != "" {
+		t.Fatalf("expired token was not cleared: %+v", token)
 	}
 }

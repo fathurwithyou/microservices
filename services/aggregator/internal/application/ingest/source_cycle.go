@@ -64,9 +64,9 @@ func (p *Poller) runSource(ctx context.Context, source Source) {
 		events, fetchErr := source.Fetch(pollCtx, cursor.Add(-cursorOverlap), correlationID)
 		cancel()
 
-		// Ownership can change while a fetch is in flight. Do not persist or
-		// advance the cursor after losing the lease.
-		if !p.leaderAllowed() {
+		// Ownership can change while a fetch is in flight. Revalidate against
+		// the database clock so a frozen instance cannot persist after its TTL.
+		if !p.stillLeader(ctx) {
 			select {
 			case <-ticker.C:
 				continue
@@ -74,7 +74,6 @@ func (p *Poller) runSource(ctx context.Context, source Source) {
 				return
 			}
 		}
-
 		batchErr := p.persistBatch(ctx, events, correlationID)
 		if mappingErr, ok := fetchErr.(*MappingError); ok {
 			p.recordFailures(ctx, mappingErr, correlationID)
@@ -135,6 +134,24 @@ func isMappingError(err error) bool {
 
 func (p *Poller) leaderAllowed() bool {
 	return p.leadership == nil || p.leadership.Allowed()
+}
+
+// stillLeader revalidates against the lease store when the leadership
+// implementation supports it, and falls back to the local flag otherwise.
+func (p *Poller) stillLeader(ctx context.Context) bool {
+	if p.leadership == nil {
+		return true
+	}
+	if fenced, ok := p.leadership.(interface {
+		StillLeader(context.Context) (bool, error)
+	}); ok {
+		valid, err := fenced.StillLeader(ctx)
+		if err != nil {
+			p.logger.Error("leader revalidation failed", "component", "poller", "error", err)
+		}
+		return valid
+	}
+	return p.leadership.Allowed()
 }
 
 func (p *Poller) recordFailures(ctx context.Context, mappingErr *MappingError, correlationID string) {

@@ -122,8 +122,8 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 	}
 	var leadership applicationingest.Leadership
 	if repository, ok := persistence.(*postgres.Repository); ok {
-		leader := applicationingest.NewLeader()
 		coordinator := lease.New(repository.LeaseStore("ingestion"))
+		leader := applicationingest.NewLeader(coordinator)
 		go leader.Run(ctx, coordinator, leaderHolder(), cfg.LeaderTTL, cfg.LeaderRenew, logger)
 		leadership = leader
 	}
