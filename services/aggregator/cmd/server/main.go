@@ -173,7 +173,7 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("gRPC listen failed", "service", "aggregator", "error", err)
 		return 1
 	}
-	grpcServer := grpctransport.NewServer(grpctransport.ServerConfig{Queries: queries, FieldReports: fieldReportService, Analytics: analyticsQueries, Submitter: submitter, ServiceToken: cfg.InternalServiceToken, Logger: logger})
+	grpcServer := grpctransport.NewServer(grpctransport.ServerConfig{Queries: queries, FieldReports: fieldReportService, Analytics: analyticsQueries, Submitter: submitter, Health: persistence, ServiceToken: cfg.InternalServiceToken, Logger: logger})
 	httpServer := httptransport.NewServer(cfg.HTTPPort, auditQueries, cfg.AuditToken, replayer)
 
 	go poller.Run(ctx)

@@ -19,10 +19,15 @@ type queryHandler struct {
 	fieldReports *fieldreports.Service
 	analytics    *analytics.Queries
 	submitter    *applicationingest.Submitter
+	health       interface {
+		UnavailableUnits(context.Context) ([]string, error)
+	}
 }
 
-func newQueryHandler(queries *hazards.Queries, reports *fieldreports.Service, metrics *analytics.Queries, submitter *applicationingest.Submitter) *queryHandler {
-	return &queryHandler{queries: queries, fieldReports: reports, analytics: metrics, submitter: submitter}
+func newQueryHandler(queries *hazards.Queries, reports *fieldreports.Service, metrics *analytics.Queries, submitter *applicationingest.Submitter, health interface {
+	UnavailableUnits(context.Context) ([]string, error)
+}) *queryHandler {
+	return &queryHandler{queries: queries, fieldReports: reports, analytics: metrics, submitter: submitter, health: health}
 }
 
 func (h *queryHandler) ListHazards(ctx context.Context, request *aggregatorpb.ListHazardsRequest) (*aggregatorpb.ListHazardsResponse, error) {
@@ -33,6 +38,12 @@ func (h *queryHandler) ListHazards(ctx context.Context, request *aggregatorpb.Li
 	response := &aggregatorpb.ListHazardsResponse{Hazards: make([]*eventspb.HazardEvent, 0, len(items))}
 	for _, item := range items {
 		response.Hazards = append(response.Hazards, hazardToProto(item))
+	}
+	if h.health != nil {
+		if units, err := h.health.UnavailableUnits(ctx); err == nil {
+			response.Partial = len(units) > 0
+			response.UnavailableUnits = units
+		}
 	}
 	return response, nil
 }

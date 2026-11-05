@@ -2,6 +2,7 @@
 package grpctransport
 
 import (
+	"context"
 	"log/slog"
 
 	aggregatorpb "github.com/fathurwithyou/microservices/contracts/gen/go/aggregator"
@@ -31,6 +32,10 @@ type ServerConfig struct {
 	Analytics *analytics.Queries
 	// Submitter accepts HazardEvents from internal ingress services. Required.
 	Submitter *applicationingest.Submitter
+	// Health reports store units that cannot be reached.
+	Health interface {
+		UnavailableUnits(context.Context) ([]string, error)
+	}
 	// ServiceToken is the internal bearer token clients must present.
 	ServiceToken string
 	// Logger receives structured logs. Defaults to slog.Default().
@@ -48,7 +53,7 @@ func NewServer(cfg ServerConfig) *grpc.Server {
 		grpckit.UnaryObservability(grpckit.Config{Service: "aggregator", Logger: logger}),
 		grpckit.UnaryAuth(grpckit.AuthConfig{Token: cfg.ServiceToken, PublicMethods: []string{HealthMethod}}),
 	), grpc.StatsHandler(otelgrpc.NewServerHandler()))
-	aggregatorpb.RegisterAggregatorServer(server, newQueryHandler(cfg.Queries, cfg.FieldReports, cfg.Analytics, cfg.Submitter))
+	aggregatorpb.RegisterAggregatorServer(server, newQueryHandler(cfg.Queries, cfg.FieldReports, cfg.Analytics, cfg.Submitter, cfg.Health))
 	registerHealth(server)
 	reflection.Register(server)
 	return server
