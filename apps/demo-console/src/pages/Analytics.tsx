@@ -59,7 +59,8 @@ export default function Analytics() {
 
       {data?.partial ? (
         <div className="panel" style={{ borderColor: "var(--orange)" }}>
-          <strong>Data belum lengkap.</strong> Sebagian unit penyimpanan tidak dapat dijangkau.
+          <strong>Data belum lengkap.</strong> Unit yang tidak terjangkau:{" "}
+          {data.unavailable_units.length > 0 ? data.unavailable_units.join(", ") : "tidak diketahui"}.
         </div>
       ) : null}
 

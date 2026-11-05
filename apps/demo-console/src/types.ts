@@ -104,4 +104,5 @@ export type AnalyticsResponse = {
   areas: AnalyticsAreaCount[];
   time_buckets: AnalyticsBucket[];
   partial: boolean;
+  unavailable_units: string[];
 };
