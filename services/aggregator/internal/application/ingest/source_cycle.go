@@ -162,13 +162,20 @@ func (p *Poller) recordFailures(ctx context.Context, mappingErr *MappingError, c
 			continue
 		}
 		messageID := uuid.NewSHA1(uuid.NameSpaceURL, append([]byte(string(rejected.Source)+":"), payload...)).String()
+		// A schema violation never succeeds until the mapping changes; any
+		// other mapping failure may be transient and stays in the retry queue.
+		retryable := !errors.Is(rejected.Err, domain.ErrInvalidSourcePayload)
+		status := domain.FailureParked
+		if retryable {
+			status = domain.FailureRetrying
+		}
 		if err := p.repository.SaveIngestFailure(ctx, domain.IngestFailure{
 			MessageID:  messageID,
 			Source:     rejected.Source,
 			ReceivedAt: time.Now().UTC(),
 			Reason:     rejected.Err.Error(),
-			Retryable:  false,
-			Status:     domain.FailureParked,
+			Retryable:  retryable,
+			Status:     status,
 			Payload:    payload,
 		}); err != nil {
 			p.logger.Error("failed payload persist", "component", "poller", "source", rejected.Source, "correlation_id", correlationID, "error", err)

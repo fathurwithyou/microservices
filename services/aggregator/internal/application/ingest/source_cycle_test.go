@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync/atomic"
@@ -307,7 +308,8 @@ func TestRunSourcePersistsRejectedPayloadForReplay(t *testing.T) {
 	poller := testPoller(repository)
 	raw := map[string]json.RawMessage{"report_id": json.RawMessage(`"r-1"`), "level": json.RawMessage(`"Awas"`)}
 	source := &fakeSource{name: domain.SourcePVMBG, fetch: func(context.Context, time.Time, string) ([]domain.HazardEvent, error) {
-		return nil, &MappingError{Source: domain.SourcePVMBG, Err: errors.New("missing alert_level"), Rejected: []RejectedPayload{{Source: domain.SourcePVMBG, Raw: raw, Err: errors.New("missing alert_level")}}}
+		missing := fmt.Errorf("missing alert_level: %w", domain.ErrInvalidSourcePayload)
+		return nil, &MappingError{Source: domain.SourcePVMBG, Err: missing, Rejected: []RejectedPayload{{Source: domain.SourcePVMBG, Raw: raw, Err: missing}}}
 	}}
 	go poller.runSource(ctx, source)
 
@@ -321,5 +323,32 @@ func TestRunSourcePersistsRejectedPayloadForReplay(t *testing.T) {
 	}
 	if repository.failures[0].Status != domain.FailureParked || repository.failures[0].Retryable {
 		t.Fatalf("failure = %+v", repository.failures[0])
+	}
+}
+
+func TestRecordFailuresMarksTransientAsRetrying(t *testing.T) {
+	repository := memory.NewRepository()
+	poller := testPoller(repository)
+	transient := errors.New("temporary mapping failure")
+	raw := map[string]json.RawMessage{"event_id": json.RawMessage(`"e-1"`)}
+	poller.recordFailures(context.Background(), &MappingError{
+		Source: domain.SourceBMKG,
+		Err:    transient,
+		Rejected: []RejectedPayload{{
+			Source: domain.SourceBMKG,
+			Raw:    raw,
+			Err:    transient,
+		}},
+	}, "correlation-1")
+
+	items, err := repository.ListIngestFailures(context.Background(), domain.SourceBMKG, 10, time.Time{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("failures = %d, want 1", len(items))
+	}
+	if !items[0].Retryable || items[0].Status != domain.FailureRetrying {
+		t.Fatalf("failure = %+v, want retrying", items[0])
 	}
 }
