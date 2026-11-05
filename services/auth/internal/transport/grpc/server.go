@@ -42,6 +42,7 @@ func NewServer(cfg ServerConfig) *grpc.Server {
 		healthMethod = HealthMethod
 	}
 	server := grpc.NewServer(grpc.ChainUnaryInterceptor(
+		grpckit.UnaryMetrics("auth"),
 		grpckit.UnaryObservability(grpckit.Config{Service: "auth", Logger: logger}),
 		grpckit.UnaryAuth(grpckit.AuthConfig{Token: cfg.ServiceToken, PublicMethods: []string{healthMethod}}),
 	), grpc.StatsHandler(otelgrpc.NewServerHandler()))

@@ -50,6 +50,7 @@ func NewServer(cfg ServerConfig) *grpc.Server {
 		logger = slog.Default()
 	}
 	server := grpc.NewServer(grpc.ChainUnaryInterceptor(
+		grpckit.UnaryMetrics("aggregator"),
 		grpckit.UnaryObservability(grpckit.Config{Service: "aggregator", Logger: logger}),
 		grpckit.UnaryAuth(grpckit.AuthConfig{Token: cfg.ServiceToken, PublicMethods: []string{HealthMethod}}),
 	), grpc.StatsHandler(otelgrpc.NewServerHandler()))
