@@ -162,6 +162,11 @@ func (i *Ingestor) Cycle(ctx context.Context) (IngestResult, error) {
 			return IngestResult{}, fmt.Errorf("save last good: %w", err)
 		}
 	}
+	if source, ok := i.source.(ports.CursorSource); ok {
+		if err := i.state.SaveCursor(ctx, source.Cursor()); err != nil {
+			return IngestResult{}, fmt.Errorf("save sensor cursor: %w", err)
+		}
+	}
 
 	return IngestResult{Readings: accepted, Quarantined: len(records)}, nil
 }

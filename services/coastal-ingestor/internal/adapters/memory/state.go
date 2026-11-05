@@ -16,6 +16,7 @@ type State struct {
 	quarantine []domain.QuarantineRecord
 	lastGood   []domain.Reading
 	capturedAt time.Time
+	cursor     string
 }
 
 // New returns an empty in-memory State.
@@ -52,4 +53,19 @@ func (s *State) Quarantined() []domain.QuarantineRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]domain.QuarantineRecord(nil), s.quarantine...)
+}
+
+// Cursor returns the in-memory page cursor.
+func (s *State) Cursor(context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cursor, nil
+}
+
+// SaveCursor replaces the in-memory page cursor.
+func (s *State) SaveCursor(_ context.Context, cursor string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cursor = cursor
+	return nil
 }

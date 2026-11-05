@@ -24,3 +24,10 @@ var (
 type Source interface {
 	Fetch(ctx context.Context) ([]domain.Reading, error)
 }
+
+// CursorSource exposes the upstream paging cursor so the ingestor can persist
+// it and resume after a restart without replaying the whole stream.
+type CursorSource interface {
+	Cursor() string
+	SetCursor(string)
+}

@@ -91,3 +91,27 @@ func (s *State) LastGood(ctx context.Context) ([]domain.Reading, time.Time, erro
 	}
 	return readings, capturedAt, nil
 }
+
+// Cursor returns the last committed sensor page cursor.
+func (s *State) Cursor(ctx context.Context) (string, error) {
+	var cursor string
+	err := s.pool.QueryRow(ctx, `SELECT cursor FROM coastal_cursor WHERE source = $1`, domain.SourceCoastalSensor).Scan(&cursor)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("load sensor cursor: %w", err)
+	}
+	return cursor, nil
+}
+
+// SaveCursor commits the sensor page cursor.
+func (s *State) SaveCursor(ctx context.Context, cursor string) error {
+	_, err := s.pool.Exec(ctx, `INSERT INTO coastal_cursor (source, cursor)
+VALUES ($1,$2)
+ON CONFLICT (source) DO UPDATE SET cursor = EXCLUDED.cursor, updated_at = now()`, domain.SourceCoastalSensor, cursor)
+	if err != nil {
+		return fmt.Errorf("save sensor cursor: %w", err)
+	}
+	return nil
+}

@@ -15,4 +15,8 @@ type State interface {
 	// LastGood returns the most recently persisted accepted batch and when it
 	// was captured. Both are zero when nothing has been stored yet.
 	LastGood(ctx context.Context) ([]domain.Reading, time.Time, error)
+	// Cursor returns the last committed sensor page cursor, or "" for none.
+	Cursor(ctx context.Context) (string, error)
+	// SaveCursor commits the sensor page cursor.
+	SaveCursor(ctx context.Context, cursor string) error
 }

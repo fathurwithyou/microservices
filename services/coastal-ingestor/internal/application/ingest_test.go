@@ -16,12 +16,16 @@ type fakeSource struct {
 	readings []domain.Reading
 	err      error
 	fetches  int
+	cursor   string
 }
 
 func (s *fakeSource) Fetch(context.Context) ([]domain.Reading, error) {
 	s.fetches++
 	return s.readings, s.err
 }
+
+func (s *fakeSource) Cursor() string     { return s.cursor }
+func (s *fakeSource) SetCursor(c string) { s.cursor = c }
 
 type fakeSink struct {
 	batches [][]domain.Reading
@@ -239,5 +243,23 @@ func TestSinkFailureDoesNotAdvanceLastGood(t *testing.T) {
 	lastGood, _, err := state.LastGood(context.Background())
 	if err != nil || len(lastGood) != 1 || lastGood[0].ID != "cached" {
 		t.Fatalf("LastGood = %+v, %v; cache must not advance on sink failure", lastGood, err)
+	}
+}
+
+func TestCyclePersistsSensorCursor(t *testing.T) {
+	clock := testClock()
+	state := memory.New()
+	source := &fakeSource{readings: []domain.Reading{validReading(clock.now, "ok-1")}, cursor: "page-9"}
+	ingestor := newTestIngestor(clock, source, state, &fakeSink{}, NewCircuitBreaker(DefaultCircuitConfig(), clock.Now))
+
+	if _, err := ingestor.Cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cursor, err := state.Cursor(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursor != "page-9" {
+		t.Fatalf("cursor = %q, want page-9", cursor)
 	}
 }

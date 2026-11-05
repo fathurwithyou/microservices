@@ -129,6 +129,15 @@ func (c *Client) Fetch(ctx context.Context) ([]domain.Reading, error) {
 	return readings, nil
 }
 
+// Cursor returns the page cursor that will be requested next.
+func (c *Client) Cursor() string { return c.cursor }
+
+// SetCursor seeds the page cursor after a restart.
+func (c *Client) SetCursor(cursor string) {
+	c.cursor = cursor
+	c.tailSeen = map[string]struct{}{}
+}
+
 func (c *Client) loadStations(ctx context.Context) error {
 	if c.loaded {
 		return nil

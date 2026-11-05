@@ -63,9 +63,15 @@ func runServe(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	defer grpcSink.Close()
+	sensorClient := sensor.New(cfg.SensorURL, cfg.SensorToken, cfg.RequestTimeout)
+	if cursor, err := state.Cursor(ctx); err != nil {
+		return fmt.Errorf("load sensor cursor: %w", err)
+	} else if cursor != "" {
+		sensorClient.SetCursor(cursor)
+	}
 	ingestor := application.NewIngestor(
 		application.IngestConfig{Interval: cfg.PollInterval},
-		sensor.New(cfg.SensorURL, cfg.SensorToken, cfg.RequestTimeout),
+		sensorClient,
 		state,
 		grpcSink,
 		application.NewValidator(
