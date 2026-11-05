@@ -21,7 +21,10 @@ func (h handler) listHazards(c *gin.Context) {
 		writeAPIError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"hazards": page.Hazards, "next_page_token": page.NextPageToken})
+	c.JSON(http.StatusOK, gin.H{
+		"hazards": page.Hazards, "next_page_token": page.NextPageToken,
+		"partial": page.Partial, "unavailable_units": page.UnavailableUnits,
+	})
 }
 
 func (h handler) getHazard(c *gin.Context) {

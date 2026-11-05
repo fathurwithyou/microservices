@@ -33,8 +33,10 @@ type HazardFilter struct {
 
 // HazardPage is a page of normalized hazard events.
 type HazardPage struct {
-	Hazards       []Hazard
-	NextPageToken string
+	Hazards          []Hazard
+	NextPageToken    string
+	Partial          bool
+	UnavailableUnits []string
 }
 
 // Hazard is the client-api-owned representation of an aggregator event.

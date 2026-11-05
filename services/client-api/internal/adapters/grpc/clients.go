@@ -119,7 +119,10 @@ func (c *aggregatorClient) List(ctx context.Context, filter ports.HazardFilter) 
 	for _, event := range response.GetHazards() {
 		hazards = append(hazards, toHazard(event))
 	}
-	return ports.HazardPage{Hazards: hazards, NextPageToken: response.GetNextPageToken()}, nil
+	return ports.HazardPage{
+		Hazards: hazards, NextPageToken: response.GetNextPageToken(),
+		Partial: response.GetPartial(), UnavailableUnits: response.GetUnavailableUnits(),
+	}, nil
 }
 
 func (c *aggregatorClient) GetHazard(ctx context.Context, hazardID string, raw bool) (ports.Hazard, error) {

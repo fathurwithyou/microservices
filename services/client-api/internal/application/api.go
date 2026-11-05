@@ -24,8 +24,10 @@ type Principal struct {
 
 // HazardList is the HTTP-facing page after summary or raw projection.
 type HazardList struct {
-	Hazards       []any  `json:"hazards"`
-	NextPageToken string `json:"next_page_token"`
+	Hazards          []any    `json:"hazards"`
+	NextPageToken    string   `json:"next_page_token"`
+	Partial          bool     `json:"partial"`
+	UnavailableUnits []string `json:"unavailable_units"`
 }
 
 // NewAPI returns the application service backed by the auth and aggregator
@@ -78,7 +80,10 @@ func (a *API) ListHazards(ctx context.Context, principal Principal, filter ports
 			hazards = append(hazards, projection.ToSummary(hazard))
 		}
 	}
-	return HazardList{Hazards: hazards, NextPageToken: page.NextPageToken}, nil
+	return HazardList{
+		Hazards: hazards, NextPageToken: page.NextPageToken,
+		Partial: page.Partial, UnavailableUnits: page.UnavailableUnits,
+	}, nil
 }
 
 func (a *API) GetHazard(ctx context.Context, principal Principal, hazardID string, raw bool) (any, error) {
