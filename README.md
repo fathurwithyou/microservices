@@ -203,6 +203,7 @@ kubectl -n tester-agent exec daemonset/tester-agent -- /app list
 | PVMBG incompatible schema | `curl -X POST -H "X-PVMBG-Admin-Key: $PVMBG_ADMIN_KEY" -d '{"mode":"breaking"}' http://pvmbg:8082/admin/schema-version` |
 | PVMBG outage | `curl -X POST -H "X-PVMBG-Admin-Key: $PVMBG_ADMIN_KEY" -d '{"enabled":true}' http://pvmbg:8082/admin/outage` |
 | Replay parked PVMBG payloads | `curl -X POST -H "Authorization: Bearer $AUDIT_TOKEN" "http://aggregator:8090/internal/ops/replay?source=PVMBG"` |
+| Import historical earthquake catalog | `go run ./services/aggregator/cmd/server import-catalog -file catalog.ndjson` |
 | Coastal sensor (Compose) | `docker compose --env-file .env --profile m2 up -d sensor-pantai coastal-ingestor` |
 
 The sensor image is pinned by digest in `deploy/kustomize/base/sensor-pantai.yaml`
