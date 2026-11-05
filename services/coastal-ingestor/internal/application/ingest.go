@@ -139,6 +139,7 @@ func (i *Ingestor) Cycle(ctx context.Context) (IngestResult, error) {
 			Retryable:  reason.Retryable(),
 			Payload:    reading.Payload,
 		})
+		readingsQuarantined.WithLabelValues(string(reason)).Inc()
 	}
 
 	if len(records) > 0 {
@@ -150,6 +151,12 @@ func (i *Ingestor) Cycle(ctx context.Context) (IngestResult, error) {
 	if len(accepted) > 0 {
 		if err := i.sink.Submit(ctx, accepted); err != nil {
 			return IngestResult{}, fmt.Errorf("submit readings: %w", err)
+		}
+		readingsAccepted.Add(float64(len(accepted)))
+		for _, reading := range accepted {
+			if reading.Critical {
+				criticalReadings.Inc()
+			}
 		}
 		if err := i.state.SaveLastGood(ctx, accepted, now); err != nil {
 			return IngestResult{}, fmt.Errorf("save last good: %w", err)

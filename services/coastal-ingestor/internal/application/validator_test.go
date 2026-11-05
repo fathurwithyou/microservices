@@ -13,6 +13,8 @@ func TestValidatorReasons(t *testing.T) {
 	base := domain.Reading{
 		ID:         "reading-1",
 		SensorID:   "sensor-1",
+		AreaName:   "Sumatera Barat",
+		Quality:    "ok",
 		OccurredAt: now.Add(-time.Minute),
 		ReceivedAt: now,
 		Latitude:   -6.2,
@@ -33,6 +35,10 @@ func TestValidatorReasons(t *testing.T) {
 		{name: "blank id", mutate: func(r *domain.Reading) { r.ID = "  \t" }, want: domain.ReasonMissingID, rejected: true},
 		{name: "missing sensor id", mutate: func(r *domain.Reading) { r.SensorID = "" }, want: domain.ReasonMissingSensorID, rejected: true},
 		{name: "blank sensor id", mutate: func(r *domain.Reading) { r.SensorID = " " }, want: domain.ReasonMissingSensorID, rejected: true},
+		{name: "empty quality", mutate: func(r *domain.Reading) { r.Quality = "" }, want: domain.ReasonQualityRejected, rejected: true},
+		{name: "expired quality", mutate: func(r *domain.Reading) { r.Quality = "expired" }, want: domain.ReasonQualityRejected, rejected: true},
+		{name: "unavailable quality", mutate: func(r *domain.Reading) { r.Quality = "unavailable" }, want: domain.ReasonQualityUnusable, rejected: true},
+		{name: "unknown station", mutate: func(r *domain.Reading) { r.AreaName = "" }, want: domain.ReasonUnknownStation, rejected: true},
 		{name: "latitude south pole", mutate: func(r *domain.Reading) { r.Latitude = -90 }},
 		{name: "latitude north pole", mutate: func(r *domain.Reading) { r.Latitude = 90 }},
 		{name: "latitude above range", mutate: func(r *domain.Reading) { r.Latitude = 90.0001 }, want: domain.ReasonInvalidLatitude, rejected: true},
@@ -82,7 +88,8 @@ func TestValidatorAcceptsEverySeverity(t *testing.T) {
 	} {
 		t.Run(string(severity), func(t *testing.T) {
 			reading := domain.Reading{
-				ID: "id", SensorID: "sensor", OccurredAt: now, Latitude: 0, Longitude: 0, Severity: severity,
+				ID: "id", SensorID: "sensor", AreaName: "Aceh", Quality: "ok",
+				OccurredAt: now, Latitude: 0, Longitude: 0, Severity: severity,
 			}
 			if reason, rejected := NewValidator(DefaultValidatorConfig(), func() time.Time { return now }, nil).Validate(reading); rejected {
 				t.Fatalf("unexpected rejection: %q", reason)
@@ -95,7 +102,7 @@ func TestValidatorCustomConfig(t *testing.T) {
 	now := time.Date(2026, time.March, 1, 12, 0, 0, 0, time.UTC)
 	cfg := ValidatorConfig{MaxFutureSkew: time.Second, MaxAge: time.Hour}
 	v := NewValidator(cfg, func() time.Time { return now }, nil)
-	reading := domain.Reading{ID: "id", SensorID: "sensor", Latitude: 0, Longitude: 0, Severity: domain.SeverityNormal}
+	reading := domain.Reading{ID: "id", SensorID: "sensor", AreaName: "Aceh", Quality: "ok", Latitude: 0, Longitude: 0, Severity: domain.SeverityNormal}
 
 	reading.OccurredAt = now.Add(2 * time.Second)
 	if reason, rejected := v.Validate(reading); !rejected || reason != domain.ReasonOccurredAtFuture {
@@ -112,7 +119,8 @@ func TestValidatorZeroConfigUsesDefaults(t *testing.T) {
 	now := time.Date(2026, time.March, 1, 12, 0, 0, 0, time.UTC)
 	v := NewValidator(ValidatorConfig{}, func() time.Time { return now }, nil)
 	reading := domain.Reading{
-		ID: "id", SensorID: "sensor", Latitude: 0, Longitude: 0, Severity: domain.SeverityNormal,
+		ID: "id", SensorID: "sensor", AreaName: "Aceh", Quality: "ok",
+		Latitude: 0, Longitude: 0, Severity: domain.SeverityNormal,
 		OccurredAt: now.Add(-24 * time.Hour),
 	}
 	if reason, rejected := v.Validate(reading); rejected {

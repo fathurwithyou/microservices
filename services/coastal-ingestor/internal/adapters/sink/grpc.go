@@ -54,6 +54,7 @@ func readingEvent(reading domain.Reading) *eventspb.HazardEvent {
 		attributes[key] = string(encoded)
 	}
 	put("sensor_id", reading.SensorID)
+	put("quality", reading.Quality)
 	put("critical", reading.Critical)
 	put("status", "active")
 
@@ -64,7 +65,7 @@ func readingEvent(reading domain.Reading) *eventspb.HazardEvent {
 		SourceRefId: reading.ID,
 		HazardType:  eventspb.HazardType_HAZARD_TYPE_COASTAL,
 		Severity:    coastalSeverity(reading.Severity),
-		AreaName:    "Coastal",
+		AreaName:    reading.AreaName,
 		Latitude:    reading.Latitude,
 		Longitude:   reading.Longitude,
 		OccurredAt:  reading.OccurredAt.UTC().Format(time.RFC3339),

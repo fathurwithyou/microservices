@@ -12,20 +12,35 @@ import (
 	"github.com/fathurwithyou/microservices/services/coastal-ingestor/internal/ports"
 )
 
-func TestFetchMapsReadingsAndSendsToken(t *testing.T) {
+const stationsBody = `{"items":[
+ {"station_id":"stn-padang-01","name":"Padang","province":"Sumatera Barat","latitude":-0.9492,"longitude":100.3543}
+]}`
+
+func TestFetchWalksPagesAndMapsContract(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
 			t.Errorf("Authorization = %q, want Bearer secret", got)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{
-			"id":"r1","sensor_id":"s1",
-			"occurred_at":"2026-03-01T11:59:00Z",
-			"received_at":"2026-03-01T12:00:00Z",
-			"latitude":-6.2,"longitude":106.8,
-			"severity":"SIAGA","critical":true,
-			"payload":{"raw":true}
-		}]`))
+		switch r.URL.Path {
+		case "/v1/stations":
+			_, _ = w.Write([]byte(stationsBody))
+		case "/v1/observations":
+			switch r.URL.Query().Get("cursor") {
+			case "":
+				_, _ = w.Write([]byte(`{"generated_at":"2026-03-01T12:00:00Z","items":[
+				 {"observation_id":"obs-1","station_id":"stn-padang-01","observed_at":"2026-03-01T11:59:00Z","quality":"ok","wave_height_m":0.8,"sea_level_anomaly_m":0.1,"critical":false}
+				],"next_cursor":"page-2"}`))
+			case "page-2":
+				_, _ = w.Write([]byte(`{"generated_at":"2026-03-01T12:00:00Z","items":[
+				 {"observation_id":"obs-1","station_id":"stn-padang-01","observed_at":"2026-03-01T11:59:00Z","quality":"ok"},
+				 {"observation_id":"obs-2","station_id":"stn-padang-01","observed_at":"2026-03-01T12:00:00Z","quality":"suspect","critical":true}
+				],"next_cursor":null}`))
+			default:
+				t.Errorf("unexpected cursor %q", r.URL.Query().Get("cursor"))
+			}
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
 	}))
 	defer server.Close()
 
@@ -33,18 +48,47 @@ func TestFetchMapsReadingsAndSendsToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch returned error: %v", err)
 	}
-	if len(readings) != 1 {
-		t.Fatalf("len(readings) = %d, want 1", len(readings))
+	if len(readings) != 2 {
+		t.Fatalf("len(readings) = %d, want 2", len(readings))
 	}
-	got := readings[0]
-	if got.ID != "r1" || got.SensorID != "s1" || got.Severity != domain.SeveritySiaga || !got.Critical {
-		t.Fatalf("unexpected reading: %+v", got)
+	first := readings[0]
+	if first.ID != "obs-1" || first.SensorID != "stn-padang-01" || first.AreaName != "Sumatera Barat" {
+		t.Fatalf("unexpected first reading: %+v", first)
 	}
-	if string(got.Payload) != `{"raw":true}` {
-		t.Errorf("Payload = %s, want raw JSON", got.Payload)
+	if first.Latitude != -0.9492 || first.Longitude != 100.3543 {
+		t.Errorf("coordinates not taken from the station registry: %+v", first)
 	}
-	if !got.OccurredAt.Equal(time.Date(2026, 3, 1, 11, 59, 0, 0, time.UTC)) {
-		t.Errorf("OccurredAt = %s", got.OccurredAt)
+	if first.Quality != "ok" || first.Severity != domain.SeverityNormal || first.Critical {
+		t.Errorf("unexpected first classification: %+v", first)
+	}
+	second := readings[1]
+	if second.Quality != "suspect" || !second.Critical || second.Severity != domain.SeverityAwas {
+		t.Errorf("unexpected second classification: %+v", second)
+	}
+}
+
+func TestFetchDeduplicatesRepeatedTailPage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/stations" {
+			_, _ = w.Write([]byte(stationsBody))
+			return
+		}
+		_, _ = w.Write([]byte(`{"items":[
+		 {"observation_id":"obs-1","station_id":"stn-padang-01","observed_at":"2026-03-01T11:59:00Z","quality":"ok"}
+		],"next_cursor":null}`))
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "secret", time.Second)
+	if _, err := client.Fetch(context.Background()); err != nil {
+		t.Fatalf("first Fetch: %v", err)
+	}
+	readings, err := client.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("second Fetch: %v", err)
+	}
+	if len(readings) != 0 {
+		t.Fatalf("second Fetch returned %d readings, want 0", len(readings))
 	}
 }
 

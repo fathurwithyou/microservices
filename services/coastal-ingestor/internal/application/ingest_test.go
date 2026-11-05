@@ -45,6 +45,8 @@ func validReading(now time.Time, id string) domain.Reading {
 	return domain.Reading{
 		ID:         id,
 		SensorID:   "sensor-1",
+		AreaName:   "Sumatera Barat",
+		Quality:    "ok",
 		OccurredAt: now.Add(-time.Minute),
 		ReceivedAt: now,
 		Latitude:   -6.2,
@@ -81,8 +83,8 @@ func TestCycleQuarantinesInvalidReadings(t *testing.T) {
 	sink := &fakeSink{}
 	source := &fakeSource{readings: []domain.Reading{
 		validReading(clock.now, "ok-1"),
-		{ID: "", SensorID: "s", OccurredAt: clock.now, Severity: domain.SeverityNormal},
-		{ID: "bad-severity", SensorID: "s", OccurredAt: clock.now, Severity: "UNKNOWN"},
+		{ID: "", SensorID: "s", AreaName: "Aceh", Quality: "ok", OccurredAt: clock.now, Severity: domain.SeverityNormal},
+		{ID: "bad-severity", SensorID: "s", AreaName: "Aceh", Quality: "ok", OccurredAt: clock.now, Severity: "UNKNOWN"},
 	}}
 	ingestor := newTestIngestor(clock, source, state, sink, NewCircuitBreaker(DefaultCircuitConfig(), clock.Now))
 

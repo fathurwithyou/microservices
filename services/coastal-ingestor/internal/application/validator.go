@@ -61,6 +61,18 @@ func (v *Validator) Validate(reading domain.Reading) (domain.QuarantineReason, b
 	if strings.TrimSpace(reading.SensorID) == "" {
 		return domain.ReasonMissingSensorID, true
 	}
+	switch reading.Quality {
+	case "ok":
+	case "unavailable":
+		return domain.ReasonQualityUnusable, true
+	case "":
+		return domain.ReasonQualityRejected, true
+	default:
+		return domain.ReasonQualityRejected, true
+	}
+	if strings.TrimSpace(reading.AreaName) == "" {
+		return domain.ReasonUnknownStation, true
+	}
 	// Negated comparisons also reject NaN.
 	if !(reading.Latitude >= -90 && reading.Latitude <= 90) {
 		return domain.ReasonInvalidLatitude, true

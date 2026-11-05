@@ -32,6 +32,8 @@ func (s Severity) Valid() bool {
 type Reading struct {
 	ID         string
 	SensorID   string
+	AreaName   string
+	Quality    string
 	OccurredAt time.Time
 	ReceivedAt time.Time
 	Latitude   float64

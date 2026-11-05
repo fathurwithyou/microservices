@@ -69,7 +69,13 @@ func runServe(ctx context.Context, logger *slog.Logger) error {
 		state,
 		grpcSink,
 		application.NewValidator(
-			application.ValidatorConfig{MaxAge: cfg.MaxAge},
+			application.ValidatorConfig{
+				// The sensor accelerates its own clock (PANTAI_SPEED), so a
+				// virtual observed_at can legitimately run far ahead of the
+				// pod clock. Staleness is still checked against MaxAge.
+				MaxFutureSkew: 365 * 24 * time.Hour,
+				MaxAge:        cfg.MaxAge,
+			},
 			time.Now,
 			nil,
 		),

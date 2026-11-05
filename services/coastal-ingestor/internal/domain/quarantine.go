@@ -8,6 +8,9 @@ type QuarantineReason string
 const (
 	ReasonMissingID        QuarantineReason = "missing_id"
 	ReasonMissingSensorID  QuarantineReason = "missing_sensor_id"
+	ReasonUnknownStation   QuarantineReason = "unknown_station"
+	ReasonQualityUnusable  QuarantineReason = "quality_unusable"
+	ReasonQualityRejected  QuarantineReason = "quality_rejected"
 	ReasonInvalidLatitude  QuarantineReason = "invalid_latitude"
 	ReasonInvalidLongitude QuarantineReason = "invalid_longitude"
 	ReasonOccurredAtZero   QuarantineReason = "occurred_at_zero"
@@ -18,10 +21,10 @@ const (
 )
 
 // Retryable reports whether redelivering the same message later can succeed.
-// A future timestamp becomes valid as time passes; the remaining reasons are
-// permanent for this payload.
+// A future timestamp becomes valid as time passes, an unavailable sensor may
+// recover, and the remaining reasons are permanent for this payload.
 func (r QuarantineReason) Retryable() bool {
-	return r == ReasonOccurredAtFuture
+	return r == ReasonOccurredAtFuture || r == ReasonQualityUnusable
 }
 
 // QuarantineRecord is the durable form of a rejected reading.
