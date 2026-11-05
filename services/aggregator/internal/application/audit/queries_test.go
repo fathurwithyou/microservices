@@ -40,7 +40,13 @@ func (f *fakeRepository) SourceRefIDs(context.Context, domain.Source) ([]string,
 	return f.ids, nil
 }
 
+func (f *fakeRepository) HazardLocations(context.Context, string) ([]Location, error) {
+	return nil, nil
+}
+
 func (f *fakeRepository) HazardExists(context.Context, string) (bool, error) { return true, nil }
+func (f *fakeRepository) UnavailableUnits(context.Context) ([]string, error) { return nil, nil }
+
 func (f *fakeRepository) ListIngestFailures(context.Context, domain.Source, int) ([]domain.IngestFailure, error) {
 	return nil, nil
 }

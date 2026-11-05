@@ -7,10 +7,11 @@ import (
 )
 
 type fakeRepository struct {
-	types      []TypeCount
-	severities []SeverityCount
-	areas      []AreaCount
-	buckets    []TimeBucket
+	types       []TypeCount
+	severities  []SeverityCount
+	areas       []AreaCount
+	buckets     []TimeBucket
+	unavailable []string
 }
 
 func (f fakeRepository) CountByHazardType(context.Context, Filter) ([]TypeCount, error) {
@@ -22,8 +23,23 @@ func (f fakeRepository) CountBySeverity(context.Context, Filter) ([]SeverityCoun
 func (f fakeRepository) CountByArea(context.Context, Filter) ([]AreaCount, error) {
 	return f.areas, nil
 }
+func (f fakeRepository) UnavailableUnits(context.Context) ([]string, error) {
+	return f.unavailable, nil
+}
+
 func (f fakeRepository) CountByTimeBucket(context.Context, Filter) ([]TimeBucket, error) {
 	return f.buckets, nil
+}
+
+func TestGetMarksPartialWhenStorageUnavailable(t *testing.T) {
+	queries := NewQueries(fakeRepository{unavailable: []string{"node-c"}})
+	result, err := queries.Get(context.Background(), Filter{Bucket: BucketDay})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Partial || len(result.UnavailableUnits) != 1 || result.UnavailableUnits[0] != "node-c" {
+		t.Fatalf("result = %+v, want partial with node-c", result)
+	}
 }
 
 func TestGetDefaultsWindowAndBucket(t *testing.T) {
@@ -68,6 +84,8 @@ func (c captureRepository) CountBySeverity(context.Context, Filter) ([]SeverityC
 func (c captureRepository) CountByArea(context.Context, Filter) ([]AreaCount, error) {
 	return nil, nil
 }
+func (c captureRepository) UnavailableUnits(context.Context) ([]string, error) { return nil, nil }
+
 func (c captureRepository) CountByTimeBucket(context.Context, Filter) ([]TimeBucket, error) {
 	return nil, nil
 }

@@ -26,11 +26,20 @@ type Filter struct {
 	Cursor string
 }
 
+// Location is one physical copy of a hazard row.
+type Location struct {
+	Node string
+	Unit string
+	Role string
+}
+
 // Repository is the storage capability required by audit queries.
 type Repository interface {
 	ListAuditEvents(context.Context, Filter) ([]domain.HazardEvent, error)
 	SourceRefIDs(context.Context, domain.Source) ([]string, error)
 	HazardExists(context.Context, string) (bool, error)
+	HazardLocations(context.Context, string) ([]Location, error)
+	UnavailableUnits(context.Context) ([]string, error)
 	ListIngestFailures(context.Context, domain.Source, int) ([]domain.IngestFailure, error)
 }
 
@@ -88,6 +97,16 @@ func (q *Queries) Checksum(ctx context.Context, source domain.Source) (int, stri
 // the transport because it depends on the storage topology.
 func (q *Queries) Exists(ctx context.Context, hazardID string) (bool, error) {
 	return q.repository.HazardExists(ctx, hazardID)
+}
+
+// Locations returns the replicas of the range that holds hazardID.
+func (q *Queries) Locations(ctx context.Context, hazardID string) ([]Location, error) {
+	return q.repository.HazardLocations(ctx, hazardID)
+}
+
+// Unavailable returns the storage units that cannot currently be reached.
+func (q *Queries) Unavailable(ctx context.Context) ([]string, error) {
+	return q.repository.UnavailableUnits(ctx)
 }
 
 // Unprocessed returns parked or retrying payloads for operators.

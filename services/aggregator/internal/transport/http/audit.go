@@ -78,8 +78,9 @@ func (h *auditHandler) events(response http.ResponseWriter, request *http.Reques
 			Attributes: item.Attributes,
 		})
 	}
+	unavailable, _ := h.queries.Unavailable(request.Context())
 	writeJSON(response, http.StatusOK, map[string]any{
-		"items": payload, "next_cursor": nullableString(next), "partial": false, "unavailable_units": []string{},
+		"items": payload, "next_cursor": nullableString(next), "partial": len(unavailable) > 0, "unavailable_units": units(unavailable),
 	})
 }
 
@@ -94,9 +95,10 @@ func (h *auditHandler) checksum(response http.ResponseWriter, request *http.Requ
 		writeAuditError(response, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	unavailable, _ := h.queries.Unavailable(request.Context())
 	writeJSON(response, http.StatusOK, map[string]any{
 		"source": string(source), "count": count, "checksum": checksum, "algorithm": "sha256",
-		"as_of": time.Now().UTC().Format(time.RFC3339), "partial": false, "unavailable_units": []string{},
+		"as_of": time.Now().UTC().Format(time.RFC3339), "partial": len(unavailable) > 0, "unavailable_units": units(unavailable),
 	})
 }
 
@@ -164,11 +166,32 @@ func (h *auditHandler) location(response http.ResponseWriter, request *http.Requ
 		writeAuditError(response, http.StatusNotFound, "not_found", "hazard_id not found")
 		return
 	}
+	locations, err := h.queries.Locations(request.Context(), hazardID)
+	if err != nil || len(locations) == 0 {
+		// Fall back to the configured unit so the endpoint keeps answering when
+		// range metadata is unavailable (for example on a memory store).
+		locations = []audit.Location{{Node: h.node, Unit: h.unit, Role: "primary"}}
+	}
+	payload := make([]map[string]string, 0, len(locations))
+	for _, location := range locations {
+		payload = append(payload, map[string]string{
+			"node": location.Node,
+			"unit": location.Unit,
+			"role": location.Role,
+		})
+	}
 	writeJSON(response, http.StatusOK, map[string]any{
 		"hazard_id": hazardID,
-		"locations": []map[string]string{{"node": h.node, "unit": h.unit, "role": "primary"}},
+		"locations": payload,
 		"partial":   false,
 	})
+}
+
+func units(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 type auditEvent struct {

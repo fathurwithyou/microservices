@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/analytics"
@@ -450,4 +452,108 @@ func limit(value int) int {
 		return 100
 	}
 	return value
+}
+
+// HazardLocations reads the range metadata for one hazard row and maps replica
+// store IDs to the node names declared in the CockroachDB localities.
+func (s *Repository) HazardLocations(ctx context.Context, hazardID string) ([]audit.Location, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT range_id, replicas, lease_holder
+		 FROM [SHOW RANGE FROM TABLE hazard_events FOR ROW ($1)]`, hazardID)
+	if err != nil {
+		return nil, fmt.Errorf("show range: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	var (
+		rangeID int64
+		replica []int64
+		lease   int64
+	)
+	if err := rows.Scan(&rangeID, &replica, &lease); err != nil {
+		return nil, fmt.Errorf("scan range: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	names, err := s.nodeNames(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(replica, func(i, j int) bool { return replica[i] < replica[j] })
+	locations := make([]audit.Location, 0, len(replica))
+	replicaIndex := 0
+	for _, nodeID := range replica {
+		name := names[nodeID]
+		if name == "" {
+			name = fmt.Sprintf("node-%d", nodeID)
+		}
+		if nodeID == lease {
+			locations = append(locations, audit.Location{Node: name, Unit: fmt.Sprintf("shard-%d", rangeID), Role: "primary"})
+			continue
+		}
+		replicaIndex++
+		locations = append(locations, audit.Location{Node: name, Unit: fmt.Sprintf("shard-%d-r%d", rangeID, replicaIndex), Role: "replica"})
+	}
+	// Keep the lease holder first so callers see the writable copy at index 0.
+	sort.SliceStable(locations, func(i, j int) bool { return locations[i].Role == "primary" && locations[j].Role != "primary" })
+	return locations, nil
+}
+
+func (s *Repository) nodeNames(ctx context.Context) (map[int64]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT node_id, locality, address FROM crdb_internal.gossip_nodes`)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes: %w", err)
+	}
+	defer rows.Close()
+	names := make(map[int64]string)
+	for rows.Next() {
+		var (
+			nodeID   int64
+			locality string
+			address  string
+		)
+		if err := rows.Scan(&nodeID, &locality, &address); err != nil {
+			return nil, err
+		}
+		names[nodeID] = nodeName(locality, address)
+	}
+	return names, rows.Err()
+}
+
+func nodeName(locality, address string) string {
+	for _, part := range strings.Split(locality, ",") {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(part), "cloud="); ok {
+			return value
+		}
+	}
+	return address
+}
+
+// UnavailableUnits returns the store nodes currently marked not live.
+func (s *Repository) UnavailableUnits(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT node_id, locality, address, is_live FROM crdb_internal.gossip_nodes`)
+	if err != nil {
+		return nil, fmt.Errorf("list store nodes: %w", err)
+	}
+	defer rows.Close()
+	var units []string
+	for rows.Next() {
+		var (
+			nodeID   int64
+			locality string
+			address  string
+			live     bool
+		)
+		if err := rows.Scan(&nodeID, &locality, &address, &live); err != nil {
+			return nil, err
+		}
+		if !live {
+			units = append(units, nodeName(locality, address))
+		}
+	}
+	sort.Strings(units)
+	return units, rows.Err()
 }

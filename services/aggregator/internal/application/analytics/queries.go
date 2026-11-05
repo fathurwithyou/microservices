@@ -52,10 +52,12 @@ type TimeBucket struct {
 
 // Result is the dashboard aggregate.
 type Result struct {
-	HazardTypes []TypeCount
-	Severities  []SeverityCount
-	Areas       []AreaCount
-	Buckets     []TimeBucket
+	HazardTypes      []TypeCount
+	Severities       []SeverityCount
+	Areas            []AreaCount
+	Buckets          []TimeBucket
+	Partial          bool
+	UnavailableUnits []string
 }
 
 // Repository supplies aggregate queries.
@@ -64,6 +66,7 @@ type Repository interface {
 	CountBySeverity(context.Context, Filter) ([]SeverityCount, error)
 	CountByArea(context.Context, Filter) ([]AreaCount, error)
 	CountByTimeBucket(context.Context, Filter) ([]TimeBucket, error)
+	UnavailableUnits(context.Context) ([]string, error)
 }
 
 // Queries serves analytics reads.
@@ -107,5 +110,12 @@ func (q *Queries) Get(ctx context.Context, filter Filter) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("count time buckets: %w", err)
 	}
-	return Result{HazardTypes: hazardTypes, Severities: severities, Areas: areas, Buckets: buckets}, nil
+	unavailable, err := q.repository.UnavailableUnits(ctx)
+	if err != nil {
+		return Result{}, fmt.Errorf("storage health: %w", err)
+	}
+	return Result{
+		HazardTypes: hazardTypes, Severities: severities, Areas: areas, Buckets: buckets,
+		Partial: len(unavailable) > 0, UnavailableUnits: unavailable,
+	}, nil
 }

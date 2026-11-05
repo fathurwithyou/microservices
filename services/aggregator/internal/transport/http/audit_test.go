@@ -21,6 +21,12 @@ func (auditRepository) SourceRefIDs(context.Context, domain.Source) ([]string, e
 	return []string{"det-1"}, nil
 }
 func (auditRepository) HazardExists(context.Context, string) (bool, error) { return true, nil }
+
+func (auditRepository) HazardLocations(context.Context, string) ([]audit.Location, error) {
+	return []audit.Location{{Node: "node-b", Unit: "shard-2", Role: "primary"}}, nil
+}
+
+func (auditRepository) UnavailableUnits(context.Context) ([]string, error) { return nil, nil }
 func (auditRepository) ListIngestFailures(context.Context, domain.Source, int) ([]domain.IngestFailure, error) {
 	return nil, nil
 }

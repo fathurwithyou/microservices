@@ -472,3 +472,11 @@ func defaultVolcanoes() map[string]domain.VolcanoReference {
 func cloneVolcanoes(input map[string]domain.VolcanoReference) map[string]domain.VolcanoReference {
 	return maps.Clone(input)
 }
+
+// HazardLocations returns the single in-memory unit for a hazard.
+func (r *Repository) HazardLocations(_ context.Context, _ string) ([]audit.Location, error) {
+	return nil, nil
+}
+
+// UnavailableUnits is always empty for the in-memory store.
+func (s *Repository) UnavailableUnits(context.Context) ([]string, error) { return nil, nil }

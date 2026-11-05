@@ -26,7 +26,7 @@ func (h *queryHandler) GetAnalytics(ctx context.Context, request *aggregatorpb.A
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	response := &aggregatorpb.AnalyticsResponse{}
+	response := &aggregatorpb.AnalyticsResponse{Partial: result.Partial, UnavailableUnits: result.UnavailableUnits}
 	for _, item := range result.HazardTypes {
 		response.HazardTypes = append(response.HazardTypes, &aggregatorpb.HazardTypeCount{HazardType: hazardTypeToProto(item.HazardType), Count: item.Count})
 	}
