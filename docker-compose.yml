@@ -177,12 +177,25 @@ services:
       timeout: 2s
       retries: 10
 
+  sensor-pantai:
+    image: sustuna/sensor-pantai@sha256:51fbd90d3891ad6e9f5768ad330ffb65205644cb29e50da65c7538f2e0b4397d
+    profiles: [m2]
+    environment:
+      PANTAI_AUTH_TOKEN: ${SENSOR_TOKEN:-local-sensor-token}
+      PANTAI_PROFILE: ${PANTAI_PROFILE:-practice}
+      PANTAI_ADDR: ":8080"
+      PANTAI_STATE_DIR: /data
+    ports: ["${SENSOR_HOST_PORT:-8088}:8080"]
+    volumes: [sensor-state:/data]
+
   coastal-ingestor:
     build: { context: ., dockerfile: services/coastal-ingestor/Dockerfile }
     profiles: [m2]
+    depends_on: { sensor-pantai: { condition: service_started } }
     environment:
-      SENSOR_URL: ${SENSOR_URL:-}
-      SENSOR_TOKEN: ${SENSOR_TOKEN:-}
+      SENSOR_URL: ${SENSOR_URL:-http://sensor-pantai:8080}
+      SENSOR_TOKEN: ${SENSOR_TOKEN:-local-sensor-token}
+      COASTAL_INGESTOR_POLL_INTERVAL: 1s
       AGGREGATOR_GRPC_ADDR: aggregator:9090
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN}
       COASTAL_INGESTOR_HEALTH_PORT: 8087
@@ -240,3 +253,4 @@ services:
 volumes:
   postgres-data:
   cockroach-data:
+  sensor-state:

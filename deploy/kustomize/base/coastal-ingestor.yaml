@@ -18,7 +18,9 @@ spec:
           envFrom: [{ configMapRef: { name: bnpb-config } }]
           env:
             - { name: COASTAL_INGESTOR_HEALTH_PORT, value: "8087" }
+            - { name: SENSOR_URL, value: http://sensor-pantai:8080 }
             - { name: SENSOR_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: SENSOR_TOKEN } } }
+            - { name: COASTAL_INGESTOR_POLL_INTERVAL, value: "1s" }
             - { name: INTERNAL_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: INTERNAL_SERVICE_TOKEN } } }
             - { name: COASTAL_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: COASTAL_DATABASE_URL } } }
           readinessProbe: { httpGet: { path: /health, port: health }, initialDelaySeconds: 2 }
@@ -27,3 +29,12 @@ spec:
             requests: { memory: 128Mi }
             limits: { memory: 256Mi }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coastal-ingestor
+  labels: { app: coastal-ingestor }
+spec:
+  selector: { app: coastal-ingestor }
+  ports: [{ name: health, port: 8087, targetPort: health }]

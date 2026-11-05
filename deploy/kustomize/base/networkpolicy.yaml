@@ -34,4 +34,17 @@ spec:
   ingress:
     - from:
         - { podSelector: { matchLabels: { app: aggregator } } }
+        - { podSelector: { matchLabels: { app: satellite-ingestor } } }
+        - { podSelector: { matchLabels: { app: coastal-ingestor } } }
       ports: [{ protocol: TCP, port: 26257 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: sensor-pantai-consumer }
+spec:
+  podSelector: { matchLabels: { app: sensor-pantai } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - { podSelector: { matchLabels: { app: coastal-ingestor } } }
+      ports: [{ protocol: TCP, port: 8080 }]

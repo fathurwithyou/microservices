@@ -28,3 +28,12 @@ spec:
             requests: { memory: 128Mi }
             limits: { memory: 256Mi }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: critical-notifier
+  labels: { app: critical-notifier }
+spec:
+  selector: { app: critical-notifier }
+  ports: [{ name: health, port: 8093, targetPort: health }]

@@ -19,4 +19,6 @@ data:
   BMKG_DELAY: 100ms
   PVMBG_MIN_DELAY: 500ms
   PVMBG_MAX_DELAY: 3s
+  SENSOR_URL: http://sensor-pantai:8080
+  PANTAI_PROFILE: practice
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318

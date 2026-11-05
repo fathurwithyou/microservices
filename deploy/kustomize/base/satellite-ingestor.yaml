@@ -4,7 +4,7 @@ metadata:
   name: satellite-ingestor
   labels: { app: satellite-ingestor, role: sensor }
 spec:
-  replicas: 2
+  replicas: 1
   selector: { matchLabels: { app: satellite-ingestor } }
   template:
     metadata:
@@ -28,3 +28,12 @@ spec:
             requests: { memory: 128Mi }
             limits: { memory: 256Mi }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: satellite-ingestor
+  labels: { app: satellite-ingestor }
+spec:
+  selector: { app: satellite-ingestor }
+  ports: [{ name: health, port: 8086, targetPort: health }]
