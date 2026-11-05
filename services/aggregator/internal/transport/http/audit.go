@@ -90,6 +90,10 @@ func (h *auditHandler) checksum(response http.ResponseWriter, request *http.Requ
 		writeAuditError(response, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	if source == "" {
+		writeAuditError(response, http.StatusBadRequest, "bad_request", "source is required")
+		return
+	}
 	count, checksum, err := h.queries.Checksum(request.Context(), source)
 	if err != nil {
 		writeAuditError(response, http.StatusInternalServerError, "internal", err.Error())

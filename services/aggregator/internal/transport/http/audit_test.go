@@ -76,3 +76,19 @@ func TestAuditEventsAndChecksum(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditChecksumRequiresSource(t *testing.T) {
+	server := auditTestServer("secret")
+	defer server.Close()
+
+	request, _ := http.NewRequest(http.MethodGet, server.URL+"/internal/audit/checksum", nil)
+	request.Header.Set("Authorization", "Bearer secret")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", response.StatusCode)
+	}
+}
