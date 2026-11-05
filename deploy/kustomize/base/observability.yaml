@@ -455,6 +455,28 @@ data:
               "legendFormat": "submit {{status}}"
             }
           ]
+        },
+        {
+          "id": 7,
+          "title": "Satellite feed lag (events)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 16
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max(satellite_feed_lag_events)",
+              "legendFormat": "lag"
+            }
+          ]
         }
       ]
     }
