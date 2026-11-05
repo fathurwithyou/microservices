@@ -88,11 +88,12 @@ type AnalyticsFilter struct {
 
 // Analytics is the client-api view of dashboard aggregates.
 type Analytics struct {
-	HazardTypes []AnalyticsTypeCount `json:"hazard_types"`
-	Severities  []AnalyticsSeverity  `json:"severities"`
-	Areas       []AnalyticsArea      `json:"areas"`
-	Buckets     []AnalyticsBucket    `json:"time_buckets"`
-	Partial     bool                 `json:"partial"`
+	HazardTypes      []AnalyticsTypeCount `json:"hazard_types"`
+	Severities       []AnalyticsSeverity  `json:"severities"`
+	Areas            []AnalyticsArea      `json:"areas"`
+	Buckets          []AnalyticsBucket    `json:"time_buckets"`
+	Partial          bool                 `json:"partial"`
+	UnavailableUnits []string             `json:"unavailable_units"`
 }
 
 type AnalyticsTypeCount struct {

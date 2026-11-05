@@ -163,7 +163,7 @@ func (c *aggregatorClient) Analytics(ctx context.Context, filter ports.Analytics
 	if err != nil {
 		return ports.Analytics{}, grpcError(err)
 	}
-	result := ports.Analytics{Partial: response.GetPartial()}
+	result := ports.Analytics{Partial: response.GetPartial(), UnavailableUnits: response.GetUnavailableUnits()}
 	for _, item := range response.GetHazardTypes() {
 		result.HazardTypes = append(result.HazardTypes, ports.AnalyticsTypeCount{HazardType: enumName(item.GetHazardType().String()), Count: item.GetCount()})
 	}
