@@ -136,9 +136,9 @@ func (h *auditHandler) unprocessed(response http.ResponseWriter, request *http.R
 		writeAuditError(response, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	items, err := h.queries.Unprocessed(request.Context(), source, limit)
+	items, next, err := h.queries.Unprocessed(request.Context(), source, limit, request.URL.Query().Get("cursor"))
 	if err != nil {
-		writeAuditError(response, http.StatusInternalServerError, "internal", err.Error())
+		writeAuditError(response, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
 	payload := make([]map[string]any, 0, len(items))
@@ -148,7 +148,7 @@ func (h *auditHandler) unprocessed(response http.ResponseWriter, request *http.R
 			"reason": item.Reason, "retryable": item.Retryable, "attempts": item.Attempts, "status": item.Status,
 		})
 	}
-	writeJSON(response, http.StatusOK, map[string]any{"items": payload, "next_cursor": nil})
+	writeJSON(response, http.StatusOK, map[string]any{"items": payload, "next_cursor": nullableString(next)})
 }
 
 func (h *auditHandler) location(response http.ResponseWriter, request *http.Request) {

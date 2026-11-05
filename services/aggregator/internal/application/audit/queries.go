@@ -40,7 +40,7 @@ type Repository interface {
 	HazardExists(context.Context, string) (bool, error)
 	HazardLocations(context.Context, string) ([]Location, error)
 	UnavailableUnits(context.Context) ([]string, error)
-	ListIngestFailures(context.Context, domain.Source, int) ([]domain.IngestFailure, error)
+	ListIngestFailures(context.Context, domain.Source, int, time.Time, string) ([]domain.IngestFailure, error)
 }
 
 // Queries serves Audit API reads.
@@ -109,12 +109,61 @@ func (q *Queries) Unavailable(ctx context.Context) ([]string, error) {
 	return q.repository.UnavailableUnits(ctx)
 }
 
-// Unprocessed returns parked or retrying payloads for operators.
-func (q *Queries) Unprocessed(ctx context.Context, source domain.Source, limit int) ([]domain.IngestFailure, error) {
+// Unprocessed returns parked or retrying payloads for operators. The cursor
+// is the received_at and message_id of the last item on the previous page.
+func (q *Queries) Unprocessed(ctx context.Context, source domain.Source, limit int, cursorValue string) ([]domain.IngestFailure, string, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	return q.repository.ListIngestFailures(ctx, source, limit)
+	var (
+		after   time.Time
+		afterID string
+	)
+	if cursorValue != "" {
+		decoded, err := decodeFailureCursor(cursorValue)
+		if err != nil {
+			return nil, "", err
+		}
+		after, afterID = decoded.ReceivedAt, decoded.MessageID
+	}
+	items, err := q.repository.ListIngestFailures(ctx, source, limit, after, afterID)
+	if err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(items) == limit {
+		last := items[len(items)-1]
+		next, err = encodeFailureCursor(failureCursor{ReceivedAt: last.ReceivedAt, MessageID: last.MessageID})
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	return items, next, nil
+}
+
+type failureCursor struct {
+	ReceivedAt time.Time `json:"received_at"`
+	MessageID  string    `json:"message_id"`
+}
+
+func encodeFailureCursor(value failureCursor) (string, error) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeFailureCursor(value string) (failureCursor, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return failureCursor{}, ErrInvalidCursor
+	}
+	var result failureCursor
+	if err := json.Unmarshal(payload, &result); err != nil || result.ReceivedAt.IsZero() || result.MessageID == "" {
+		return failureCursor{}, ErrInvalidCursor
+	}
+	return result, nil
 }
 
 type cursor struct {

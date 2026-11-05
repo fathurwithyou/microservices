@@ -47,7 +47,7 @@ func (f *fakeRepository) HazardLocations(context.Context, string) ([]Location, e
 func (f *fakeRepository) HazardExists(context.Context, string) (bool, error) { return true, nil }
 func (f *fakeRepository) UnavailableUnits(context.Context) ([]string, error) { return nil, nil }
 
-func (f *fakeRepository) ListIngestFailures(context.Context, domain.Source, int) ([]domain.IngestFailure, error) {
+func (f *fakeRepository) ListIngestFailures(context.Context, domain.Source, int, time.Time, string) ([]domain.IngestFailure, error) {
 	return nil, nil
 }
 
@@ -101,5 +101,27 @@ func TestChecksumUsesSortedSourceRefIDs(t *testing.T) {
 	want := sha256.Sum256([]byte("a\nb\nc"))
 	if checksum != hex.EncodeToString(want[:]) {
 		t.Fatalf("checksum = %s", checksum)
+	}
+}
+
+func TestFailureCursorRoundTrip(t *testing.T) {
+	want := failureCursor{ReceivedAt: time.Date(2026, 11, 12, 2, 40, 11, 0, time.UTC), MessageID: "msg-31c9"}
+	encoded, err := encodeFailureCursor(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeFailureCursor(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.ReceivedAt.Equal(want.ReceivedAt) || got.MessageID != want.MessageID {
+		t.Fatalf("decoded = %+v, want %+v", got, want)
+	}
+}
+
+func TestUnprocessedRejectsInvalidCursor(t *testing.T) {
+	queries := NewQueries(&fakeRepository{})
+	if _, _, err := queries.Unprocessed(context.Background(), "", 10, "not-a-cursor"); !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("err = %v, want ErrInvalidCursor", err)
 	}
 }

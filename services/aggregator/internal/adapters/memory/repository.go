@@ -198,7 +198,7 @@ func (s *Repository) MarkIngestFailureRecovered(_ context.Context, messageID str
 }
 
 // ListIngestFailures returns parked/retrying payloads for audit.
-func (s *Repository) ListIngestFailures(_ context.Context, source domain.Source, limit int) ([]domain.IngestFailure, error) {
+func (s *Repository) ListIngestFailures(_ context.Context, source domain.Source, limit int, after time.Time, afterID string) ([]domain.IngestFailure, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	items := make([]domain.IngestFailure, 0)
@@ -207,6 +207,10 @@ func (s *Repository) ListIngestFailures(_ context.Context, source domain.Source,
 			continue
 		}
 		if failure.Status != domain.FailureParked && failure.Status != domain.FailureRetrying {
+			continue
+		}
+		if afterID != "" && (failure.ReceivedAt.Before(after) ||
+			(failure.ReceivedAt.Equal(after) && failure.MessageID <= afterID)) {
 			continue
 		}
 		items = append(items, failure)

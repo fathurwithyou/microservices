@@ -16,7 +16,7 @@ type fakeRepository struct {
 	recovered []string
 }
 
-func (f *fakeRepository) ListIngestFailures(context.Context, domain.Source, int) ([]domain.IngestFailure, error) {
+func (f *fakeRepository) ListIngestFailures(context.Context, domain.Source, int, time.Time, string) ([]domain.IngestFailure, error) {
 	return f.items, nil
 }
 func (f *fakeRepository) MarkIngestFailureRecovered(_ context.Context, id string) error {

@@ -126,10 +126,11 @@ ON CONFLICT (message_id) DO NOTHING`, failure.MessageID, failure.Source, failure
 }
 
 // ListIngestFailures returns parked/retrying payloads for audit.
-func (s *Repository) ListIngestFailures(ctx context.Context, source domain.Source, limit int) ([]domain.IngestFailure, error) {
+func (s *Repository) ListIngestFailures(ctx context.Context, source domain.Source, limit int, after time.Time, afterID string) ([]domain.IngestFailure, error) {
 	rows, err := s.pool.Query(ctx, `SELECT message_id, source, received_at, reason, retryable, attempts, status, payload
 FROM ingest_failures WHERE ($1 = '' OR source = $1) AND status IN ('parked','retrying')
-ORDER BY received_at ASC, message_id ASC LIMIT $2`, string(source), limit)
+  AND ($3 = '' OR received_at > $4 OR (received_at = $4 AND message_id > $3))
+ORDER BY received_at ASC, message_id ASC LIMIT $2`, string(source), limit, afterID, after)
 	if err != nil {
 		return nil, err
 	}

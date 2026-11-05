@@ -27,7 +27,7 @@ func (auditRepository) HazardLocations(context.Context, string) ([]audit.Locatio
 }
 
 func (auditRepository) UnavailableUnits(context.Context) ([]string, error) { return nil, nil }
-func (auditRepository) ListIngestFailures(context.Context, domain.Source, int) ([]domain.IngestFailure, error) {
+func (auditRepository) ListIngestFailures(context.Context, domain.Source, int, time.Time, string) ([]domain.IngestFailure, error) {
 	return nil, nil
 }
 

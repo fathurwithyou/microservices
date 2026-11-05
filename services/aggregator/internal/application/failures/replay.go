@@ -14,7 +14,7 @@ import (
 
 // Repository supplies parked payloads and records recovery.
 type Repository interface {
-	ListIngestFailures(context.Context, domain.Source, int) ([]domain.IngestFailure, error)
+	ListIngestFailures(context.Context, domain.Source, int, time.Time, string) ([]domain.IngestFailure, error)
 	MarkIngestFailureRecovered(context.Context, string) error
 }
 
@@ -57,7 +57,7 @@ func New(cfg Config) (*Replayer, error) {
 
 // Replay processes parked payloads for one source in arrival order.
 func (r *Replayer) Replay(ctx context.Context, source domain.Source, limit int) (int, error) {
-	items, err := r.repository.ListIngestFailures(ctx, source, limit)
+	items, err := r.repository.ListIngestFailures(ctx, source, limit, time.Time{}, "")
 	if err != nil {
 		return 0, fmt.Errorf("list failures: %w", err)
 	}
