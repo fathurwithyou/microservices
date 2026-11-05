@@ -63,18 +63,20 @@ func (r *Replayer) Replay(ctx context.Context, source domain.Source, limit int) 
 	}
 	recovered := 0
 	for _, item := range items {
+		// Stop at the first failure so a later message never overtakes an
+		// earlier one for the same source reference.
 		event, err := r.mapPayload(item)
 		if err != nil {
 			r.logger.Warn("replay mapping failed", "component", "failures", "message_id", item.MessageID, "source", item.Source, "error", err)
-			continue
+			return recovered, fmt.Errorf("replay %s: %w", item.MessageID, err)
 		}
 		if _, err := r.submitter.Submit(ctx, event, item.MessageID); err != nil {
 			r.logger.Error("replay submit failed", "component", "failures", "message_id", item.MessageID, "error", err)
-			continue
+			return recovered, fmt.Errorf("replay %s: %w", item.MessageID, err)
 		}
 		if err := r.repository.MarkIngestFailureRecovered(ctx, item.MessageID); err != nil {
 			r.logger.Error("replay mark recovered failed", "component", "failures", "message_id", item.MessageID, "error", err)
-			continue
+			return recovered, fmt.Errorf("replay %s: %w", item.MessageID, err)
 		}
 		recovered++
 	}
