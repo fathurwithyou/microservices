@@ -84,7 +84,7 @@ data:
   datasources.yaml: |
     apiVersion: 1
     datasources:
-      - { name: Prometheus, type: prometheus, url: "http://prometheus:9090", isDefault: true }
+      - { name: Prometheus, type: prometheus, uid: prometheus, url: "http://prometheus:9090", isDefault: true }
       - { name: Tempo, type: tempo, url: "http://tempo:3200" }
 ---
 apiVersion: apps/v1
@@ -148,6 +148,8 @@ spec:
             - { name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Admin }
           volumeMounts:
             - { name: datasources, mountPath: /etc/grafana/provisioning/datasources, readOnly: true }
+            - { name: dashboard-provider, mountPath: /etc/grafana/provisioning/dashboards, readOnly: true }
+            - { name: dashboard-json, mountPath: /var/lib/grafana/dashboards, readOnly: true }
           readinessProbe: { httpGet: { path: /api/health, port: http }, initialDelaySeconds: 10 }
           livenessProbe: { httpGet: { path: /api/health, port: http }, periodSeconds: 30 }
           resources:
@@ -157,6 +159,14 @@ spec:
       volumes:
         - name: datasources
           configMap: { name: grafana-datasources }
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboards
+            items: [{ key: provider.yaml, path: provider.yaml }]
+        - name: dashboard-json
+          configMap:
+            name: grafana-dashboards
+            items: [{ key: bnpb.json, path: bnpb.json }]
 ---
 apiVersion: v1
 kind: Service
@@ -254,3 +264,197 @@ spec:
     - { name: http, port: 3200, targetPort: http }
     - { name: otlp-grpc, port: 4317, targetPort: otlp-grpc }
     - { name: otlp-http, port: 4318, targetPort: otlp-http }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  labels: { app: grafana }
+data:
+  provider.yaml: |
+    apiVersion: 1
+    providers:
+      - name: bnpb
+        folder: BNPB
+        type: file
+        disableDeletion: false
+        options:
+          path: /var/lib/grafana/dashboards
+  bnpb.json: |
+    {
+      "uid": "bnpb-m2",
+      "title": "BNPB M2",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "10s",
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "HTTP request rate by service",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (job) (rate(http_requests_total[1m]))",
+              "legendFormat": "{{job}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "HTTP 5xx ratio",
+          "type": "stat",
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 12,
+            "y": 0
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 0.001)"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.01
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.05
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 3,
+          "title": "HTTP p95 latency by service",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 18,
+            "y": 0
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum by (le, job) (rate(http_request_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{job}}"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Coastal readings accepted and critical",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(coastal_readings_accepted_total[5m]))",
+              "legendFormat": "accepted"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(coastal_critical_readings_total[5m]))",
+              "legendFormat": "critical"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Coastal quarantine by reason",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 12,
+            "y": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (reason) (rate(coastal_readings_quarantined_total[5m]))",
+              "legendFormat": "{{reason}}"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Satellite drops and submissions",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 18,
+            "y": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (reason) (rate(satellite_detections_dropped_total[5m]))",
+              "legendFormat": "drop {{reason}}"
+            },
+            {
+              "refId": "B",
+              "expr": "sum by (status) (rate(satellite_fires_submitted_total[5m]))",
+              "legendFormat": "submit {{status}}"
+            }
+          ]
+        }
+      ]
+    }
