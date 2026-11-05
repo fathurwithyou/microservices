@@ -100,6 +100,17 @@ func TestClusterFiltersLowConfidence(t *testing.T) {
 	})
 }
 
+func TestClusterConnectsAcrossGridCells(t *testing.T) {
+	detections := []domain.Detection{
+		det("NOAA-20", "0000", 0.0199, 0.0199, domain.ConfidenceNominal, 1),
+		det("NOAA-20", "0000", offsetNorth(0.0199, 0.9), 0.0199, domain.ConfidenceNominal, 1),
+	}
+	fires, singles := Cluster(detections)
+	if len(fires) != 1 || singles != 0 {
+		t.Fatalf("fires = %d, singles = %d, want 1 and 0", len(fires), singles)
+	}
+}
+
 func TestClusterTransitiveChain(t *testing.T) {
 	detections := []domain.Detection{
 		det("NOAA-20", "0000", -2.0, 110.0, domain.ConfidenceNominal, 1),

@@ -49,12 +49,21 @@ func Cluster(detections []domain.Detection) (fires []domain.Fire, singles int) {
 		}
 		return parent[i]
 	}
+	// A 3x3 grid with cells wider than the cluster radius checks only
+	// neighbouring detections instead of every pair.
+	buckets := make(map[gridCell][]int, len(nodes))
 	for i := range nodes {
-		for j := i + 1; j < len(nodes); j++ {
-			if connected(nodes[i], nodes[j]) {
-				parent[find(i)] = find(j)
+		cell := cellFor(nodes[i])
+		for dLat := -1; dLat <= 1; dLat++ {
+			for dLon := -1; dLon <= 1; dLon++ {
+				for _, j := range buckets[gridCell{cell.lat + dLat, cell.lon + dLon}] {
+					if connected(nodes[i], nodes[j]) {
+						parent[find(i)] = find(j)
+					}
+				}
 			}
 		}
+		buckets[cell] = append(buckets[cell], i)
 	}
 
 	groups := map[int][]node{}
@@ -74,6 +83,19 @@ func Cluster(detections []domain.Detection) (fires []domain.Fire, singles int) {
 		return fires[i].SourceRefID < fires[j].SourceRefID
 	})
 	return fires, singles
+}
+
+// clusterCellDegrees is wider than the 1 km radius at Indonesian latitudes,
+// so all connected points fall inside the 3x3 neighbourhood.
+const clusterCellDegrees = 0.02
+
+type gridCell struct{ lat, lon int }
+
+func cellFor(n node) gridCell {
+	return gridCell{
+		lat: int(math.Floor(n.detection.Latitude / clusterCellDegrees)),
+		lon: int(math.Floor(n.detection.Longitude / clusterCellDegrees)),
+	}
 }
 
 func connected(a, b node) bool {
