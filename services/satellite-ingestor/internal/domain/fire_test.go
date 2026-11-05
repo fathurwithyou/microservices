@@ -34,4 +34,13 @@ func TestNearestProvince(t *testing.T) {
 	if got := NearestProvince(0.5, 101.5); got != "Riau" {
 		t.Fatalf("NearestProvince = %q", got)
 	}
+	if got := NearestProvince(-7.25, 112.75); got != "Jawa Timur" {
+		t.Fatalf("NearestProvince = %q", got)
+	}
+	if got := NearestProvince(-8.45, 115.15); got != "Bali" {
+		t.Fatalf("NearestProvince = %q", got)
+	}
+	if got := NearestProvince(-4.05, 138.10); got != "Papua" {
+		t.Fatalf("NearestProvince = %q", got)
+	}
 }
