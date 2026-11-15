@@ -102,9 +102,10 @@ spec:
             - { name: SQL_USERS, value: "aggregator satellite coastal" }
           volumeMounts:
             - { name: certs, mountPath: /certs }
+          # The cockroach binary is OOM-killed below ~256Mi even for cert work.
           resources:
-            requests: { memory: 64Mi }
-            limits: { memory: 128Mi }
+            requests: { memory: 256Mi }
+            limits: { memory: 512Mi }
       containers:
         - name: publish
           image: alpine/k8s:1.31.0

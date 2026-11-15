@@ -60,9 +60,10 @@ spec:
           volumeMounts:
             - { name: root-certs, mountPath: /cockroach/certs, readOnly: true }
             - { name: bootstrap, mountPath: /bootstrap, readOnly: true }
+          # The cockroach binary is OOM-killed below ~256Mi.
           resources:
-            requests: { memory: 64Mi }
-            limits: { memory: 128Mi }
+            requests: { memory: 256Mi }
+            limits: { memory: 512Mi }
       volumes:
         - name: root-certs
           secret:

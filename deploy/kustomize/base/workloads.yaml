@@ -138,7 +138,8 @@ spec:
           image: postgres:17-alpine
           command: ["/bin/sh", "-c", "until pg_isready -h postgres -U auth -d auth_db; do sleep 2; done"]
           resources: { requests: { memory: 64Mi }, limits: { memory: 128Mi } }
-          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+          # postgres:17-alpine defaults to root; uid 70 is its postgres user.
+          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true, runAsUser: 70, runAsGroup: 70 }
       containers:
         - name: auth
           image: bnpb-m1/auth:local

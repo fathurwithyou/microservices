@@ -32,7 +32,8 @@ spec:
           volumeMounts:
             - { name: bootstrap, mountPath: /bootstrap, readOnly: true }
           resources: { requests: { memory: 64Mi }, limits: { memory: 128Mi } }
-          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+          # postgres:17-alpine defaults to root; uid 70 is its postgres user.
+          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true, runAsUser: 70, runAsGroup: 70 }
       volumes:
         - name: bootstrap
           configMap: { name: postgres-bootstrap }
