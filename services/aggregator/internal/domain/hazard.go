@@ -75,6 +75,10 @@ type SourceStatus struct {
 var (
 	ErrInvalidSourcePayload = errors.New("invalid source payload")
 	ErrNotFound             = errors.New("hazard not found")
+	// ErrReferenceMissing marks a payload that is valid but refers to
+	// reference data the store does not have yet. It may succeed later
+	// without a code change, so it is retried automatically.
+	ErrReferenceMissing = errors.New("reference data missing")
 )
 
 func SeverityFromMagnitude(magnitude float64) Severity {
@@ -128,3 +132,25 @@ func (e *MalformedPayloadError) Error() string {
 }
 
 func (e *MalformedPayloadError) Unwrap() error { return e.Err }
+
+// MalformedRecordsError reports elements of a well-formed JSON array that
+// could not be decoded on their own (for example invalid UTF-8 inside one
+// record). It is returned together with the records that did decode, so one
+// bad record is parked without blocking the rest of the window.
+type MalformedRecordsError struct {
+	Records []MalformedRecord
+}
+
+// MalformedRecord is one undecodable array element, kept byte for byte.
+type MalformedRecord struct {
+	Body []byte
+	Err  error
+}
+
+func (e *MalformedRecordsError) Error() string {
+	reasons := make([]error, 0, len(e.Records))
+	for _, record := range e.Records {
+		reasons = append(reasons, record.Err)
+	}
+	return "malformed source records: " + errors.Join(reasons...).Error()
+}

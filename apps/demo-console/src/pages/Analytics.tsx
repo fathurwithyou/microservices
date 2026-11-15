@@ -5,6 +5,7 @@ import type { AnalyticsBucket, AnalyticsResponse } from "../types";
 
 const COLORS: Record<string, string> = {
   SEISMIC: "var(--orange)",
+  TSUNAMI: "#2f6fd6",
   VOLCANIC: "var(--fail)",
   WILDFIRE: "#e0a23a",
   COASTAL: "#4aa3df",

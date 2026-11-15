@@ -40,7 +40,8 @@ type Repository interface {
 	HazardExists(context.Context, string) (bool, error)
 	HazardLocations(context.Context, string) ([]Location, error)
 	UnavailableUnits(context.Context) ([]string, error)
-	ListIngestFailures(context.Context, domain.Source, int, time.Time, string) ([]domain.IngestFailure, error)
+	ListIngestFailures(context.Context, domain.FailureFilter) ([]domain.IngestFailure, error)
+	GetIngestFailure(context.Context, string) (domain.IngestFailure, error)
 }
 
 // Queries serves Audit API reads.
@@ -109,7 +110,7 @@ func (q *Queries) Unavailable(ctx context.Context) ([]string, error) {
 	return q.repository.UnavailableUnits(ctx)
 }
 
-// Unprocessed returns parked or retrying payloads for operators. The cursor
+// Unprocessed returns parked or retrying messages (metadata only) for operators. The cursor
 // is the received_at and message_id of the last item on the previous page.
 func (q *Queries) Unprocessed(ctx context.Context, source domain.Source, limit int, cursorValue string) ([]domain.IngestFailure, string, error) {
 	if limit <= 0 || limit > 1000 {
@@ -126,7 +127,7 @@ func (q *Queries) Unprocessed(ctx context.Context, source domain.Source, limit i
 		}
 		after, afterID = decoded.ReceivedAt, decoded.MessageID
 	}
-	items, err := q.repository.ListIngestFailures(ctx, source, limit, after, afterID)
+	items, err := q.repository.ListIngestFailures(ctx, domain.FailureFilter{Source: source, Limit: limit, After: after, AfterID: afterID})
 	if err != nil {
 		return nil, "", err
 	}
@@ -139,6 +140,12 @@ func (q *Queries) Unprocessed(ctx context.Context, source domain.Source, limit i
 		}
 	}
 	return items, next, nil
+}
+
+// Failure returns one stored failure with its raw payload. It backs the
+// Ops-only inspection endpoint; the audit listing never exposes payloads.
+func (q *Queries) Failure(ctx context.Context, messageID string) (domain.IngestFailure, error) {
+	return q.repository.GetIngestFailure(ctx, messageID)
 }
 
 type failureCursor struct {

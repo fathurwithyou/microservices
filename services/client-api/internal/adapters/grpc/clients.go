@@ -168,7 +168,7 @@ func (c *aggregatorClient) Analytics(ctx context.Context, filter ports.Analytics
 	}
 	result := ports.Analytics{Partial: response.GetPartial(), UnavailableUnits: response.GetUnavailableUnits()}
 	for _, item := range response.GetHazardTypes() {
-		result.HazardTypes = append(result.HazardTypes, ports.AnalyticsTypeCount{HazardType: enumName(item.GetHazardType().String()), Count: item.GetCount()})
+		result.HazardTypes = append(result.HazardTypes, ports.AnalyticsTypeCount{HazardType: analyticsCategory(item.GetCategory(), item.GetHazardType()), Count: item.GetCount()})
 	}
 	for _, item := range response.GetSeverities() {
 		result.Severities = append(result.Severities, ports.AnalyticsSeverity{Severity: enumName(item.GetSeverity().String()), Count: item.GetCount()})
@@ -177,9 +177,18 @@ func (c *aggregatorClient) Analytics(ctx context.Context, filter ports.Analytics
 		result.Areas = append(result.Areas, ports.AnalyticsArea{AreaName: item.GetAreaName(), Count: item.GetCount()})
 	}
 	for _, item := range response.GetTimeBuckets() {
-		result.Buckets = append(result.Buckets, ports.AnalyticsBucket{BucketStart: item.GetBucketStart(), HazardType: enumName(item.GetHazardType().String()), Count: item.GetCount()})
+		result.Buckets = append(result.Buckets, ports.AnalyticsBucket{BucketStart: item.GetBucketStart(), HazardType: analyticsCategory(item.GetCategory(), item.GetHazardType()), Count: item.GetCount()})
 	}
 	return result, nil
+}
+
+// analyticsCategory prefers the aggregator's dashboard category (which adds
+// TSUNAMI) and falls back to the canonical enum for older aggregators.
+func analyticsCategory(category string, hazardType eventspb.HazardType) string {
+	if category != "" {
+		return category
+	}
+	return enumName(hazardType.String())
 }
 
 func enumName(value string) string {
@@ -225,7 +234,7 @@ func sourceProto(value string) eventspb.Source {
 }
 
 func hazardTypeProto(value string) eventspb.HazardType {
-	switch value {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
 	case "SEISMIC":
 		return eventspb.HazardType_HAZARD_TYPE_SEISMIC
 	case "VOLCANIC":
@@ -240,7 +249,7 @@ func hazardTypeProto(value string) eventspb.HazardType {
 }
 
 func severityProto(value string) eventspb.Severity {
-	switch value {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
 	case "NORMAL":
 		return eventspb.Severity_SEVERITY_NORMAL
 	case "WASPADA":
@@ -262,6 +271,8 @@ func grpcError(err error) error {
 		return fmt.Errorf("%w: %v", ports.ErrUnavailable, err)
 	case codes.NotFound:
 		return fmt.Errorf("%w: %v", ports.ErrNotFound, err)
+	case codes.InvalidArgument:
+		return fmt.Errorf("%w: %s", ports.ErrInvalidArgument, status.Convert(err).Message())
 	default:
 		return fmt.Errorf("%w: %v", ports.ErrUpstreamFailure, err)
 	}

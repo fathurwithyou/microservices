@@ -1,8 +1,10 @@
 package state
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,10 +19,14 @@ type Runtime struct {
 	outage   bool
 	schemaV2 bool
 	breaking bool
-	minDelay time.Duration
-	maxDelay time.Duration
-	now      func() time.Time
-	reports  []domain.VolcanicReport
+	// malformed is the transport corruption served for the next
+	// malformedLeft responses; empty means well-formed JSON.
+	malformed     MalformedKind
+	malformedLeft int
+	minDelay      time.Duration
+	maxDelay      time.Duration
+	now           func() time.Time
+	reports       []domain.VolcanicReport
 }
 
 // Config configures a Runtime.
@@ -102,14 +108,20 @@ func (r *Runtime) SetOutage(value bool) {
 	r.mu.Unlock()
 }
 
-// SetSchemaV2 toggles schema version 2 simulation.
+// SetSchemaV2 toggles schema version 2 simulation. Turning it off returns the
+// feed to the baseline v1 schema, clearing breaking and malformed modes too.
 func (r *Runtime) SetSchemaV2(value bool) {
 	r.mu.Lock()
 	r.schemaV2 = value
-	if value {
-		r.breaking = false
-	}
+	r.breaking = false
+	r.malformed = ""
+	r.malformedLeft = 0
 	r.mu.Unlock()
+}
+
+// Reset restores the baseline v1 schema with well-formed responses.
+func (r *Runtime) Reset() {
+	r.SetSchemaV2(false)
 }
 
 // SetBreaking toggles an incompatible schema simulation.
@@ -118,6 +130,8 @@ func (r *Runtime) SetBreaking(value bool) {
 	r.breaking = value
 	if value {
 		r.schemaV2 = false
+		r.malformed = ""
+		r.malformedLeft = 0
 	}
 	r.mu.Unlock()
 }
@@ -150,6 +164,101 @@ func (r *Runtime) BreakingReportsSince(since time.Time) []map[string]any {
 		})
 	}
 	return result
+}
+
+// MalformedKind names one transport-level corruption of the response body.
+type MalformedKind string
+
+const (
+	// MalformedTruncated cuts the JSON document in the middle.
+	MalformedTruncated MalformedKind = "truncated"
+	// MalformedDeepNesting nests arrays far beyond any sane decoder depth.
+	MalformedDeepNesting MalformedKind = "deep_nesting"
+	// MalformedInvalidUTF8 embeds bytes that are not valid UTF-8.
+	MalformedInvalidUTF8 MalformedKind = "invalid_utf8"
+	// MalformedOversized pads a valid document past consumer size limits.
+	MalformedOversized MalformedKind = "oversized"
+)
+
+// deepNestingLevels exceeds encoding/json's 10000-level limit.
+const deepNestingLevels = 20000
+
+// oversizedPadding exceeds the aggregator's 8 MiB response limit.
+const oversizedPadding = 9 << 20
+
+// ParseMalformedKind validates an admin-supplied kind.
+func ParseMalformedKind(value string) (MalformedKind, bool) {
+	switch kind := MalformedKind(value); kind {
+	case MalformedTruncated, MalformedDeepNesting, MalformedInvalidUTF8, MalformedOversized:
+		return kind, true
+	default:
+		return "", false
+	}
+}
+
+// SetMalformed serves kind for the next count responses (minimum 1), after
+// which the feed returns to well-formed JSON on its own. Counted delivery
+// mimics a partner that sends one broken message among healthy ones.
+func (r *Runtime) SetMalformed(kind MalformedKind, count int) {
+	if count < 1 {
+		count = 1
+	}
+	r.mu.Lock()
+	r.malformed = kind
+	r.malformedLeft = count
+	r.mu.Unlock()
+}
+
+// TakeMalformed consumes one pending malformed response, if any.
+func (r *Runtime) TakeMalformed() (MalformedKind, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.malformed == "" || r.malformedLeft <= 0 {
+		return "", false
+	}
+	kind := r.malformed
+	r.malformedLeft--
+	if r.malformedLeft == 0 {
+		r.malformed = ""
+	}
+	return kind, true
+}
+
+// MalformedBody renders the reports since the cursor with the requested
+// corruption. The bytes are deterministic for one cursor so repeated polls
+// produce the same message.
+func (r *Runtime) MalformedBody(kind MalformedKind, since time.Time) []byte {
+	reports := r.ReportsSince(since)
+	switch kind {
+	case MalformedTruncated:
+		body, _ := json.Marshal(reports)
+		if len(body) < 4 {
+			return []byte(`[{"report_id":`)
+		}
+		return body[:len(body)/2]
+	case MalformedDeepNesting:
+		return []byte(`[{"report_id":"pvmbg-deep","nested":` + strings.Repeat("[", deepNestingLevels) + strings.Repeat("]", deepNestingLevels) + `}]`)
+	case MalformedInvalidUTF8:
+		body, _ := json.Marshal(reports)
+		if len(body) < 2 {
+			body = []byte(`[]`)
+		}
+		// Put raw 0xFF 0xFE bytes inside a string value so the JSON grammar
+		// stays valid but the encoding is not UTF-8.
+		broken := []byte(`[{"report_id":"pvmbg-bad-utf8","volcano_id":"merapi` + "\xff\xfe" + `"}`)
+		if len(body) > 2 {
+			broken = append(broken, ',')
+			broken = append(broken, body[1:]...)
+			return broken
+		}
+		return append(broken, ']')
+	case MalformedOversized:
+		body, _ := json.Marshal(map[string]any{"report_id": "pvmbg-oversized", "padding": strings.Repeat("x", oversizedPadding)})
+		return append(append([]byte{'['}, body...), ']')
+	default:
+		body, _ := json.Marshal(reports)
+		return body
+	}
 }
 
 // DelayRange returns the configured artificial delay bounds.

@@ -65,6 +65,9 @@ spec:
     metadata: { labels: { app: aggregator, role: aggregator } }
     spec:
       serviceAccountName: aggregator
+      # Secret files are root-owned; fsGroup lets the non-root process read
+      # its client key (mode 0440).
+      securityContext: { fsGroup: 10001 }
       initContainers:
         - name: migrate
           image: bnpb-m1/aggregator:local
@@ -72,16 +75,20 @@ spec:
           args: ["migrate", "up"]
           env:
             - { name: STORE_DRIVER, value: cockroach }
-            - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_COCKROACH_URL } } }
+            - { name: AGGREGATOR_DATABASE_URL, value: "postgresql://aggregator@cockroachdb-public:26257/aggregator_db?sslmode=verify-full&sslrootcert=/cockroach/certs/ca.crt&sslcert=/cockroach/certs/client.aggregator.crt&sslkey=/cockroach/certs/client.aggregator.key" }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+          volumeMounts:
+            - { name: cockroach-client-certs, mountPath: /cockroach/certs, readOnly: true }
         - name: seed
           image: bnpb-m1/aggregator:local
           resources: { requests: { memory: 256Mi }, limits: { memory: 512Mi } }
           args: ["seed"]
           env:
             - { name: STORE_DRIVER, value: cockroach }
-            - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_COCKROACH_URL } } }
+            - { name: AGGREGATOR_DATABASE_URL, value: "postgresql://aggregator@cockroachdb-public:26257/aggregator_db?sslmode=verify-full&sslrootcert=/cockroach/certs/ca.crt&sslcert=/cockroach/certs/client.aggregator.crt&sslkey=/cockroach/certs/client.aggregator.key" }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+          volumeMounts:
+            - { name: cockroach-client-certs, mountPath: /cockroach/certs, readOnly: true }
       containers:
         - name: aggregator
           image: bnpb-m1/aggregator:local
@@ -96,7 +103,7 @@ spec:
             - { name: OPS_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: OPS_TOKEN, optional: true } } }
             - { name: BMKG_API_KEY, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: BMKG_API_KEY } } }
             - { name: PVMBG_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: PVMBG_TOKEN } } }
-            - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_COCKROACH_URL } } }
+            - { name: AGGREGATOR_DATABASE_URL, value: "postgresql://aggregator@cockroachdb-public:26257/aggregator_db?sslmode=verify-full&sslrootcert=/cockroach/certs/ca.crt&sslcert=/cockroach/certs/client.aggregator.crt&sslkey=/cockroach/certs/client.aggregator.key" }
             - { name: RABBITMQ_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: RABBITMQ_URL } } }
             - { name: STORE_DRIVER, value: cockroach }
           readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 5 }
@@ -105,14 +112,11 @@ spec:
           volumeMounts:
             - { name: cockroach-client-certs, mountPath: /cockroach/certs, readOnly: true }
       volumes:
+        # Only the aggregator's own SQL identity; never client.root.
         - name: cockroach-client-certs
           secret:
-            secretName: bnpb-secrets
-            defaultMode: 0400
-            items:
-              - { key: ca.crt, path: ca.crt }
-              - { key: client.root.crt, path: client.root.crt }
-              - { key: client.root.key, path: client.root.key }
+            secretName: cockroach-client-aggregator
+            defaultMode: 0440
 ---
 apiVersion: v1
 kind: Service
@@ -274,7 +278,7 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: consumer, consumer: dashboard } }
   template:
-    metadata: { labels: { app: consumer, consumer: dashboard } }
+    metadata: { labels: { app: consumer, consumer: dashboard, role: consumer } }
     spec:
       serviceAccountName: consumer
       containers:
@@ -295,7 +299,7 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: consumer, consumer: portal } }
   template:
-    metadata: { labels: { app: consumer, consumer: portal } }
+    metadata: { labels: { app: consumer, consumer: portal, role: consumer } }
     spec:
       serviceAccountName: consumer
       containers:
@@ -316,7 +320,7 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: consumer, consumer: notifier } }
   template:
-    metadata: { labels: { app: consumer, consumer: notifier } }
+    metadata: { labels: { app: consumer, consumer: notifier, role: consumer } }
     spec:
       serviceAccountName: consumer
       containers:

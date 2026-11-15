@@ -39,6 +39,11 @@ type Config struct {
 	CircuitFailureWindow time.Duration
 	// CircuitOpenTimeout is how long the breaker stays open before probing.
 	CircuitOpenTimeout time.Duration
+	// LeaderTTL is how long a silent leader keeps the polling lease. It is
+	// short because a critical reading must reach Tim Lapangan within 5 s.
+	LeaderTTL time.Duration
+	// LeaderRenew is the lease renewal interval; must be below LeaderTTL.
+	LeaderRenew time.Duration
 }
 
 // Load reads configuration from environment variables. Malformed values are
@@ -68,6 +73,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("load config: %w", err)
 	}
+	leaderTTL, err := env.Duration("COASTAL_LEADER_TTL", 6*time.Second)
+	if err != nil {
+		return Config{}, fmt.Errorf("load config: %w", err)
+	}
+	leaderRenew, err := env.Duration("COASTAL_LEADER_RENEW", 2*time.Second)
+	if err != nil {
+		return Config{}, fmt.Errorf("load config: %w", err)
+	}
 	internalToken, err := env.Required("INTERNAL_SERVICE_TOKEN")
 	if err != nil {
 		return Config{}, fmt.Errorf("load config: %w", err)
@@ -85,6 +98,8 @@ func Load() (Config, error) {
 		CircuitFailureThreshold: failureThreshold,
 		CircuitFailureWindow:    failureWindow,
 		CircuitOpenTimeout:      openTimeout,
+		LeaderTTL:               leaderTTL,
+		LeaderRenew:             leaderRenew,
 	}
 	return cfg, cfg.Validate()
 }
@@ -113,6 +128,9 @@ func (c Config) Validate() error {
 	}
 	if c.CircuitOpenTimeout <= 0 {
 		return fmt.Errorf("COASTAL_INGESTOR_CIRCUIT_OPEN_TIMEOUT must be positive, got %s", c.CircuitOpenTimeout)
+	}
+	if c.LeaderRenew <= 0 || c.LeaderRenew >= c.LeaderTTL {
+		return fmt.Errorf("COASTAL_LEADER_RENEW must be positive and below COASTAL_LEADER_TTL, got %s/%s", c.LeaderRenew, c.LeaderTTL)
 	}
 	if c.SensorURL != "" && c.SensorToken == "" {
 		return fmt.Errorf("SENSOR_TOKEN is required when SENSOR_URL is set")

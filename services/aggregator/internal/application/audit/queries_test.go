@@ -47,8 +47,12 @@ func (f *fakeRepository) HazardLocations(context.Context, string) ([]Location, e
 func (f *fakeRepository) HazardExists(context.Context, string) (bool, error) { return true, nil }
 func (f *fakeRepository) UnavailableUnits(context.Context) ([]string, error) { return nil, nil }
 
-func (f *fakeRepository) ListIngestFailures(context.Context, domain.Source, int, time.Time, string) ([]domain.IngestFailure, error) {
+func (f *fakeRepository) ListIngestFailures(context.Context, domain.FailureFilter) ([]domain.IngestFailure, error) {
 	return nil, nil
+}
+
+func (f *fakeRepository) GetIngestFailure(context.Context, string) (domain.IngestFailure, error) {
+	return domain.IngestFailure{}, domain.ErrNotFound
 }
 
 func auditEvents() []domain.HazardEvent {

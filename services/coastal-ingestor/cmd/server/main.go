@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/fathurwithyou/microservices/pkg/healthsrv"
+	"github.com/fathurwithyou/microservices/pkg/lease"
 	"github.com/fathurwithyou/microservices/services/coastal-ingestor/internal/adapters/memory"
 	"github.com/fathurwithyou/microservices/services/coastal-ingestor/internal/adapters/postgres"
 	"github.com/fathurwithyou/microservices/services/coastal-ingestor/internal/adapters/sensor"
@@ -50,6 +52,7 @@ func runServe(ctx context.Context, logger *slog.Logger) error {
 
 	// Empty COASTAL_DATABASE_URL keeps the in-memory adapter for fixture runs.
 	state := ports.State(memory.New())
+	var leader *lease.Leader
 	if cfg.DatabaseURL != "" {
 		pgState, err := postgres.New(ctx, cfg.DatabaseURL)
 		if err != nil {
@@ -57,6 +60,9 @@ func runServe(ctx context.Context, logger *slog.Logger) error {
 		}
 		defer pgState.Close()
 		state = pgState
+		// Durable state enables active/standby: only the lease holder polls
+		// the sensor, so replicas never multiply upstream requests.
+		leader = lease.NewLeader(lease.New(pgState.LeaseStore("coastal-ingestion")))
 	}
 	grpcSink, err := sink.NewGRPC(cfg.AggregatorAddr, cfg.InternalToken)
 	if err != nil {
@@ -94,12 +100,23 @@ func runServe(ctx context.Context, logger *slog.Logger) error {
 		time.Now,
 	)
 
+	if leader != nil {
+		ingestor.WithLeadership(leader)
+	}
+
 	healthServer := healthsrv.New(healthsrv.Config{Port: cfg.HealthPort, Service: serviceName})
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	var workers sync.WaitGroup
+	if leader != nil {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			leader.Run(ctx, holderName(), cfg.LeaderTTL, cfg.LeaderRenew, logger)
+		}()
+	}
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
@@ -123,4 +140,14 @@ func runServe(ctx context.Context, logger *slog.Logger) error {
 	workers.Wait()
 	logger.Info("service stopped", "service", serviceName, "reason", ctx.Err())
 	return nil
+}
+
+func holderName() string {
+	if hostname := strings.TrimSpace(os.Getenv("HOSTNAME")); hostname != "" {
+		return hostname
+	}
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		return hostname
+	}
+	return serviceName
 }

@@ -18,6 +18,30 @@ const (
 	BucketWeek Bucket = "week"
 )
 
+// CategoryTsunami is a dashboard-only category. The canonical HazardEvent
+// stays SEISMIC (M1 mandatory mapping); the dashboard splits out earthquakes
+// that carry tsunami potential or a correlated TsunamiWarning so the
+// per-hazard view shows gempa and tsunami separately. Categories are
+// exclusive, so their sum equals the number of HazardEvents in the window.
+const CategoryTsunami domain.HazardType = "TSUNAMI"
+
+// CategorySQL is the SQL form of Category over the hazard_events table.
+const CategorySQL = `CASE WHEN hazard_type = 'SEISMIC' AND (attributes->>'potential_tsunami' = 'true' OR COALESCE(attributes->>'warning_id', '') <> '') THEN 'TSUNAMI' ELSE hazard_type END`
+
+// Category returns the dashboard category of one event.
+func Category(event domain.HazardEvent) domain.HazardType {
+	if event.HazardType != domain.HazardSeismic {
+		return event.HazardType
+	}
+	if potential, _ := event.Attributes["potential_tsunami"].(bool); potential {
+		return CategoryTsunami
+	}
+	if warningID, _ := event.Attributes["warning_id"].(string); warningID != "" {
+		return CategoryTsunami
+	}
+	return event.HazardType
+}
+
 // Filter selects the aggregation window and bucket.
 type Filter struct {
 	Since  time.Time
@@ -25,7 +49,7 @@ type Filter struct {
 	Bucket Bucket
 }
 
-// TypeCount is a count per hazard type.
+// TypeCount is a count per dashboard category (see Category).
 type TypeCount struct {
 	HazardType domain.HazardType
 	Count      int64

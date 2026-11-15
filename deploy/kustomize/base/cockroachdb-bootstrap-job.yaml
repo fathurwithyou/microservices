@@ -1,0 +1,76 @@
+# Initialises the secure CockroachDB cluster once, then enforces storage
+# ownership in the database itself (M2 Ketentuan Implementasi 8):
+#
+#   database        owner (SQL user)   used by
+#   aggregator_db   aggregator         aggregator (canonical store)
+#   satellite_db    satellite          satellite-ingestor
+#   coastal_db      coastal            coastal-ingestor
+#
+# Each user authenticates with its own client certificate (see
+# cockroachdb-certs-job.yaml) and is granted privileges on its own database
+# only. CONNECT and public-schema CREATE are revoked from the `public` role,
+# so another service's user cannot open or write a database it does not own.
+# NetworkPolicy `cockroach-store-owners` additionally limits which pods reach
+# port 26257 at all.
+#
+# Safe to re-run: every statement is idempotent and `cockroach init` on an
+# initialised cluster is treated as success.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cockroachdb-bootstrap
+  labels: { app: cockroachdb-bootstrap, role: other }
+spec:
+  backoffLimit: 20
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels: { app: cockroachdb-bootstrap, role: other }
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: cockroachdb/cockroach:v25.4.0
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              certs=/cockroach/certs
+              # cockroachdb-0 may still be scheduling, pulling, or waiting for
+              # its certs when this Job starts. Retry init in place (about
+              # 10 minutes) instead of burning Job backoff on each attempt.
+              attempt=0
+              until out=$(/cockroach/cockroach init --certs-dir="$certs" --host=cockroachdb-0.cockroachdb:26257 2>&1); do
+                case "$out" in
+                  *"already been initialized"*) echo "cluster already initialised"; break ;;
+                esac
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge 120 ]; then
+                  echo "cockroach init still failing: $out" >&2
+                  exit 1
+                fi
+                echo "waiting for cockroachdb-0 ($attempt): $(echo "$out" | tail -n 1)"
+                sleep 5
+              done
+              until /cockroach/cockroach sql --certs-dir="$certs" --host=cockroachdb-public:26257 --execute="SELECT 1" >/dev/null 2>&1; do
+                echo "waiting for SQL"; sleep 3
+              done
+              /cockroach/cockroach sql --certs-dir="$certs" --host=cockroachdb-public:26257 --file=/bootstrap/bootstrap.sql
+              echo "storage ownership applied"
+          volumeMounts:
+            - { name: root-certs, mountPath: /cockroach/certs, readOnly: true }
+            - { name: bootstrap, mountPath: /bootstrap, readOnly: true }
+          resources:
+            requests: { memory: 64Mi }
+            limits: { memory: 128Mi }
+      volumes:
+        - name: root-certs
+          secret:
+            secretName: bnpb-secrets
+            defaultMode: 0400
+            items:
+              - { key: ca.crt, path: ca.crt }
+              - { key: client.root.crt, path: client.root.crt }
+              - { key: client.root.key, path: client.root.key }
+        - name: bootstrap
+          configMap: { name: cockroachdb-bootstrap }

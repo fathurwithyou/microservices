@@ -103,6 +103,8 @@ func apiErrorStatus(err error) (int, string) {
 		return http.StatusForbidden, "required scope is missing"
 	case errors.Is(err, ports.ErrNotFound):
 		return http.StatusNotFound, "hazard not found"
+	case errors.Is(err, ports.ErrInvalidArgument):
+		return http.StatusBadRequest, err.Error()
 	case errors.Is(err, ports.ErrUnavailable):
 		return http.StatusServiceUnavailable, "upstream unavailable"
 	default:

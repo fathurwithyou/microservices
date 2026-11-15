@@ -28,8 +28,14 @@ func (auditRepository) HazardLocations(context.Context, string) ([]audit.Locatio
 }
 
 func (auditRepository) UnavailableUnits(context.Context) ([]string, error) { return nil, nil }
-func (auditRepository) ListIngestFailures(context.Context, domain.Source, int, time.Time, string) ([]domain.IngestFailure, error) {
-	return nil, nil
+func (auditRepository) ListIngestFailures(context.Context, domain.FailureFilter) ([]domain.IngestFailure, error) {
+	return []domain.IngestFailure{{MessageID: "msg-1", Source: domain.SourcePVMBG, Reason: "schema_incompatible", Status: domain.FailureParked, PayloadBytes: 16}}, nil
+}
+func (auditRepository) GetIngestFailure(_ context.Context, id string) (domain.IngestFailure, error) {
+	if id != "msg-1" {
+		return domain.IngestFailure{}, domain.ErrNotFound
+	}
+	return domain.IngestFailure{MessageID: "msg-1", Source: domain.SourcePVMBG, Status: domain.FailureParked, Payload: []byte("bad\xff"), PayloadBytes: 4}, nil
 }
 
 func auditTestServer(token string) *httptest.Server {
@@ -39,8 +45,11 @@ func auditTestServer(token string) *httptest.Server {
 
 type replayRepository struct{}
 
-func (replayRepository) ListIngestFailures(context.Context, domain.Source, int, time.Time, string) ([]domain.IngestFailure, error) {
+func (replayRepository) ListIngestFailures(context.Context, domain.FailureFilter) ([]domain.IngestFailure, error) {
 	return nil, nil
+}
+func (replayRepository) GetIngestFailure(context.Context, string) (domain.IngestFailure, error) {
+	return domain.IngestFailure{}, domain.ErrNotFound
 }
 func (replayRepository) MarkIngestFailureRecovered(context.Context, string) error { return nil }
 
@@ -175,5 +184,55 @@ func TestAuditChecksumRequiresSource(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", response.StatusCode)
+	}
+}
+
+func TestOpsFailureInspectionRequiresOpsTokenAndReturnsPayload(t *testing.T) {
+	server := replayTestServer(t, "audit-secret", "ops-secret")
+	defer server.Close()
+	get := func(path, authorization string) (int, map[string]any) {
+		request, _ := http.NewRequest(http.MethodGet, server.URL+path, nil)
+		if authorization != "" {
+			request.Header.Set("Authorization", authorization)
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		body := map[string]any{}
+		_ = json.NewDecoder(response.Body).Decode(&body)
+		return response.StatusCode, body
+	}
+	if status, _ := get("/internal/ops/failures", "Bearer audit-secret"); status != http.StatusUnauthorized {
+		t.Fatalf("audit token status = %d, want 401", status)
+	}
+	status, body := get("/internal/ops/failures", "Bearer ops-secret")
+	if status != http.StatusOK {
+		t.Fatalf("ops list status = %d", status)
+	}
+	items, _ := body["items"].([]any)
+	// Listings carry the size only; bytes come from the single-message endpoint.
+	if len(items) != 1 || items[0].(map[string]any)["payload_bytes"] != float64(16) {
+		t.Fatalf("ops list body = %v", body)
+	}
+	if _, listed := items[0].(map[string]any)["payload"]; listed {
+		t.Fatal("ops list included payload bytes")
+	}
+	status, body = get("/internal/ops/failures/msg-1", "Bearer ops-secret")
+	if status != http.StatusOK || body["payload_base64"] != "YmFk/w==" || body["payload_bytes"] != float64(4) {
+		t.Fatalf("ops get status=%d body=%v", status, body)
+	}
+	if status, _ := get("/internal/ops/failures/nope", "Bearer ops-secret"); status != http.StatusNotFound {
+		t.Fatalf("missing failure status = %d, want 404", status)
+	}
+	// The audit listing must never leak raw payloads.
+	_, body = get("/internal/audit/unprocessed", "Bearer audit-secret")
+	auditItems, _ := body["items"].([]any)
+	if len(auditItems) != 1 {
+		t.Fatalf("audit unprocessed = %v", body)
+	}
+	if _, leaked := auditItems[0].(map[string]any)["payload"]; leaked {
+		t.Fatal("audit unprocessed exposed payload")
 	}
 }

@@ -5,12 +5,15 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/fathurwithyou/microservices/services/pvmbg/internal/state"
 	"github.com/gin-gonic/gin"
 )
 
 type enabledRequest struct {
 	Enabled *bool  `json:"enabled"`
 	Mode    string `json:"mode"`
+	// Count is how many responses carry a malformed mode (default 1).
+	Count int `json:"count"`
 }
 
 func (h handler) schemaVersion(c *gin.Context) {
@@ -31,12 +34,28 @@ func (h handler) schemaVersion(c *gin.Context) {
 	}
 	switch request.Mode {
 	case "breaking":
+		// Incompatible schema: renamed field, changed type, missing required
+		// field. Persists until another mode is selected.
 		h.state.SetBreaking(true)
 		c.JSON(http.StatusOK, gin.H{"schema_version": 3, "mode": "breaking"})
 		return
+	case "normal", "v1":
+		h.state.Reset()
+		c.JSON(http.StatusOK, gin.H{"schema_version": 1, "mode": "normal"})
+		return
 	case "":
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be breaking"})
+		kind, ok := state.ParseMalformedKind(request.Mode)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be one of breaking, normal, truncated, deep_nesting, invalid_utf8, oversized"})
+			return
+		}
+		count := request.Count
+		if count < 1 {
+			count = 1
+		}
+		h.state.SetMalformed(kind, count)
+		c.JSON(http.StatusOK, gin.H{"mode": string(kind), "count": count})
 		return
 	}
 	if request.Enabled == nil {

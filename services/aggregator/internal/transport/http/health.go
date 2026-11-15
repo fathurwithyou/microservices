@@ -25,6 +25,9 @@ func NewServer(port string, auditQueries *audit.Queries, auditToken, opsToken st
 		// Replay mutates state, so it is gated by the BNPB Ops credential and
 		// never by the read-only audit token.
 		router.HandleFunc("POST /internal/ops/replay", opsAuth(opsToken, auditHandler.replay))
+		// Raw failed payloads are readable only by BNPB Internal Ops.
+		router.HandleFunc("GET /internal/ops/failures", opsAuth(opsToken, auditHandler.opsFailures))
+		router.HandleFunc("GET /internal/ops/failures/{message_id}", opsAuth(opsToken, auditHandler.opsFailure))
 	}
 	return &http.Server{Addr: ":" + port, Handler: observability.HTTPTracing(observability.HTTPMetrics(router), "aggregator"), ReadHeaderTimeout: 2 * time.Second, WriteTimeout: 10 * time.Second}
 }

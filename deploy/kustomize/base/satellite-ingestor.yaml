@@ -11,6 +11,7 @@ spec:
       labels: { app: satellite-ingestor, role: sensor }
     spec:
       automountServiceAccountToken: false
+      securityContext: { fsGroup: 10001 }
       containers:
         - name: satellite-ingestor
           image: bnpb-m1/satellite-ingestor:local
@@ -21,13 +22,21 @@ spec:
             - { name: FEED_URL, value: "https://satellite.naufarrel.dev" }
             - { name: FEED_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: FEED_TOKEN } } }
             - { name: INTERNAL_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: INTERNAL_SERVICE_TOKEN } } }
-            - { name: SATELLITE_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: SATELLITE_DATABASE_URL } } }
+            - { name: SATELLITE_DATABASE_URL, value: "postgresql://satellite@cockroachdb-public:26257/satellite_db?sslmode=verify-full&sslrootcert=/cockroach/certs/ca.crt&sslcert=/cockroach/certs/client.satellite.crt&sslkey=/cockroach/certs/client.satellite.key" }
           readinessProbe: { httpGet: { path: /health, port: health }, initialDelaySeconds: 2 }
           livenessProbe: { httpGet: { path: /health, port: health }, periodSeconds: 10 }
           resources:
             requests: { memory: 128Mi }
             limits: { memory: 256Mi }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+          volumeMounts:
+            - { name: cockroach-client-certs, mountPath: /cockroach/certs, readOnly: true }
+      volumes:
+        # Only this service's own SQL identity.
+        - name: cockroach-client-certs
+          secret:
+            secretName: cockroach-client-satellite
+            defaultMode: 0440
 ---
 apiVersion: v1
 kind: Service

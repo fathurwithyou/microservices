@@ -83,7 +83,9 @@ func (p *Poller) runSource(ctx context.Context, source Source) {
 			// Persistence is on the critical path: never advance past events
 			// that were not stored.
 			p.markStale(ctx, name, lastSuccess, time.Now().UTC(), correlationID, batchErr)
-		case fetchErr != nil && !isMappingError(fetchErr):
+		case fetchErr != nil && (!isMappingError(fetchErr) || isTransportError(fetchErr)):
+			// Undecodable responses are parked above, but the window they
+			// covered is re-polled so valid records in it are not lost.
 			p.markStale(ctx, name, lastSuccess, time.Now().UTC(), correlationID, fetchErr)
 		default:
 			if err := p.repository.AdvancePollCursor(ctx, name, batchUpperBound); err != nil {
@@ -130,6 +132,11 @@ func (p *Poller) persistBatch(ctx context.Context, events []domain.HazardEvent, 
 func isMappingError(err error) bool {
 	var mappingErr *MappingError
 	return errors.As(err, &mappingErr)
+}
+
+func isTransportError(err error) bool {
+	var mappingErr *MappingError
+	return errors.As(err, &mappingErr) && mappingErr.Transport
 }
 
 func (p *Poller) leaderAllowed() bool {

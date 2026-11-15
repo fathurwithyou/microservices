@@ -12,6 +12,7 @@ resources:
   - pdb.yaml
   - cockroachdb-statefulset.yaml
   - cockroachdb-certs-job.yaml
+  - cockroachdb-bootstrap-job.yaml
   - satellite-ingestor.yaml
   - coastal-ingestor.yaml
   - sensor-pantai.yaml
@@ -19,3 +20,7 @@ resources:
   - observability.yaml
   - demo.yaml
   - networkpolicy.yaml
+configMapGenerator:
+  - name: cockroachdb-bootstrap
+    files: [bootstrap.sql=cockroach/bootstrap.sql]
+    options: { disableNameSuffixHash: true }

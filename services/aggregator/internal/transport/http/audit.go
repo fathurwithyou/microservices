@@ -2,11 +2,14 @@ package httptransport
 
 import (
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/audit"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/failures"
@@ -163,6 +166,68 @@ func (h *auditHandler) unprocessed(response http.ResponseWriter, request *http.R
 		})
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"items": payload, "next_cursor": nullableString(next)})
+}
+
+// opsFailures lists parked and retrying messages. Payloads can be megabytes
+// each, so the listing carries only payload_bytes; fetch one message by
+// message_id for its bytes.
+func (h *auditHandler) opsFailures(response http.ResponseWriter, request *http.Request) {
+	source, err := auditSource(request.URL.Query().Get("source"))
+	if err != nil {
+		writeAuditError(response, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	limit := 20
+	if value := request.URL.Query().Get("limit"); value != "" {
+		if limit, err = auditLimit(value); err != nil {
+			writeAuditError(response, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+	}
+	items, next, err := h.queries.Unprocessed(request.Context(), source, limit, request.URL.Query().Get("cursor"))
+	if err != nil {
+		writeAuditError(response, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	payload := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		payload = append(payload, opsFailureJSON(item, false))
+	}
+	writeJSON(response, http.StatusOK, map[string]any{"items": payload, "next_cursor": nullableString(next)})
+}
+
+// opsFailure returns one message, including recovered ones, by message_id.
+func (h *auditHandler) opsFailure(response http.ResponseWriter, request *http.Request) {
+	item, err := h.queries.Failure(request.Context(), request.PathValue("message_id"))
+	if errors.Is(err, domain.ErrNotFound) {
+		writeAuditError(response, http.StatusNotFound, "not_found", "message_id not found")
+		return
+	}
+	if err != nil {
+		writeAuditError(response, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, opsFailureJSON(item, true))
+}
+
+// opsFailureJSON renders one message. With withPayload the stored bytes are
+// included exactly: as text when they are valid UTF-8, otherwise base64 so
+// invalid bytes survive JSON encoding.
+func opsFailureJSON(item domain.IngestFailure, withPayload bool) map[string]any {
+	out := map[string]any{
+		"message_id": item.MessageID, "source": item.Source, "received_at": item.ReceivedAt.UTC().Format(time.RFC3339),
+		"reason": item.Reason, "last_error": item.LastError, "retryable": item.Retryable, "attempts": item.Attempts, "status": item.Status,
+		"payload_bytes": item.PayloadBytes,
+	}
+	if !withPayload {
+		return out
+	}
+	if utf8.Valid(item.Payload) {
+		out["payload"] = string(item.Payload)
+	} else {
+		out["payload_base64"] = base64.StdEncoding.EncodeToString(item.Payload)
+	}
+	return out
 }
 
 func (h *auditHandler) location(response http.ResponseWriter, request *http.Request) {

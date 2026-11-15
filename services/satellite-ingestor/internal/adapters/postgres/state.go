@@ -20,6 +20,10 @@ const consumerName = "satellite-ingestor"
 func init() {
 	goose.SetDialect("postgres")
 	goose.SetBaseFS(migrations.FS)
+	// Own version table: aggregator, satellite, and coastal migrations
+	// have overlapping version numbers, and a shared goose_db_version made
+	// later services believe their tables already existed.
+	goose.SetTableName("satellite_goose_db_version")
 }
 
 // State implements ports.State on a pgx pool.

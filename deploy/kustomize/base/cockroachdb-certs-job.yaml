@@ -1,12 +1,19 @@
-# One-shot TLS bootstrap for CockroachDB. Assumes:
-#   - the bnpb-secrets Secret may already exist (k3d-deploy creates it from .env);
-#     this Job merges cert keys into it with `kubectl patch` and never replaces
-#     the other keys, so database/broker credentials are preserved;
-#   - the Job pod can create/patch that Secret (Role below, same namespace);
-#   - the node certificate must match the target namespace DNS names, so it is
-#     generated from the pod's own namespace via the downward API;
-#   - rotation is manual: delete bnpb-secrets keys ca.crt/node.crt/node.key/
-#     client.root.* and re-run the Job, then restart the StatefulSet.
+# One-shot TLS bootstrap for CockroachDB.
+#
+# Produces, in the pod's namespace:
+#   - cockroach-ca                 ca.crt, ca.key  (read only by this Job, so a
+#                                  re-run can sign certs for a new SQL user)
+#   - bnpb-secrets (merged keys)   ca.crt, node.crt, node.key, client.root.*
+#                                  (cluster nodes and the bootstrap Job only)
+#   - cockroach-client-<user>      ca.crt, client.<user>.crt, client.<user>.key
+#                                  for aggregator, satellite, coastal. Each
+#                                  workload mounts only its own Secret, so a
+#                                  service can authenticate only as itself.
+#
+# Steps run in order: fetch-ca and generate are initContainers, publish runs
+# last. Re-running is safe: existing node and client material is never
+# replaced. Rotation is manual: delete the Secrets above and re-run the Job,
+# then restart CockroachDB and the three store owners.
 apiVersion: v1
 kind: ServiceAccount
 metadata: { name: cockroachdb-certs }
@@ -41,25 +48,25 @@ spec:
     spec:
       serviceAccountName: cockroachdb-certs
       restartPolicy: OnFailure
-      containers:
-        - name: certs
-          image: cockroachdb/cockroach:v25.4.0
+      initContainers:
+        # Reuse the existing CA so certs for new users verify against the
+        # cluster. A cluster that already has node certs but no stored CA key
+        # cannot get new client certs; fail loudly instead of minting a CA the
+        # nodes would reject.
+        - name: fetch-ca
+          image: alpine/k8s:1.31.0
           command: ["/bin/sh", "-ec"]
           args:
             - |
-              /cockroach/cockroach cert create-ca \
-                --certs-dir=/certs --ca-key=/certs/ca.key
-              /cockroach/cockroach cert create-node \
-                localhost 127.0.0.1 \
-                cockroachdb "cockroachdb.${POD_NAMESPACE}" \
-                "cockroachdb.${POD_NAMESPACE}.svc" \
-                "cockroachdb.${POD_NAMESPACE}.svc.cluster.local" \
-                cockroachdb-0.cockroachdb cockroachdb-1.cockroachdb cockroachdb-2.cockroachdb \
-                "*.cockroachdb.${POD_NAMESPACE}.svc" \
-                "*.cockroachdb.${POD_NAMESPACE}.svc.cluster.local" \
-                --certs-dir=/certs --ca-key=/certs/ca.key
-              /cockroach/cockroach cert create-client root \
-                --certs-dir=/certs --ca-key=/certs/ca.key
+              if kubectl -n "$POD_NAMESPACE" get secret cockroach-ca >/dev/null 2>&1; then
+                kubectl -n "$POD_NAMESPACE" get secret cockroach-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > /certs/ca.crt
+                kubectl -n "$POD_NAMESPACE" get secret cockroach-ca -o jsonpath='{.data.ca\.key}' | base64 -d > /certs/ca.key
+                chmod 0600 /certs/ca.key
+                echo "reusing CA from cockroach-ca"
+              elif [ -n "$(kubectl -n "$POD_NAMESPACE" get secret bnpb-secrets -o jsonpath='{.data.node\.key}' 2>/dev/null)" ]; then
+                echo "bnpb-secrets has node certs but cockroach-ca is missing; rotate certs (see header)" >&2
+                exit 1
+              fi
           env:
             - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
           volumeMounts:
@@ -67,29 +74,79 @@ spec:
           resources:
             requests: { memory: 64Mi }
             limits: { memory: 128Mi }
+        - name: generate
+          image: cockroachdb/cockroach:v25.4.0
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              if [ ! -f /certs/ca.key ]; then
+                /cockroach/cockroach cert create-ca --certs-dir=/certs --ca-key=/certs/ca.key
+              fi
+              /cockroach/cockroach cert create-node \
+                localhost 127.0.0.1 \
+                cockroachdb "cockroachdb.${POD_NAMESPACE}" \
+                "cockroachdb.${POD_NAMESPACE}.svc" \
+                "cockroachdb.${POD_NAMESPACE}.svc.cluster.local" \
+                cockroachdb-public "cockroachdb-public.${POD_NAMESPACE}" \
+                "cockroachdb-public.${POD_NAMESPACE}.svc" \
+                "cockroachdb-public.${POD_NAMESPACE}.svc.cluster.local" \
+                cockroachdb-0.cockroachdb cockroachdb-1.cockroachdb cockroachdb-2.cockroachdb \
+                "*.cockroachdb.${POD_NAMESPACE}.svc" \
+                "*.cockroachdb.${POD_NAMESPACE}.svc.cluster.local" \
+                --certs-dir=/certs --ca-key=/certs/ca.key
+              for user in root $SQL_USERS; do
+                /cockroach/cockroach cert create-client "$user" --certs-dir=/certs --ca-key=/certs/ca.key
+              done
+          env:
+            - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+            - { name: SQL_USERS, value: "aggregator satellite coastal" }
+          volumeMounts:
+            - { name: certs, mountPath: /certs }
+          resources:
+            requests: { memory: 64Mi }
+            limits: { memory: 128Mi }
+      containers:
         - name: publish
           image: alpine/k8s:1.31.0
           command: ["/bin/sh", "-ec"]
           args:
             - |
-              if [ -n "$(kubectl -n "$POD_NAMESPACE" get secret bnpb-secrets -o jsonpath='{.data.node\.key}' 2>/dev/null)" ]; then
-                echo "bnpb-secrets already holds the CockroachDB certs; leaving it untouched"
-                exit 0
+              ns="$POD_NAMESPACE"
+              # merge_secret NAME FILE... : create NAME if absent, then merge
+              # the given files as keys. Other keys in NAME are preserved.
+              merge_secret() {
+                name="$1"; shift
+                kubectl -n "$ns" get secret "$name" >/dev/null 2>&1 || \
+                  kubectl -n "$ns" create secret generic "$name"
+                patch=$(mktemp)
+                printf '{"data":{' > "$patch"
+                sep=""
+                for f in "$@"; do
+                  printf '%s"%s":"%s"' "$sep" "$f" "$(base64 "/certs/$f" | tr -d '\n')" >> "$patch"
+                  sep=","
+                done
+                printf '}}' >> "$patch"
+                kubectl -n "$ns" patch secret "$name" --type merge --patch-file "$patch"
+              }
+
+              if ! kubectl -n "$ns" get secret cockroach-ca >/dev/null 2>&1; then
+                merge_secret cockroach-ca ca.crt ca.key
               fi
-              kubectl -n "$POD_NAMESPACE" get secret bnpb-secrets >/dev/null 2>&1 || \
-                kubectl -n "$POD_NAMESPACE" create secret generic bnpb-secrets --dry-run=client -o yaml | kubectl -n "$POD_NAMESPACE" apply -f -
-              patch=$(mktemp)
-              printf '{"data":{' > "$patch"
-              sep=""
-              for f in ca.crt node.crt node.key client.root.crt client.root.key; do
-                b64=$(base64 "/certs/$f" | tr -d '\n')
-                printf '%s"%s":"%s"' "$sep" "$f" "$b64" >> "$patch"
-                sep=","
+              if [ -z "$(kubectl -n "$ns" get secret bnpb-secrets -o jsonpath='{.data.node\.key}' 2>/dev/null)" ]; then
+                merge_secret bnpb-secrets ca.crt node.crt node.key client.root.crt client.root.key
+              else
+                echo "bnpb-secrets already holds node certs; leaving them untouched"
+              fi
+              for user in $SQL_USERS; do
+                if kubectl -n "$ns" get secret "cockroach-client-$user" >/dev/null 2>&1; then
+                  echo "cockroach-client-$user exists; leaving it untouched"
+                  continue
+                fi
+                merge_secret "cockroach-client-$user" ca.crt "client.$user.crt" "client.$user.key"
               done
-              printf '}}' >> "$patch"
-              kubectl -n "$POD_NAMESPACE" patch secret bnpb-secrets --type merge --patch-file "$patch"
           env:
             - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+            - { name: SQL_USERS, value: "aggregator satellite coastal" }
           volumeMounts:
             - { name: certs, mountPath: /certs, readOnly: true }
           resources:

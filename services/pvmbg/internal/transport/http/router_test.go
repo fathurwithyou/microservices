@@ -1,12 +1,14 @@
 package httptransport
 
 import (
+	"encoding/json"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/fathurwithyou/microservices/services/pvmbg/internal/state"
 	"github.com/gin-gonic/gin"
@@ -106,4 +108,55 @@ func TestAdminRejectsMalformedBody(t *testing.T) {
 	if runtime.IsOutage() {
 		t.Fatal("malformed outage body must not enable outage")
 	}
+}
+
+func TestSchemaVersionMalformedModesServeCountedCorruptBodies(t *testing.T) {
+	for _, mode := range []string{"truncated", "deep_nesting", "invalid_utf8", "oversized"} {
+		t.Run(mode, func(t *testing.T) {
+			runtime := testRuntime(t)
+			router := testRouter(runtime)
+			adminRequest := httptest.NewRequest(http.MethodPost, "/admin/schema-version", strings.NewReader(`{"mode":"`+mode+`","count":1}`))
+			adminRequest.Header.Set("X-PVMBG-Admin-Key", "admin-key")
+			adminResponse := httptest.NewRecorder()
+			router.ServeHTTP(adminResponse, adminRequest)
+			if adminResponse.Code != http.StatusOK {
+				t.Fatalf("admin status = %d body=%s", adminResponse.Code, adminResponse.Body.String())
+			}
+
+			first := getReports(t, router)
+			var decoded []map[string]any
+			if json.Unmarshal(first, &decoded) == nil && utf8.Valid(first) && len(first) < 8<<20 {
+				t.Fatalf("mode %s served a body a strict consumer accepts", mode)
+			}
+			second := getReports(t, router)
+			if err := json.Unmarshal(second, &decoded); err != nil || !utf8.Valid(second) {
+				t.Fatalf("mode %s did not return to well-formed JSON after count: %v", mode, err)
+			}
+		})
+	}
+}
+
+func TestSchemaVersionNormalClearsBreaking(t *testing.T) {
+	runtime := testRuntime(t)
+	router := testRouter(runtime)
+	for _, body := range []string{`{"mode":"breaking"}`, `{"mode":"normal"}`} {
+		request := httptest.NewRequest(http.MethodPost, "/admin/schema-version", strings.NewReader(body))
+		request.Header.Set("X-PVMBG-Admin-Key", "admin-key")
+		router.ServeHTTP(httptest.NewRecorder(), request)
+	}
+	if runtime.IsBreaking() {
+		t.Fatal("normal mode left breaking schema active")
+	}
+}
+
+func getReports(t *testing.T, router *gin.Engine) []byte {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/volcanic-reports", nil)
+	request.Header.Set("Authorization", "Bearer pvmbg-token")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("reports status = %d", response.Code)
+	}
+	return response.Body.Bytes()
 }

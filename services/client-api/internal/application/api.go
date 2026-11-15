@@ -189,7 +189,7 @@ func authorize(principal Principal, raw bool) error {
 var ErrForbidden = errors.New("required scope is missing")
 
 func upstreamError(err error) error {
-	if errors.Is(err, ports.ErrInvalidCredentials) || errors.Is(err, ports.ErrInvalidToken) || errors.Is(err, ports.ErrNotFound) || errors.Is(err, ports.ErrUnavailable) || errors.Is(err, ports.ErrUpstreamFailure) {
+	if errors.Is(err, ports.ErrInvalidCredentials) || errors.Is(err, ports.ErrInvalidToken) || errors.Is(err, ports.ErrNotFound) || errors.Is(err, ports.ErrUnavailable) || errors.Is(err, ports.ErrUpstreamFailure) || errors.Is(err, ports.ErrInvalidArgument) {
 		return err
 	}
 	return errors.Join(ports.ErrUpstreamFailure, err)

@@ -263,3 +263,66 @@ func TestCyclePersistsSensorCursor(t *testing.T) {
 		t.Fatalf("cursor = %q, want page-9", cursor)
 	}
 }
+
+type fakeLeadership struct {
+	allowed, still bool
+}
+
+func (l *fakeLeadership) Allowed() bool { return l.allowed }
+func (l *fakeLeadership) StillLeader(context.Context) (bool, error) {
+	return l.still, nil
+}
+
+func TestStandbyDoesNotPollSensor(t *testing.T) {
+	clock := testClock()
+	source := &fakeSource{readings: []domain.Reading{validReading(clock.now, "ok-1")}}
+	sink := &fakeSink{}
+	ingestor := newTestIngestor(clock, source, memory.New(), sink, NewCircuitBreaker(DefaultCircuitConfig(), clock.Now)).
+		WithLeadership(&fakeLeadership{})
+
+	if _, err := ingestor.Cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if source.fetches != 0 || len(sink.batches) != 0 {
+		t.Fatalf("standby fetched %d times, submitted %d batches", source.fetches, len(sink.batches))
+	}
+}
+
+func TestNewLeaderResumesFromCommittedCursor(t *testing.T) {
+	clock := testClock()
+	state := memory.New()
+	if err := state.SaveCursor(context.Background(), "page-from-old-leader"); err != nil {
+		t.Fatal(err)
+	}
+	source := &fakeSource{cursor: "stale-local-page"}
+	leadership := &fakeLeadership{allowed: true, still: true}
+	ingestor := newTestIngestor(clock, source, state, &fakeSink{}, NewCircuitBreaker(DefaultCircuitConfig(), clock.Now)).
+		WithLeadership(leadership)
+
+	if _, err := ingestor.Cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if source.cursor != "page-from-old-leader" {
+		t.Fatalf("cursor = %q, want the committed one", source.cursor)
+	}
+}
+
+func TestFencedLeaderDropsBatchAfterFreeze(t *testing.T) {
+	clock := testClock()
+	state := memory.New()
+	source := &fakeSource{readings: []domain.Reading{validReading(clock.now, "ok-1")}, cursor: "page-2"}
+	sink := &fakeSink{}
+	// Local flag still says leader, but the database lease expired while frozen.
+	ingestor := newTestIngestor(clock, source, state, sink, NewCircuitBreaker(DefaultCircuitConfig(), clock.Now)).
+		WithLeadership(&fakeLeadership{allowed: true, still: false})
+
+	if _, err := ingestor.Cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.batches) != 0 {
+		t.Fatal("fenced leader submitted readings")
+	}
+	if cursor, _ := state.Cursor(context.Background()); cursor != "" {
+		t.Fatalf("fenced leader committed cursor %q", cursor)
+	}
+}

@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
@@ -197,22 +198,58 @@ func (s *Repository) MarkIngestFailureRecovered(_ context.Context, messageID str
 	return nil
 }
 
-// ListIngestFailures returns parked/retrying payloads for audit.
-func (s *Repository) ListIngestFailures(_ context.Context, source domain.Source, limit int, after time.Time, afterID string) ([]domain.IngestFailure, error) {
+// RecordIngestFailureAttempt counts one failed automatic retry.
+func (s *Repository) RecordIngestFailureAttempt(_ context.Context, messageID, lastError string, retryable, park bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	failure, ok := s.failures[messageID]
+	if !ok || failure.Status != domain.FailureRetrying {
+		return nil
+	}
+	failure.Attempts++
+	failure.LastError = lastError
+	failure.Retryable = retryable
+	if park {
+		failure.Status = domain.FailureParked
+	}
+	s.failures[messageID] = failure
+	return nil
+}
+
+// GetIngestFailure returns one stored failure, including recovered ones.
+func (s *Repository) GetIngestFailure(_ context.Context, messageID string) (domain.IngestFailure, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	failure, ok := s.failures[messageID]
+	if !ok {
+		return domain.IngestFailure{}, domain.ErrNotFound
+	}
+	failure.Payload = bytes.Clone(failure.Payload)
+	failure.PayloadBytes = len(failure.Payload)
+	return failure, nil
+}
+
+// ListIngestFailures returns failure metadata without payload bytes.
+func (s *Repository) ListIngestFailures(_ context.Context, filter domain.FailureFilter) ([]domain.IngestFailure, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	items := make([]domain.IngestFailure, 0)
 	for _, failure := range s.failures {
-		if source != "" && failure.Source != source {
+		if filter.Source != "" && failure.Source != filter.Source {
 			continue
 		}
-		if failure.Status != domain.FailureParked && failure.Status != domain.FailureRetrying {
+		if filter.Status != "" && failure.Status != filter.Status {
 			continue
 		}
-		if afterID != "" && (failure.ReceivedAt.Before(after) ||
-			(failure.ReceivedAt.Equal(after) && failure.MessageID <= afterID)) {
+		if filter.Status == "" && failure.Status != domain.FailureParked && failure.Status != domain.FailureRetrying {
 			continue
 		}
+		if filter.AfterID != "" && (failure.ReceivedAt.Before(filter.After) ||
+			(failure.ReceivedAt.Equal(filter.After) && failure.MessageID <= filter.AfterID)) {
+			continue
+		}
+		failure.PayloadBytes = len(failure.Payload)
+		failure.Payload = nil
 		items = append(items, failure)
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -221,8 +258,8 @@ func (s *Repository) ListIngestFailures(_ context.Context, source domain.Source,
 		}
 		return items[i].MessageID < items[j].MessageID
 	})
-	if limit > 0 && len(items) > limit {
-		items = items[:limit]
+	if filter.Limit > 0 && len(items) > filter.Limit {
+		items = items[:filter.Limit]
 	}
 	return items, nil
 }
@@ -241,7 +278,7 @@ func (s *Repository) CountByHazardType(_ context.Context, filter analytics.Filte
 	counts := map[domain.HazardType]int64{}
 	for _, event := range s.events {
 		if inWindow(event, filter) {
-			counts[event.HazardType]++
+			counts[analytics.Category(event)]++
 		}
 	}
 	result := make([]analytics.TypeCount, 0, len(counts))
@@ -301,7 +338,7 @@ func (s *Repository) CountByTimeBucket(_ context.Context, filter analytics.Filte
 	counts := map[key]int64{}
 	for _, event := range s.events {
 		if inWindow(event, filter) {
-			counts[key{start: bucketStart(event.OccurredAt, filter.Bucket), kind: event.HazardType}]++
+			counts[key{start: bucketStart(event.OccurredAt, filter.Bucket), kind: analytics.Category(event)}]++
 		}
 	}
 	result := make([]analytics.TimeBucket, 0, len(counts))

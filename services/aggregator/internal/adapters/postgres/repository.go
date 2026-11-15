@@ -125,20 +125,24 @@ ON CONFLICT (message_id) DO NOTHING`, failure.MessageID, failure.Source, failure
 	return err
 }
 
-// ListIngestFailures returns parked/retrying payloads for audit.
-func (s *Repository) ListIngestFailures(ctx context.Context, source domain.Source, limit int, after time.Time, afterID string) ([]domain.IngestFailure, error) {
-	rows, err := s.pool.Query(ctx, `SELECT message_id, source, received_at, reason, retryable, attempts, status, payload
-FROM ingest_failures WHERE ($1 = '' OR source = $1) AND status IN ('parked','retrying')
+// ListIngestFailures returns failure metadata, oldest first. Payloads can be
+// up to the 8 MiB response limit, so listings report only their size; use
+// GetIngestFailure to read one message's bytes.
+func (s *Repository) ListIngestFailures(ctx context.Context, filter domain.FailureFilter) ([]domain.IngestFailure, error) {
+	rows, err := s.pool.Query(ctx, `SELECT message_id, source, received_at, reason, last_error, retryable, attempts, status, octet_length(payload)
+FROM ingest_failures
+WHERE ($1 = '' OR source = $1)
+  AND (($5 = '' AND status IN ('parked','retrying')) OR status = $5)
   AND ($3 = '' OR received_at > $4 OR (received_at = $4 AND message_id > $3))
-ORDER BY received_at ASC, message_id ASC LIMIT $2`, string(source), limit, afterID, after)
+ORDER BY received_at ASC, message_id ASC LIMIT $2`, string(filter.Source), filter.Limit, filter.AfterID, filter.After, string(filter.Status))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := make([]domain.IngestFailure, 0, limit)
+	items := make([]domain.IngestFailure, 0, filter.Limit)
 	for rows.Next() {
 		var item domain.IngestFailure
-		if err := rows.Scan(&item.MessageID, &item.Source, &item.ReceivedAt, &item.Reason, &item.Retryable, &item.Attempts, &item.Status, &item.Payload); err != nil {
+		if err := rows.Scan(&item.MessageID, &item.Source, &item.ReceivedAt, &item.Reason, &item.LastError, &item.Retryable, &item.Attempts, &item.Status, &item.PayloadBytes); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -152,6 +156,30 @@ func (s *Repository) MarkIngestFailureRecovered(ctx context.Context, messageID s
 	return err
 }
 
+// RecordIngestFailureAttempt counts one failed automatic retry. The original
+// reason is kept; lastError records this attempt. Only rows still in the
+// retry queue change, so a concurrent replay that already recovered the
+// message wins.
+func (s *Repository) RecordIngestFailureAttempt(ctx context.Context, messageID, lastError string, retryable, park bool) error {
+	_, err := s.pool.Exec(ctx, `UPDATE ingest_failures
+SET attempts = attempts + 1, last_error = $2, retryable = $3,
+    status = CASE WHEN $4 THEN 'parked' ELSE status END
+WHERE message_id = $1 AND status = 'retrying'`, messageID, lastError, retryable, park)
+	return err
+}
+
+// GetIngestFailure returns one stored failure, including recovered ones.
+func (s *Repository) GetIngestFailure(ctx context.Context, messageID string) (domain.IngestFailure, error) {
+	var item domain.IngestFailure
+	err := s.pool.QueryRow(ctx, `SELECT message_id, source, received_at, reason, last_error, retryable, attempts, status, payload
+FROM ingest_failures WHERE message_id = $1`, messageID).Scan(&item.MessageID, &item.Source, &item.ReceivedAt, &item.Reason, &item.LastError, &item.Retryable, &item.Attempts, &item.Status, &item.Payload)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.IngestFailure{}, domain.ErrNotFound
+	}
+	item.PayloadBytes = len(item.Payload)
+	return item, err
+}
+
 // HazardExists reports whether the canonical store contains hazard_id.
 func (s *Repository) HazardExists(ctx context.Context, hazardID string) (bool, error) {
 	var exists bool
@@ -161,7 +189,7 @@ func (s *Repository) HazardExists(ctx context.Context, hazardID string) (bool, e
 
 // CountByHazardType aggregates events in the requested window.
 func (s *Repository) CountByHazardType(ctx context.Context, filter analytics.Filter) ([]analytics.TypeCount, error) {
-	rows, err := s.pool.Query(ctx, `SELECT hazard_type, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY hazard_type ORDER BY hazard_type`, filter.Since, filter.Until)
+	rows, err := s.pool.Query(ctx, `SELECT `+analytics.CategorySQL+` AS category, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY category ORDER BY category`, filter.Since, filter.Until)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +250,7 @@ func (s *Repository) CountByTimeBucket(ctx context.Context, filter analytics.Fil
 	case analytics.BucketWeek:
 		bucket = "week"
 	}
-	rows, err := s.pool.Query(ctx, `SELECT date_trunc($3, occurred_at) AS bucket, hazard_type, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY bucket, hazard_type ORDER BY bucket, hazard_type`, filter.Since, filter.Until, bucket)
+	rows, err := s.pool.Query(ctx, `SELECT date_trunc($3, occurred_at) AS bucket, `+analytics.CategorySQL+` AS category, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY bucket, category ORDER BY bucket, category`, filter.Since, filter.Until, bucket)
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +488,7 @@ func limit(value int) int {
 func (s *Repository) HazardLocations(ctx context.Context, hazardID string) ([]audit.Location, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT range_id, replicas, lease_holder
-		 FROM [SHOW RANGE FROM TABLE hazard_events FOR ROW ($1)]`, hazardID)
+		 FROM [SHOW RANGE FROM TABLE hazard_events FOR ROW ($1::STRING)]`, hazardID)
 	if err != nil {
 		return nil, fmt.Errorf("show range: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/analytics"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/hazards"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 )
@@ -135,5 +136,35 @@ func TestStoreLeaseExpiresAndCanBeClaimedAgain(t *testing.T) {
 	}
 	if len(claimedAfterExpiry) != 1 || claimedAfterExpiry[0].Attempts != 2 {
 		t.Fatalf("lease was not reclaimed with incremented attempts: %#v", claimedAfterExpiry)
+	}
+}
+
+func TestAnalyticsSplitsTsunamiFromSeismicExclusively(t *testing.T) {
+	repository := NewRepository()
+	at := time.Date(2026, 11, 12, 3, 0, 0, 0, time.UTC)
+	events := []domain.HazardEvent{
+		{HazardID: "h1", Source: domain.SourceBMKG, SourceRefID: "e1", HazardType: domain.HazardSeismic, OccurredAt: at, Attributes: map[string]any{"potential_tsunami": false}},
+		{HazardID: "h2", Source: domain.SourceBMKG, SourceRefID: "e2", HazardType: domain.HazardSeismic, OccurredAt: at, Attributes: map[string]any{"potential_tsunami": true}},
+		{HazardID: "h3", Source: domain.SourceBMKG, SourceRefID: "e3", HazardType: domain.HazardSeismic, OccurredAt: at, Attributes: map[string]any{"warning_id": "w-1"}},
+		{HazardID: "h4", Source: domain.SourcePVMBG, SourceRefID: "r1", HazardType: domain.HazardVolcanic, OccurredAt: at, Attributes: map[string]any{}},
+	}
+	for _, event := range events {
+		if err := repository.PersistHazardAndEnqueue(context.Background(), event, domain.OutboxMessage{HazardID: event.HazardID, CorrelationID: "test", RoutingKey: "hazard.event", Payload: []byte("event")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	filter := analytics.Filter{Since: at.Add(-time.Hour), Until: at.Add(time.Hour), Bucket: analytics.BucketDay}
+	counts, err := repository.CountByHazardType(context.Background(), filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[domain.HazardType]int64{}
+	var total int64
+	for _, item := range counts {
+		got[item.HazardType] = item.Count
+		total += item.Count
+	}
+	if got[domain.HazardSeismic] != 1 || got[analytics.CategoryTsunami] != 2 || got[domain.HazardVolcanic] != 1 || total != int64(len(events)) {
+		t.Fatalf("counts = %v total=%d", got, total)
 	}
 }

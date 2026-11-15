@@ -39,7 +39,12 @@ func Volcanic(raw map[string]json.RawMessage, volcanoes map[string]domain.Volcan
 		return domain.HazardEvent{}, err
 	}
 
-	reference := volcanoes[volcanoID]
+	reference, ok := volcanoes[volcanoID]
+	if !ok {
+		// Never store a volcano at 0,0. The reference row may be added later,
+		// so this is a retryable failure rather than a schema violation.
+		return domain.HazardEvent{}, fmt.Errorf("unknown volcano_id %q: %w", volcanoID, domain.ErrReferenceMissing)
+	}
 	attributes := additionalAttributes(raw, volcanicCanonicalFields)
 	attributes["eruption_count_24h"] = eruptionCount
 	attributes["ash_column_height_m"] = ashColumnHeight

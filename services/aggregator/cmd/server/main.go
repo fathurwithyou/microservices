@@ -123,10 +123,13 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("pvmbg source initialization failed", "service", "aggregator", "error", err)
 		return 1
 	}
-	var leadership applicationingest.Leadership
+	var (
+		leadership applicationingest.Leadership
+		leader     *applicationingest.Leader
+	)
 	if repository, ok := persistence.(*postgres.Repository); ok {
 		coordinator := lease.New(repository.LeaseStore("ingestion"))
-		leader := applicationingest.NewLeader(coordinator)
+		leader = applicationingest.NewLeader(coordinator)
 		go leader.Run(ctx, coordinator, leaderHolder(), cfg.LeaderTTL, cfg.LeaderRenew, logger)
 		leadership = leader
 	}
@@ -155,9 +158,35 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("hazard submitter initialization failed", "service", "aggregator", "error", err)
 		return 1
 	}
-	replayer, err := failures.New(failures.Config{Repository: persistence, Submitter: submitter, Volcanoes: volcanoes, Logger: logger})
+	replayer, err := failures.New(failures.Config{Repository: persistence, Submitter: submitter, Volcanoes: volcanoes, References: persistence.LoadVolcanoReferences, Logger: logger})
 	if err != nil {
 		logger.Error("failure replayer initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	// Transient failures (for example a missing reference row) are retried
+	// automatically; schema violations stay parked until an Ops replay.
+	// Fence on the database clock, like the poller: a replica frozen past the
+	// lease TTL must not keep retrying once another replica took over.
+	retryAllowed := func(ctx context.Context) bool {
+		if leader == nil {
+			return true
+		}
+		valid, err := leader.StillLeader(ctx)
+		if err != nil {
+			logger.Warn("retry leadership check failed", "service", "aggregator", "error", err)
+		}
+		return valid
+	}
+	retryWorker, err := failures.NewRetryWorker(failures.RetryWorkerConfig{
+		Replayer:    replayer,
+		Recorder:    persistence,
+		Interval:    cfg.FailureRetryInterval,
+		MaxAttempts: cfg.FailureRetryMaxAttempts,
+		Allowed:     retryAllowed,
+		Logger:      logger,
+	})
+	if err != nil {
+		logger.Error("failure retry worker initialization failed", "service", "aggregator", "error", err)
 		return 1
 	}
 	fieldReportService, err := fieldreports.New(fieldreports.Config{Repository: persistence, Logger: logger})
@@ -182,6 +211,7 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 	go poller.Run(ctx)
 	go outboxWorker.Run(ctx)
 	go fieldReportWorker.Run(ctx)
+	go retryWorker.Run(ctx)
 	go func() {
 		logger.Info("gRPC server started", "service", "aggregator", "port", cfg.GRPCPort)
 		if err := grpcServer.Serve(grpcListener); err != nil {
@@ -376,6 +406,7 @@ type persistence interface {
 	outbox.Repository
 	fieldreports.Repository
 	failures.Repository
+	failures.AttemptRecorder
 	LoadVolcanoReferences(context.Context) (map[string]domain.VolcanoReference, error)
 }
 

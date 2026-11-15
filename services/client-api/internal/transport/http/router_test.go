@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -84,6 +85,7 @@ func TestAPIErrorStatusMapping(t *testing.T) {
 		{name: "not found", err: ports.ErrNotFound, status: http.StatusNotFound},
 		{name: "unavailable", err: ports.ErrUnavailable, status: http.StatusServiceUnavailable},
 		{name: "upstream failure", err: ports.ErrUpstreamFailure, status: http.StatusBadGateway},
+		{name: "invalid argument", err: ports.ErrInvalidArgument, status: http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -207,4 +209,48 @@ func (f failingAggregator) GetHazard(context.Context, string, bool) (ports.Hazar
 }
 func (f failingAggregator) List(context.Context, ports.HazardFilter) (ports.HazardPage, error) {
 	return ports.HazardPage{}, f.err
+}
+
+type rejectingFieldAggregator struct{ unusedAggregator }
+
+func (rejectingFieldAggregator) SubmitFieldReport(context.Context, ports.FieldReportInput) (ports.FieldReport, error) {
+	return ports.FieldReport{}, fmt.Errorf("%w: invalid field report: area_name is required", ports.ErrInvalidArgument)
+}
+
+func postFieldReport(t *testing.T, aggregator ports.Aggregator, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	router := NewRouter(RouterConfig{API: application.NewAPI(fieldAuth{}, aggregator), MaxInflight: 1, Timeout: time.Second, Logger: slog.Default()})
+	request := httptest.NewRequest(http.MethodPost, "/field-reports", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer field-token")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
+func TestFieldReportClientMistakesAreBadRequestNotBadGateway(t *testing.T) {
+	cases := map[string]string{
+		"unknown hazard type": `{"report_id":"r-1","hazard_type":"TSUNAMI","severity":"SIAGA","area_name":"Padang","occurred_at":"2026-11-12T02:43:00Z"}`,
+		"unknown severity":    `{"report_id":"r-1","hazard_type":"SEISMIC","severity":"BAHAYA","area_name":"Padang","occurred_at":"2026-11-12T02:43:00Z"}`,
+		"no timezone":         `{"report_id":"r-1","hazard_type":"SEISMIC","severity":"SIAGA","area_name":"Padang","occurred_at":"2026-11-12T02:43:00"}`,
+		"latitude range":      `{"report_id":"r-1","hazard_type":"SEISMIC","severity":"SIAGA","area_name":"Padang","latitude":91,"occurred_at":"2026-11-12T02:43:00Z"}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			if response := postFieldReport(t, unusedAggregator{}, body); response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+	upstream := postFieldReport(t, rejectingFieldAggregator{}, `{"report_id":"r-1","hazard_type":"SEISMIC","severity":"SIAGA","area_name":"Padang","occurred_at":"2026-11-12T02:43:00Z"}`)
+	if upstream.Code != http.StatusBadRequest || !strings.Contains(upstream.Body.String(), "area_name is required") {
+		t.Fatalf("upstream InvalidArgument status = %d body=%s", upstream.Code, upstream.Body.String())
+	}
+}
+
+func TestFieldReportAcceptsLowercaseEnums(t *testing.T) {
+	response := postFieldReport(t, acceptingAggregator{}, `{"report_id":"r-1","hazard_type":"seismic","severity":"siaga","area_name":"Padang","occurred_at":"2026-11-12T09:43:00+07:00"}`)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", response.Code, response.Body.String())
+	}
 }

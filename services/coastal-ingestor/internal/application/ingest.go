@@ -39,6 +39,26 @@ type Ingestor struct {
 	breaker   *CircuitBreaker
 	logger    *slog.Logger
 	now       Clock
+
+	leadership Leadership
+	// leading is true while this instance holds the lease and has resynced
+	// its in-memory cursor from durable state.
+	leading bool
+}
+
+// Leadership gates polling to one active replica. Allowed is a cheap local
+// check; StillLeader revalidates against the database clock before writes.
+type Leadership interface {
+	Allowed() bool
+	StillLeader(ctx context.Context) (bool, error)
+}
+
+// WithLeadership enables active/standby mode: a standby replica neither polls
+// the sensor nor writes state, so the sensor sees one client however many
+// replicas run.
+func (i *Ingestor) WithLeadership(leadership Leadership) *Ingestor {
+	i.leadership = leadership
+	return i
 }
 
 // NewIngestor wires the poll loop. Nil collaborators fall back to safe
@@ -106,6 +126,20 @@ func (i *Ingestor) Run(ctx context.Context) {
 // Cycle performs one fetch, validate, submit, and cache pass. The last good
 // cache advances only after the sink accepts the batch.
 func (i *Ingestor) Cycle(ctx context.Context) (IngestResult, error) {
+	if i.leadership != nil {
+		if !i.leadership.Allowed() {
+			i.leading = false
+			return IngestResult{}, nil
+		}
+		if !i.leading {
+			// The previous leader advanced the cursor; continue from what it
+			// committed instead of this replica's stale in-memory copy.
+			if err := i.resyncCursor(ctx); err != nil {
+				return IngestResult{}, err
+			}
+			i.leading = true
+		}
+	}
 	if !i.breaker.Allow() {
 		return i.stale(ctx)
 	}
@@ -117,6 +151,17 @@ func (i *Ingestor) Cycle(ctx context.Context) (IngestResult, error) {
 		return i.stale(ctx)
 	}
 	i.breaker.RecordSuccess()
+
+	// Fence every write: a replica frozen past its lease TTL must not commit
+	// a batch or a cursor after another replica took over.
+	if i.leadership != nil {
+		still, err := i.leadership.StillLeader(ctx)
+		if err != nil || !still {
+			i.leading = false
+			i.logger.Warn("leadership lost before write, batch dropped", "component", "ingest", "error", err, "readings", len(readings))
+			return IngestResult{}, nil
+		}
+	}
 
 	now := i.now()
 	var accepted []domain.Reading
@@ -169,6 +214,20 @@ func (i *Ingestor) Cycle(ctx context.Context) (IngestResult, error) {
 	}
 
 	return IngestResult{Readings: accepted, Quarantined: len(records)}, nil
+}
+
+func (i *Ingestor) resyncCursor(ctx context.Context) error {
+	source, ok := i.source.(ports.CursorSource)
+	if !ok {
+		return nil
+	}
+	cursor, err := i.state.Cursor(ctx)
+	if err != nil {
+		return fmt.Errorf("resync sensor cursor: %w", err)
+	}
+	source.SetCursor(cursor)
+	i.logger.Info("leader resynced sensor cursor", "component", "ingest", "cursor", cursor)
+	return nil
 }
 
 // stale returns the cached batch so callers keep serving data while the
