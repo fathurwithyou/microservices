@@ -1,5 +1,6 @@
 FROM golang:1.26-alpine AS build
 WORKDIR /src
+COPY contracts ./contracts
 COPY pkg ./pkg
 COPY services/satellite-ingestor ./services/satellite-ingestor
 RUN cd services/satellite-ingestor && go build -trimpath -ldflags='-s -w' -o /out/satellite-ingestor ./cmd/server

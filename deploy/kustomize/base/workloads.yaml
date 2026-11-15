@@ -93,6 +93,7 @@ spec:
             - { name: AGGREGATOR_HTTP_PORT, value: "8090" }
             - { name: INTERNAL_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: INTERNAL_SERVICE_TOKEN } } }
             - { name: AUDIT_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AUDIT_TOKEN } } }
+            - { name: OPS_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: OPS_TOKEN, optional: true } } }
             - { name: BMKG_API_KEY, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: BMKG_API_KEY } } }
             - { name: PVMBG_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: PVMBG_TOKEN } } }
             - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_COCKROACH_URL } } }

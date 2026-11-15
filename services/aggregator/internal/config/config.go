@@ -21,6 +21,7 @@ type Config struct {
 	StoreDriver          string
 	RabbitURL            string
 	AuditToken           string
+	OpsToken             string
 	PollInterval         time.Duration
 	OutboxPollInterval   time.Duration
 	RequestTimeout       time.Duration
@@ -72,6 +73,7 @@ func Load() (Config, error) {
 		StoreDriver:          env.String("STORE_DRIVER", "postgres"),
 		RabbitURL:            rabbitURL,
 		AuditToken:           env.String("AUDIT_TOKEN", ""),
+		OpsToken:             env.String("OPS_TOKEN", ""),
 		PollInterval:         pollInterval,
 		OutboxPollInterval:   outboxPollInterval,
 		RequestTimeout:       requestTimeout,

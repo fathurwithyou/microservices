@@ -1,4 +1,4 @@
-.PHONY: help tools generate test lint build compose-up compose-down k3d-up k3d-deploy k3d-scale k3d-down test-contract test-integration test-e2e test-load test-load-isolation frontend-test demo-up test-demo-e2e migrate-up migrate-down migrate-status seed m2-verify m2-deploy m2-smoke m2-evidence m2-load
+.PHONY: help tools generate test lint build compose-up compose-down k3d-up k3d-deploy k3d-scale k3d-down test-contract test-integration test-e2e test-load test-load-isolation frontend-test demo-up test-demo-e2e migrate-up migrate-down migrate-status seed m2-verify m2-deploy m2-smoke m2-evidence m2-load m2-critical
 
 K3D_CLUSTER ?= bnpb-m1
 K3D_HOST_PORT ?= 8080
@@ -136,3 +136,6 @@ m2-evidence: ## Generate M2 evidence artifacts
 
 m2-load: ## Run M2 10k-VU load scenario with 3->5->2 scaling and rolling update
 	@./scripts/m2-load.sh
+
+m2-critical: ## Check critical-notification p95 <= 5s from notifier /metrics
+	@bash ./scripts/m2-critical-latency.sh

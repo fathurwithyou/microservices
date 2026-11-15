@@ -165,7 +165,7 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("field report service initialization failed", "service", "aggregator", "error", err)
 		return 1
 	}
-	fieldReportWorker, err := fieldreports.NewWorker(fieldreports.WorkerConfig{Repository: persistence, Logger: logger})
+	fieldReportWorker, err := fieldreports.NewWorker(fieldreports.WorkerConfig{Repository: persistence, Processor: fieldreports.NewInboxProcessor(logger), Logger: logger})
 	if err != nil {
 		logger.Error("field report worker initialization failed", "service", "aggregator", "error", err)
 		return 1
@@ -177,7 +177,7 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		return 1
 	}
 	grpcServer := grpctransport.NewServer(grpctransport.ServerConfig{Queries: queries, FieldReports: fieldReportService, Analytics: analyticsQueries, Submitter: submitter, Health: persistence, ServiceToken: cfg.InternalServiceToken, Logger: logger})
-	httpServer := httptransport.NewServer(cfg.HTTPPort, auditQueries, cfg.AuditToken, replayer)
+	httpServer := httptransport.NewServer(cfg.HTTPPort, auditQueries, cfg.AuditToken, cfg.OpsToken, replayer)
 
 	go poller.Run(ctx)
 	go outboxWorker.Run(ctx)

@@ -75,6 +75,7 @@ services:
       AGGREGATOR_HTTP_PORT: 8090
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN}
       AUDIT_TOKEN: ${AUDIT_TOKEN:-}
+      OPS_TOKEN: ${OPS_TOKEN:-}
       BMKG_URL: ${BMKG_URL:-http://bmkg:8081}
       BMKG_API_KEY: ${BMKG_API_KEY:?set BMKG_API_KEY}
       PVMBG_URL: ${PVMBG_URL:-http://pvmbg:8082}
@@ -216,6 +217,8 @@ services:
       NOTIFIER_SERVICE_NAME: critical-notifier
       NOTIFIER_EXCHANGE: hazard.events.critical
       CONSUMER_HEALTH_PORT: 8093
+    ports:
+      - "127.0.0.1:${CRITICAL_NOTIFIER_HOST_PORT:-8093}:8093"
     depends_on: { rabbitmq: { condition: service_healthy } }
 
   demo-api:

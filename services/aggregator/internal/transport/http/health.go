@@ -12,7 +12,7 @@ import (
 
 // NewServer returns the aggregator HTTP server with health and Audit API
 // routes.
-func NewServer(port string, auditQueries *audit.Queries, auditToken string, replayer *failures.Replayer) *http.Server {
+func NewServer(port string, auditQueries *audit.Queries, auditToken, opsToken string, replayer *failures.Replayer) *http.Server {
 	router := http.NewServeMux()
 	router.HandleFunc("GET /health", health)
 	router.Handle("GET /metrics", observability.MetricsHandler())
@@ -22,7 +22,9 @@ func NewServer(port string, auditQueries *audit.Queries, auditToken string, repl
 		router.HandleFunc("GET /internal/audit/checksum", auditAuth(auditToken, auditHandler.checksum))
 		router.HandleFunc("GET /internal/audit/location", auditAuth(auditToken, auditHandler.location))
 		router.HandleFunc("GET /internal/audit/unprocessed", auditAuth(auditToken, auditHandler.unprocessed))
-		router.HandleFunc("POST /internal/ops/replay", auditAuth(auditToken, auditHandler.replay))
+		// Replay mutates state, so it is gated by the BNPB Ops credential and
+		// never by the read-only audit token.
+		router.HandleFunc("POST /internal/ops/replay", opsAuth(opsToken, auditHandler.replay))
 	}
 	return &http.Server{Addr: ":" + port, Handler: observability.HTTPTracing(observability.HTTPMetrics(router), "aggregator"), ReadHeaderTimeout: 2 * time.Second, WriteTimeout: 10 * time.Second}
 }

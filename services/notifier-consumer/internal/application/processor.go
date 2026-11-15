@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	eventspb "github.com/fathurwithyou/microservices/contracts/gen/go/events"
 	"github.com/fathurwithyou/microservices/pkg/consumerkit"
+	"github.com/fathurwithyou/microservices/pkg/observability"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -25,6 +27,7 @@ const maxSeenIDs = 10_000
 type Processor struct {
 	service string
 	logger  *slog.Logger
+	now     func() time.Time
 
 	mu      sync.Mutex
 	seen    map[string]struct{}
@@ -36,6 +39,7 @@ func NewProcessor(service string, logger *slog.Logger) *Processor {
 	return &Processor{
 		service: service,
 		logger:  logger,
+		now:     func() time.Time { return time.Now().UTC() },
 		seen:    make(map[string]struct{}),
 	}
 }
@@ -54,8 +58,25 @@ func (p *Processor) Process(_ context.Context, delivery consumerkit.Delivery) co
 		p.logger.Debug("duplicate event skipped", "service", p.service, "event_id", eventID, "correlation_id", delivery.CorrelationID)
 		return consumerkit.Ack
 	}
+	if isCritical(&event) {
+		p.recordCriticalLatency(&event)
+	}
 	p.logger.Info("event processed", "service", p.service, "event_id", eventID, "correlation_id", delivery.CorrelationID, "redelivered", delivery.Redelivered)
 	return consumerkit.Ack
+}
+
+// isCritical reports whether the aggregator flagged the event as field-critical.
+func isCritical(event *eventspb.HazardEvent) bool {
+	return event.GetAttributes()["critical"] == "true"
+}
+
+// recordCriticalLatency measures the first delivery of a critical event against
+// both the source time and the ingestion time. Duplicates and redeliveries
+// never reach this point, so one event contributes one sample.
+func (p *Processor) recordCriticalLatency(event *eventspb.HazardEvent) {
+	now := p.now()
+	observability.ObserveCriticalNotification(p.service, observability.LatencyFromOccurred, event.GetOccurredAt(), now)
+	observability.ObserveCriticalNotification(p.service, observability.LatencyFromIngested, event.GetIngestedAt(), now)
 }
 
 // isDuplicate records eventID and reports whether it was already seen,

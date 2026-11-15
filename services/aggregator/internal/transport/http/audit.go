@@ -33,9 +33,19 @@ func newAuditHandler(queries *audit.Queries, replayer *failures.Replayer) *audit
 }
 
 func auditAuth(token string, next http.HandlerFunc) http.HandlerFunc {
+	return bearerAuth(token, "audit_disabled", "audit token is not configured", next)
+}
+
+// opsAuth guards operator-only mutations such as replay. It requires its own
+// token so possession of the read-only audit token is never enough.
+func opsAuth(token string, next http.HandlerFunc) http.HandlerFunc {
+	return bearerAuth(token, "ops_disabled", "ops token is not configured", next)
+}
+
+func bearerAuth(token, disabledCode, disabledMessage string, next http.HandlerFunc) http.HandlerFunc {
 	return func(response http.ResponseWriter, request *http.Request) {
 		if token == "" {
-			writeAuditError(response, http.StatusServiceUnavailable, "audit_disabled", "audit token is not configured")
+			writeAuditError(response, http.StatusServiceUnavailable, disabledCode, disabledMessage)
 			return
 		}
 		expected := "Bearer " + token
