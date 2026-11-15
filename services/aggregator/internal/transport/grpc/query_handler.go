@@ -2,6 +2,7 @@ package grpctransport
 
 import (
 	"context"
+	"errors"
 
 	aggregatorpb "github.com/fathurwithyou/microservices/contracts/gen/go/aggregator"
 	eventspb "github.com/fathurwithyou/microservices/contracts/gen/go/events"
@@ -31,11 +32,14 @@ func newQueryHandler(queries *hazards.Queries, reports *fieldreports.Service, me
 }
 
 func (h *queryHandler) ListHazards(ctx context.Context, request *aggregatorpb.ListHazardsRequest) (*aggregatorpb.ListHazardsResponse, error) {
-	items, err := h.queries.List(ctx, hazards.ListFilter{Source: sourceFromProto(request.GetSource()), HazardType: hazardTypeFromProto(request.GetHazardType()), Severity: severityFromProto(request.GetSeverity()), PageSize: int(request.GetPageSize()), PageToken: request.GetPageToken()})
+	items, next, err := h.queries.List(ctx, hazards.ListFilter{Source: sourceFromProto(request.GetSource()), HazardType: hazardTypeFromProto(request.GetHazardType()), Severity: severityFromProto(request.GetSeverity()), PageSize: int(request.GetPageSize()), PageToken: request.GetPageToken()})
+	if errors.Is(err, hazards.ErrInvalidPageToken) {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	response := &aggregatorpb.ListHazardsResponse{Hazards: make([]*eventspb.HazardEvent, 0, len(items))}
+	response := &aggregatorpb.ListHazardsResponse{Hazards: make([]*eventspb.HazardEvent, 0, len(items)), NextPageToken: next}
 	for _, item := range items {
 		response.Hazards = append(response.Hazards, hazardToProto(item))
 	}

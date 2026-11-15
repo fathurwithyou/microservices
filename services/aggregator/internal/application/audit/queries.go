@@ -33,12 +33,30 @@ type Location struct {
 	Role string
 }
 
+// NodeShare is one store node's share of the hazard_events ranges.
+type NodeShare struct {
+	Node         string
+	NodeID       int64
+	Live         bool
+	Replicas     int
+	Leaseholders int
+	ReplicaBytes int64
+}
+
+// Distribution describes where hazard_events is stored.
+type Distribution struct {
+	Ranges       int
+	LogicalBytes int64
+	Nodes        []NodeShare
+}
+
 // Repository is the storage capability required by audit queries.
 type Repository interface {
 	ListAuditEvents(context.Context, Filter) ([]domain.HazardEvent, error)
 	SourceRefIDs(context.Context, domain.Source) ([]string, error)
 	HazardExists(context.Context, string) (bool, error)
 	HazardLocations(context.Context, string) ([]Location, error)
+	HazardDistribution(context.Context) (Distribution, error)
 	UnavailableUnits(context.Context) ([]string, error)
 	ListIngestFailures(context.Context, domain.FailureFilter) ([]domain.IngestFailure, error)
 	GetIngestFailure(context.Context, string) (domain.IngestFailure, error)
@@ -103,6 +121,11 @@ func (q *Queries) Exists(ctx context.Context, hazardID string) (bool, error) {
 // Locations returns the replicas of the range that holds hazardID.
 func (q *Queries) Locations(ctx context.Context, hazardID string) ([]Location, error) {
 	return q.repository.HazardLocations(ctx, hazardID)
+}
+
+// Distribution returns the per-node placement of hazard_events.
+func (q *Queries) Distribution(ctx context.Context) (Distribution, error) {
+	return q.repository.HazardDistribution(ctx)
 }
 
 // Unavailable returns the storage units that cannot currently be reached.

@@ -128,6 +128,10 @@ func TestRepositoryAgainstCockroach(t *testing.T) {
 		if _, err := repository.UnavailableUnits(ctx); err != nil {
 			t.Fatalf("UnavailableUnits: %v", err)
 		}
+		distribution, err := repository.HazardDistribution(ctx)
+		if err != nil || distribution.Ranges == 0 || len(distribution.Nodes) == 0 {
+			t.Fatalf("distribution = %+v err = %v", distribution, err)
+		}
 		locations, err := repository.HazardLocations(ctx, events[0].HazardID)
 		if err != nil || len(locations) == 0 || locations[0].Role != "primary" {
 			t.Fatalf("locations = %+v err = %v", locations, err)

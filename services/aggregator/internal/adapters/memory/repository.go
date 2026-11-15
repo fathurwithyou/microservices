@@ -385,22 +385,23 @@ func (s *Repository) ListHazards(_ context.Context, filter hazards.ListFilter) (
 		}
 		items = append(items, clone(event))
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].OccurredAt.After(items[j].OccurredAt) })
-	start := 0
-	if filter.PageToken != "" {
-		for i := range items {
-			if items[i].HazardID == filter.PageToken {
-				start = i + 1
-				break
-			}
+	sort.Slice(items, func(i, j int) bool {
+		if !items[i].OccurredAt.Equal(items[j].OccurredAt) {
+			return items[i].OccurredAt.After(items[j].OccurredAt)
 		}
+		return items[i].HazardID > items[j].HazardID
+	})
+	cursor, after, err := hazards.DecodePageToken(filter.PageToken)
+	if err != nil {
+		return nil, err
+	}
+	start := 0
+	if after {
+		start = sort.Search(len(items), func(i int) bool { return cursor.Before(items[i]) })
 	}
 	end := len(items)
 	if filter.PageSize > 0 && start+filter.PageSize < end {
 		end = start + filter.PageSize
-	}
-	if start > len(items) {
-		start = len(items)
 	}
 	return items[start:end], nil
 }
@@ -517,6 +518,13 @@ func cloneVolcanoes(input map[string]domain.VolcanoReference) map[string]domain.
 // HazardLocations returns the single in-memory unit for a hazard.
 func (r *Repository) HazardLocations(_ context.Context, _ string) ([]audit.Location, error) {
 	return nil, nil
+}
+
+// HazardDistribution reports one unit holding everything in memory.
+func (r *Repository) HazardDistribution(context.Context) (audit.Distribution, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return audit.Distribution{Ranges: 1, Nodes: []audit.NodeShare{{Node: "memory", NodeID: 1, Live: true, Replicas: 1, Leaseholders: 1}}}, nil
 }
 
 // UnavailableUnits is always empty for the in-memory store.

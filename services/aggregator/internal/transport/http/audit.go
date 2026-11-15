@@ -266,6 +266,35 @@ func (h *auditHandler) location(response http.ResponseWriter, request *http.Requ
 	})
 }
 
+// distribution reports how hazard_events is spread over the store nodes:
+// replicas, leases, and replica bytes per node, so "no node holds all data"
+// can be checked against the live cluster.
+func (h *auditHandler) distribution(response http.ResponseWriter, request *http.Request) {
+	result, err := h.queries.Distribution(request.Context())
+	if err != nil {
+		writeAuditError(response, http.StatusServiceUnavailable, "unavailable", err.Error())
+		return
+	}
+	unavailable, _ := h.queries.Unavailable(request.Context())
+	nodes := make([]map[string]any, 0, len(result.Nodes))
+	for _, node := range result.Nodes {
+		item := map[string]any{
+			"node": node.Node, "node_id": node.NodeID, "live": node.Live,
+			"replicas": node.Replicas, "leaseholders": node.Leaseholders, "replica_bytes": node.ReplicaBytes,
+			"holds_all_ranges": result.Ranges > 0 && node.Replicas == result.Ranges,
+		}
+		if result.Ranges > 0 {
+			item["share_of_ranges"] = float64(node.Replicas) / float64(result.Ranges)
+		}
+		nodes = append(nodes, item)
+	}
+	writeJSON(response, http.StatusOK, map[string]any{
+		"table": "hazard_events", "as_of": time.Now().UTC().Format(time.RFC3339),
+		"ranges": result.Ranges, "logical_bytes": result.LogicalBytes, "nodes": nodes,
+		"partial": len(unavailable) > 0, "unavailable_units": units(unavailable),
+	})
+}
+
 func units(values []string) []string {
 	if values == nil {
 		return []string{}

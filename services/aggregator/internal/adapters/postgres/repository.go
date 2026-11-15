@@ -329,7 +329,16 @@ func (s *Repository) ListHazards(ctx context.Context, filter hazards.ListFilter)
 		args = append(args, filter.Severity)
 		query += fmt.Sprintf(" AND severity=$%d", len(args))
 	}
-	query += " ORDER BY occurred_at DESC LIMIT $" + fmt.Sprint(len(args)+1)
+	cursor, after, err := hazards.DecodePageToken(filter.PageToken)
+	if err != nil {
+		return nil, err
+	}
+	if after {
+		args = append(args, cursor.OccurredAt, cursor.HazardID)
+		query += fmt.Sprintf(" AND (occurred_at, hazard_id) < ($%d, $%d)", len(args)-1, len(args))
+	}
+	// hazard_id breaks occurred_at ties so keyset pages form a total order.
+	query += " ORDER BY occurred_at DESC, hazard_id DESC LIMIT $" + fmt.Sprint(len(args)+1)
 	args = append(args, limit(filter.PageSize))
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -561,14 +570,18 @@ func nodeName(locality, address string) string {
 	return address
 }
 
-// UnavailableUnits returns the store nodes currently marked not live.
-func (s *Repository) UnavailableUnits(ctx context.Context) ([]string, error) {
+type storeNode struct {
+	name string
+	live bool
+}
+
+func (s *Repository) storeNodes(ctx context.Context) (map[int64]storeNode, error) {
 	rows, err := s.pool.Query(ctx, `SELECT node_id, locality, address, is_live FROM crdb_internal.gossip_nodes`)
 	if err != nil {
 		return nil, fmt.Errorf("list store nodes: %w", err)
 	}
 	defer rows.Close()
-	var units []string
+	nodes := make(map[int64]storeNode)
 	for rows.Next() {
 		var (
 			nodeID   int64
@@ -579,12 +592,127 @@ func (s *Repository) UnavailableUnits(ctx context.Context) ([]string, error) {
 		if err := rows.Scan(&nodeID, &locality, &address, &live); err != nil {
 			return nil, err
 		}
-		if !live {
-			units = append(units, nodeName(locality, address))
+		nodes[nodeID] = storeNode{name: nodeName(locality, address), live: live}
+	}
+	return nodes, rows.Err()
+}
+
+// UnavailableUnits returns the store nodes that are not live and still hold
+// a replica of this database. A dead node whose replicas have all been
+// re-created elsewhere no longer affects completeness, so answers stop being
+// marked partial once the cluster has healed, even though CockroachDB keeps
+// reporting the dead node ID until it is decommissioned. When the range
+// metadata cannot be read, every dead node counts (fail towards partial).
+func (s *Repository) UnavailableUnits(ctx context.Context) ([]string, error) {
+	nodes, err := s.storeNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dead := make(map[int64]string)
+	for id, node := range nodes {
+		if !node.live {
+			dead[id] = node.name
 		}
 	}
+	if len(dead) == 0 {
+		return nil, nil
+	}
+	holding, err := s.replicaHolders(ctx)
+	names := make(map[string]bool)
+	for id, name := range dead {
+		if err != nil || holding[id] {
+			names[name] = true
+		}
+	}
+	units := make([]string, 0, len(names))
+	for name := range names {
+		units = append(units, name)
+	}
 	sort.Strings(units)
-	return units, rows.Err()
+	return units, nil
+}
+
+// replicaHolders returns the node IDs holding any replica of the current
+// database's ranges.
+func (s *Repository) replicaHolders(ctx context.Context) (map[int64]bool, error) {
+	var database string
+	if err := s.pool.QueryRow(ctx, `SELECT current_database()`).Scan(&database); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT unnest(replicas) FROM [SHOW RANGES FROM DATABASE `+pgx.Identifier{database}.Sanitize()+`]`)
+	if err != nil {
+		return nil, fmt.Errorf("show ranges: %w", err)
+	}
+	defer rows.Close()
+	holders := make(map[int64]bool)
+	for rows.Next() {
+		var nodeID int64
+		if err := rows.Scan(&nodeID); err != nil {
+			return nil, err
+		}
+		holders[nodeID] = true
+	}
+	return holders, rows.Err()
+}
+
+// HazardDistribution counts, per store node, the hazard_events range
+// replicas and leases it holds and the bytes of those replicas.
+func (s *Repository) HazardDistribution(ctx context.Context) (audit.Distribution, error) {
+	nodes, err := s.storeNodes(ctx)
+	if err != nil {
+		return audit.Distribution{}, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT lease_holder, replicas, range_size FROM [SHOW RANGES FROM TABLE hazard_events WITH DETAILS]`)
+	if err != nil {
+		return audit.Distribution{}, fmt.Errorf("show ranges: %w", err)
+	}
+	defer rows.Close()
+	shares := make(map[int64]*audit.NodeShare)
+	share := func(id int64) *audit.NodeShare {
+		if existing, ok := shares[id]; ok {
+			return existing
+		}
+		node := nodes[id]
+		name := node.name
+		if name == "" {
+			name = fmt.Sprintf("node-%d", id)
+		}
+		created := &audit.NodeShare{Node: name, NodeID: id, Live: node.live}
+		shares[id] = created
+		return created
+	}
+	for id := range nodes {
+		share(id)
+	}
+	var result audit.Distribution
+	for rows.Next() {
+		var (
+			lease    int64
+			replicas []int64
+			size     int64
+		)
+		if err := rows.Scan(&lease, &replicas, &size); err != nil {
+			return audit.Distribution{}, err
+		}
+		result.Ranges++
+		result.LogicalBytes += size
+		for _, id := range replicas {
+			holder := share(id)
+			holder.Replicas++
+			holder.ReplicaBytes += size
+		}
+		if lease != 0 {
+			share(lease).Leaseholders++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return audit.Distribution{}, err
+	}
+	for _, item := range shares {
+		result.Nodes = append(result.Nodes, *item)
+	}
+	sort.Slice(result.Nodes, func(i, j int) bool { return result.Nodes[i].NodeID < result.Nodes[j].NodeID })
+	return result, nil
 }
 
 // BulkPersistHazards inserts a historical catalog without emitting outbox
@@ -593,39 +721,56 @@ func (s *Repository) BulkPersistHazards(ctx context.Context, events []domain.Haz
 	if len(events) == 0 {
 		return 0, nil
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return 0, err
+	// One multi-row INSERT per chunk, each committed on its own. A single
+	// transaction over the whole catalog holds write intents on every row
+	// until commit, so concurrent reads of those keys block and a 100k-row
+	// import takes minutes. Chunks keep each transaction small; ON CONFLICT
+	// DO NOTHING makes a re-run after a partial failure safe.
+	inserted := 0
+	for start := 0; start < len(events); start += bulkInsertChunk {
+		end := min(start+bulkInsertChunk, len(events))
+		count, err := s.insertHazardChunk(ctx, events[start:end])
+		if err != nil {
+			return inserted, fmt.Errorf("insert rows %d-%d: %w", start+1, end, err)
+		}
+		inserted += count
 	}
-	defer tx.Rollback(ctx)
+	return inserted, nil
+}
 
-	batch := &pgx.Batch{}
-	for _, event := range events {
+// bulkInsertChunk is the row count per catalog INSERT. 11 parameters per row
+// keeps a chunk well under the 65535 placeholder limit.
+const bulkInsertChunk = 500
+
+func (s *Repository) insertHazardChunk(ctx context.Context, events []domain.HazardEvent) (int, error) {
+	const columns = 11
+	var query strings.Builder
+	query.WriteString(`INSERT INTO hazard_events (hazard_id, source, source_ref_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes) VALUES `)
+	args := make([]any, 0, len(events)*columns)
+	for index, event := range events {
 		attributes, err := json.Marshal(event.Attributes)
 		if err != nil {
 			return 0, err
 		}
-		batch.Queue(`INSERT INTO hazard_events (hazard_id, source, source_ref_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-ON CONFLICT (source, source_ref_id) DO NOTHING`,
-			event.HazardID, event.Source, event.SourceRefID, event.HazardType, event.Severity,
+		if index > 0 {
+			query.WriteByte(',')
+		}
+		base := index * columns
+		query.WriteByte('(')
+		for column := 1; column <= columns; column++ {
+			if column > 1 {
+				query.WriteByte(',')
+			}
+			fmt.Fprintf(&query, "$%d", base+column)
+		}
+		query.WriteByte(')')
+		args = append(args, event.HazardID, event.Source, event.SourceRefID, event.HazardType, event.Severity,
 			event.AreaName, event.Latitude, event.Longitude, event.OccurredAt, event.IngestedAt, attributes)
 	}
-	results := tx.SendBatch(ctx, batch)
-	inserted := 0
-	for range events {
-		tag, err := results.Exec()
-		if err != nil {
-			_ = results.Close()
-			return 0, err
-		}
-		inserted += int(tag.RowsAffected())
-	}
-	if err := results.Close(); err != nil {
+	query.WriteString(` ON CONFLICT (source, source_ref_id) DO NOTHING`)
+	tag, err := s.pool.Exec(ctx, query.String(), args...)
+	if err != nil {
 		return 0, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
-	return inserted, nil
+	return int(tag.RowsAffected()), nil
 }

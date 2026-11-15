@@ -21,6 +21,7 @@ func NewServer(port string, auditQueries *audit.Queries, auditToken, opsToken st
 		router.HandleFunc("GET /internal/audit/events", auditAuth(auditToken, auditHandler.events))
 		router.HandleFunc("GET /internal/audit/checksum", auditAuth(auditToken, auditHandler.checksum))
 		router.HandleFunc("GET /internal/audit/location", auditAuth(auditToken, auditHandler.location))
+		router.HandleFunc("GET /internal/audit/distribution", auditAuth(auditToken, auditHandler.distribution))
 		router.HandleFunc("GET /internal/audit/unprocessed", auditAuth(auditToken, auditHandler.unprocessed))
 		// Replay mutates state, so it is gated by the BNPB Ops credential and
 		// never by the read-only audit token.

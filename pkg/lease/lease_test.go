@@ -281,3 +281,71 @@ func TestCoordinatorValidRejectsExpiredLease(t *testing.T) {
 		t.Fatalf("expired token was not cleared: %+v", token)
 	}
 }
+
+// flakyValidStore fails Valid a fixed number of times, as a database does
+// while one of its nodes restarts ("server is shutting down").
+type flakyValidStore struct {
+	*fakeStore
+	failures atomic.Int32
+}
+
+func (s *flakyValidStore) Valid(ctx context.Context, token Token) (bool, error) {
+	if s.failures.Add(-1) >= 0 {
+		return false, errTransient
+	}
+	return s.fakeStore.Valid(ctx, token)
+}
+
+var errTransient = &transientError{}
+
+type transientError struct{}
+
+func (*transientError) Error() string { return "server is shutting down" }
+
+func waitFor(t *testing.T, what string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !condition() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// A transient revalidation error must refuse that one write without parking
+// the lease on an instance that never works again.
+func TestLeaderSurvivesTransientRevalidationError(t *testing.T) {
+	clock := &fakeClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	store := &flakyValidStore{fakeStore: newFakeStore(clock)}
+	store.failures.Store(1)
+	leader := NewLeader(New(store))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go leader.Run(ctx, "pod-a", time.Hour, time.Millisecond, nil)
+	waitFor(t, "acquire", leader.Allowed)
+
+	if ok, err := leader.StillLeader(ctx); ok || err == nil {
+		t.Fatalf("StillLeader during outage = %v, %v; want false with error", ok, err)
+	}
+	if !leader.Allowed() {
+		t.Fatal("transient error revoked leadership while the lease is still held")
+	}
+	if ok, err := leader.StillLeader(ctx); !ok || err != nil {
+		t.Fatalf("StillLeader after recovery = %v, %v; want true", ok, err)
+	}
+}
+
+// After a definitive miss the renew loop is the authority: a successful
+// renewal (proof of ownership on the database clock) restores the flag.
+func TestLeaderRenewRestoresAllowedAfterMiss(t *testing.T) {
+	clock := &fakeClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	store := newFakeStore(clock)
+	leader := NewLeader(New(store))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go leader.Run(ctx, "pod-a", time.Hour, time.Millisecond, nil)
+	waitFor(t, "acquire", leader.Allowed)
+	leader.allowed.Store(false)
+	waitFor(t, "renew to restore leadership", leader.Allowed)
+}

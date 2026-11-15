@@ -44,6 +44,10 @@ func (f *fakeRepository) HazardLocations(context.Context, string) ([]Location, e
 	return nil, nil
 }
 
+func (f *fakeRepository) HazardDistribution(context.Context) (Distribution, error) {
+	return Distribution{}, nil
+}
+
 func (f *fakeRepository) HazardExists(context.Context, string) (bool, error) { return true, nil }
 func (f *fakeRepository) UnavailableUnits(context.Context) ([]string, error) { return nil, nil }
 

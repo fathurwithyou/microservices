@@ -27,6 +27,13 @@ func (auditRepository) HazardLocations(context.Context, string) ([]audit.Locatio
 	return []audit.Location{{Node: "node-b", Unit: "shard-2", Role: "primary"}}, nil
 }
 
+func (auditRepository) HazardDistribution(context.Context) (audit.Distribution, error) {
+	return audit.Distribution{Ranges: 4, LogicalBytes: 400, Nodes: []audit.NodeShare{
+		{Node: "node-a", NodeID: 1, Live: true, Replicas: 3, Leaseholders: 1, ReplicaBytes: 300},
+		{Node: "node-b", NodeID: 2, Live: true, Replicas: 4, Leaseholders: 3, ReplicaBytes: 400},
+	}}, nil
+}
+
 func (auditRepository) UnavailableUnits(context.Context) ([]string, error) { return nil, nil }
 func (auditRepository) ListIngestFailures(context.Context, domain.FailureFilter) ([]domain.IngestFailure, error) {
 	return []domain.IngestFailure{{MessageID: "msg-1", Source: domain.SourcePVMBG, Reason: "schema_incompatible", Status: domain.FailureParked, PayloadBytes: 16}}, nil
@@ -234,5 +241,50 @@ func TestOpsFailureInspectionRequiresOpsTokenAndReturnsPayload(t *testing.T) {
 	}
 	if _, leaked := auditItems[0].(map[string]any)["payload"]; leaked {
 		t.Fatal("audit unprocessed exposed payload")
+	}
+}
+
+func TestAuditDistributionReportsPerNodeShare(t *testing.T) {
+	server := auditTestServer("secret")
+	defer server.Close()
+	request, _ := http.NewRequest(http.MethodGet, server.URL+"/internal/audit/distribution", nil)
+	request.Header.Set("Authorization", "Bearer secret")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var body struct {
+		Ranges int `json:"ranges"`
+		Nodes  []struct {
+			Node           string  `json:"node"`
+			Replicas       int     `json:"replicas"`
+			Leaseholders   int     `json:"leaseholders"`
+			ShareOfRanges  float64 `json:"share_of_ranges"`
+			HoldsAllRanges bool    `json:"holds_all_ranges"`
+		} `json:"nodes"`
+		Partial bool `json:"partial"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || body.Ranges != 4 || len(body.Nodes) != 2 || body.Partial {
+		t.Fatalf("status = %d body = %+v", response.StatusCode, body)
+	}
+	if body.Nodes[0].HoldsAllRanges || body.Nodes[0].ShareOfRanges != 0.75 || !body.Nodes[1].HoldsAllRanges {
+		t.Fatalf("nodes = %+v", body.Nodes)
+	}
+}
+
+func TestAuditDistributionRequiresToken(t *testing.T) {
+	server := auditTestServer("secret")
+	defer server.Close()
+	response, err := http.Get(server.URL + "/internal/audit/distribution")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d", response.StatusCode)
 	}
 }

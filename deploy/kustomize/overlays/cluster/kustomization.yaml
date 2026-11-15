@@ -5,18 +5,20 @@ resources:
 images:
   - { name: bnpb-m1/bmkg, newTag: m2 }
   - { name: bnpb-m1/pvmbg, newTag: m2 }
-  - { name: bnpb-m1/aggregator, newTag: m2 }
+  - { name: bnpb-m1/aggregator, newTag: m2.2 }
   - { name: bnpb-m1/auth, newTag: m2 }
   - { name: bnpb-m1/client-api, newTag: m2 }
   - { name: bnpb-m1/dashboard-consumer, newTag: m2 }
   - { name: bnpb-m1/notifier-consumer, newTag: m2 }
   - { name: bnpb-m1/portal-consumer, newTag: m2 }
-  - { name: bnpb-m1/satellite-ingestor, newTag: m2 }
-  - { name: bnpb-m1/coastal-ingestor, newTag: m2 }
+  - { name: bnpb-m1/satellite-ingestor, newTag: m2.1 }
+  - { name: bnpb-m1/coastal-ingestor, newTag: m2.1 }
   - { name: bnpb-m1/demo-api, newTag: m2 }
   - { name: bnpb-m1/demo-console, newTag: m2 }
 replicas:
   - { name: aggregator, count: 3 }
+  # RF=3 over 4 store nodes: no node holds every range (M2 P1.1).
+  - { name: cockroachdb, count: 4 }
   - { name: client-api, count: 2 }
   - { name: dashboard-consumer, count: 2 }
   - { name: portal-consumer, count: 2 }

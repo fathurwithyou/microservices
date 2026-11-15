@@ -36,9 +36,16 @@ func (l *Leader) StillLeader(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	valid, err := l.coordinator.Valid(ctx)
-	if err != nil || !valid {
-		l.allowed.Store(false)
+	if err != nil {
+		// Unknown is not lost: refuse this write, but leave ownership to the
+		// renew loop. Clearing the flag here while Run keeps renewing would
+		// park the lease on an instance that never works again, and no other
+		// instance could take over.
 		return false, err
+	}
+	if !valid {
+		l.allowed.Store(false)
+		return false, nil
 	}
 	return true, nil
 }
@@ -83,6 +90,9 @@ func (l *Leader) Run(ctx context.Context, coordinator *lease.Coordinator, holder
 				break
 			}
 			token = renewed
+			// A renewal conditioned on the database clock proves ownership,
+			// so it restores the flag after a definitive StillLeader miss.
+			l.allowed.Store(true)
 		}
 		l.allowed.Store(false)
 	}
