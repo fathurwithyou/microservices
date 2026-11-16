@@ -295,6 +295,42 @@ func (h *auditHandler) distribution(response http.ResponseWriter, request *http.
 	})
 }
 
+// fieldReportLookup reports, for each requested report_id, whether it is
+// stored and its processing state (M2 P3.6 evidence: every report answered
+// 202 is stored and processed once). Ops token only; at most 1000 ids.
+func (h *auditHandler) fieldReportLookup(response http.ResponseWriter, request *http.Request) {
+	var body struct {
+		ReportIDs []string `json:"report_ids"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(response, request.Body, 1<<20)).Decode(&body); err != nil || len(body.ReportIDs) == 0 || len(body.ReportIDs) > 1000 {
+		writeAuditError(response, http.StatusBadRequest, "bad_request", "report_ids must list 1 to 1000 ids")
+		return
+	}
+	reports, err := h.queries.FieldReports(request.Context(), body.ReportIDs)
+	if err != nil {
+		writeAuditError(response, http.StatusServiceUnavailable, "unavailable", err.Error())
+		return
+	}
+	found := make(map[string]map[string]any, len(reports))
+	for _, report := range reports {
+		item := map[string]any{"report_id": report.ReportID, "status": report.Status, "attempts": report.Attempts, "received_at": report.ReceivedAt.UTC().Format(time.RFC3339Nano)}
+		if report.ProcessedAt != nil {
+			item["processed_at"] = report.ProcessedAt.UTC().Format(time.RFC3339Nano)
+		}
+		found[report.ReportID] = item
+	}
+	items := make([]map[string]any, 0, len(body.ReportIDs))
+	missing := make([]string, 0)
+	for _, id := range body.ReportIDs {
+		if item, ok := found[id]; ok {
+			items = append(items, item)
+		} else {
+			missing = append(missing, id)
+		}
+	}
+	writeJSON(response, http.StatusOK, map[string]any{"requested": len(body.ReportIDs), "found": len(items), "missing": missing, "items": items})
+}
+
 func units(values []string) []string {
 	if values == nil {
 		return []string{}

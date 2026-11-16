@@ -10,6 +10,16 @@ import (
 )
 
 func Volcanic(raw map[string]json.RawMessage, volcanoes map[string]domain.VolcanoReference, now time.Time) (domain.HazardEvent, error) {
+	return VolcanicReceived(raw, volcanoes, now, now)
+}
+
+// VolcanicReceived maps a PVMBG report that BNPB received at receivedAt.
+// Enabled schema adapters run first; receivedAt only fills fields an adapter
+// is allowed to fill, so a replay maps with the original arrival time.
+func VolcanicReceived(raw map[string]json.RawMessage, volcanoes map[string]domain.VolcanoReference, now, receivedAt time.Time) (domain.HazardEvent, error) {
+	if CurrentSchemaAdapters().PVMBGBreakingV3 {
+		raw, _ = adaptPVMBGBreakingV3(raw, receivedAt)
+	}
 	reportID, err := stringField(raw, "report_id")
 	if err != nil {
 		return domain.HazardEvent{}, err

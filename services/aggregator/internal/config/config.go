@@ -23,10 +23,13 @@ type Config struct {
 	AuditToken           string
 	OpsToken             string
 	PollInterval         time.Duration
-	OutboxPollInterval   time.Duration
-	RequestTimeout       time.Duration
-	LeaderTTL            time.Duration
-	LeaderRenew          time.Duration
+	// SchemaAdapters lists operator-enabled partner schema adapters
+	// (PVMBG_SCHEMA_ADAPTERS, e.g. "pvmbg-breaking-v3").
+	SchemaAdapters     string
+	OutboxPollInterval time.Duration
+	RequestTimeout     time.Duration
+	LeaderTTL          time.Duration
+	LeaderRenew        time.Duration
 	// FailureRetryInterval spaces automatic retries of transient failures.
 	FailureRetryInterval time.Duration
 	// FailureRetryMaxAttempts parks a transient failure after this many tries.
@@ -87,6 +90,7 @@ func Load() (Config, error) {
 		AuditToken:           env.String("AUDIT_TOKEN", ""),
 		OpsToken:             env.String("OPS_TOKEN", ""),
 		PollInterval:         pollInterval,
+		SchemaAdapters:       env.String("PVMBG_SCHEMA_ADAPTERS", ""),
 		OutboxPollInterval:   outboxPollInterval,
 		RequestTimeout:       requestTimeout,
 		LeaderTTL:            leaderTTL,

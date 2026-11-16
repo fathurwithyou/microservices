@@ -29,6 +29,7 @@ func NewServer(port string, auditQueries *audit.Queries, auditToken, opsToken st
 		// Raw failed payloads are readable only by BNPB Internal Ops.
 		router.HandleFunc("GET /internal/ops/failures", opsAuth(opsToken, auditHandler.opsFailures))
 		router.HandleFunc("GET /internal/ops/failures/{message_id}", opsAuth(opsToken, auditHandler.opsFailure))
+		router.HandleFunc("POST /internal/ops/field-reports/lookup", opsAuth(opsToken, auditHandler.fieldReportLookup))
 	}
 	return &http.Server{Addr: ":" + port, Handler: observability.HTTPTracing(observability.HTTPMetrics(router), "aggregator"), ReadHeaderTimeout: 2 * time.Second, WriteTimeout: 10 * time.Second}
 }

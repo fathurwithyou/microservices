@@ -182,7 +182,7 @@ func (r *Replayer) mapPayload(item domain.IngestFailure) (domain.HazardEvent, er
 		r.mu.RLock()
 		volcanoes := r.volcanoes
 		r.mu.RUnlock()
-		return mapping.Volcanic(raw, volcanoes, r.now())
+		return mapping.VolcanicReceived(raw, volcanoes, r.now(), item.ReceivedAt)
 	case domain.SourceBMKG:
 		return mapping.Seismic(raw, nil, r.now())
 	default:

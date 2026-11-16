@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,16 @@ func (auditRepository) HazardDistribution(context.Context) (audit.Distribution, 
 		{Node: "node-a", NodeID: 1, Live: true, Replicas: 3, Leaseholders: 1, ReplicaBytes: 300},
 		{Node: "node-b", NodeID: 2, Live: true, Replicas: 4, Leaseholders: 3, ReplicaBytes: 400},
 	}}, nil
+}
+
+func (auditRepository) FieldReportsByID(_ context.Context, ids []string) ([]domain.FieldReport, error) {
+	out := []domain.FieldReport{}
+	for _, id := range ids {
+		if id == "fr-1" {
+			out = append(out, domain.FieldReport{ReportID: id, Status: domain.FieldReportProcessed, Attempts: 1})
+		}
+	}
+	return out, nil
 }
 
 func (auditRepository) UnavailableUnits(context.Context) ([]string, error) { return nil, nil }
@@ -286,5 +297,30 @@ func TestAuditDistributionRequiresToken(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d", response.StatusCode)
+	}
+}
+
+func TestOpsFieldReportLookupNeedsOpsToken(t *testing.T) {
+	server := NewServer("0", audit.NewQueries(auditRepository{}), "audit", "ops", nil)
+	ts := httptest.NewServer(server.Handler)
+	defer ts.Close()
+	call := func(token string) (*http.Response, map[string]any) {
+		request, _ := http.NewRequest(http.MethodPost, ts.URL+"/internal/ops/field-reports/lookup", strings.NewReader(`{"report_ids":["fr-1","fr-2"]}`))
+		request.Header.Set("Authorization", "Bearer "+token)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var body map[string]any
+		_ = json.NewDecoder(response.Body).Decode(&body)
+		return response, body
+	}
+	if response, _ := call("audit"); response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("audit token status = %d", response.StatusCode)
+	}
+	response, body := call("ops")
+	if response.StatusCode != http.StatusOK || body["found"] != 1.0 || len(body["missing"].([]any)) != 1 {
+		t.Fatalf("status = %d body = %v", response.StatusCode, body)
 	}
 }

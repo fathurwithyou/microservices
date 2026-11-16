@@ -114,18 +114,18 @@ func (s *Repository) ListAcceptedFieldReports(_ context.Context, limit int) ([]d
 }
 
 // MarkFieldReport records the terminal state of one accepted report.
-func (s *Repository) MarkFieldReport(_ context.Context, reportID string, status domain.FieldReportStatus, processedAt time.Time) error {
+func (s *Repository) MarkFieldReport(_ context.Context, reportID string, status domain.FieldReportStatus, processedAt time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	report, ok := s.fieldReports[reportID]
 	if !ok || report.Status != domain.FieldReportAccepted {
-		return nil
+		return false, nil
 	}
 	report.Status = status
 	report.Attempts++
 	report.ProcessedAt = &processedAt
 	s.fieldReports[reportID] = report
-	return nil
+	return true, nil
 }
 
 // ListAuditEvents returns events ordered by ingested_at then hazard_id.
@@ -518,6 +518,19 @@ func cloneVolcanoes(input map[string]domain.VolcanoReference) map[string]domain.
 // HazardLocations returns the single in-memory unit for a hazard.
 func (r *Repository) HazardLocations(_ context.Context, _ string) ([]audit.Location, error) {
 	return nil, nil
+}
+
+// FieldReportsByID returns the stored reports for ids.
+func (r *Repository) FieldReportsByID(_ context.Context, ids []string) ([]domain.FieldReport, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	reports := make([]domain.FieldReport, 0, len(ids))
+	for _, id := range ids {
+		if report, ok := r.fieldReports[id]; ok {
+			reports = append(reports, report)
+		}
+	}
+	return reports, nil
 }
 
 // HazardDistribution reports one unit holding everything in memory.

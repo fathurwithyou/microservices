@@ -57,6 +57,7 @@ type Repository interface {
 	HazardExists(context.Context, string) (bool, error)
 	HazardLocations(context.Context, string) ([]Location, error)
 	HazardDistribution(context.Context) (Distribution, error)
+	FieldReportsByID(context.Context, []string) ([]domain.FieldReport, error)
 	UnavailableUnits(context.Context) ([]string, error)
 	ListIngestFailures(context.Context, domain.FailureFilter) ([]domain.IngestFailure, error)
 	GetIngestFailure(context.Context, string) (domain.IngestFailure, error)
@@ -121,6 +122,12 @@ func (q *Queries) Exists(ctx context.Context, hazardID string) (bool, error) {
 // Locations returns the replicas of the range that holds hazardID.
 func (q *Queries) Locations(ctx context.Context, hazardID string) ([]Location, error) {
 	return q.repository.HazardLocations(ctx, hazardID)
+}
+
+// FieldReports returns the stored state of the given field reports; ids that
+// were never stored are simply absent.
+func (q *Queries) FieldReports(ctx context.Context, ids []string) ([]domain.FieldReport, error) {
+	return q.repository.FieldReportsByID(ctx, ids)
 }
 
 // Distribution returns the per-node placement of hazard_events.
