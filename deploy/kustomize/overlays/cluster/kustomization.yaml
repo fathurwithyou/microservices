@@ -2,17 +2,18 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../base
+  - client-api-nodeport.yaml
 images:
   - { name: bnpb-m1/bmkg, newTag: m2 }
   - { name: bnpb-m1/pvmbg, newTag: m2 }
-  - { name: bnpb-m1/aggregator, newTag: m2.2 }
+  - { name: bnpb-m1/aggregator, newTag: m2.10 }
   - { name: bnpb-m1/auth, newTag: m2 }
-  - { name: bnpb-m1/client-api, newTag: m2 }
+  - { name: bnpb-m1/client-api, newTag: m2.3 }
   - { name: bnpb-m1/dashboard-consumer, newTag: m2 }
   - { name: bnpb-m1/notifier-consumer, newTag: m2 }
   - { name: bnpb-m1/portal-consumer, newTag: m2 }
-  - { name: bnpb-m1/satellite-ingestor, newTag: m2.1 }
-  - { name: bnpb-m1/coastal-ingestor, newTag: m2.1 }
+  - { name: bnpb-m1/satellite-ingestor, newTag: m2.2 }
+  - { name: bnpb-m1/coastal-ingestor, newTag: m2.3 }
   - { name: bnpb-m1/demo-api, newTag: m2 }
   - { name: bnpb-m1/demo-console, newTag: m2 }
 replicas:

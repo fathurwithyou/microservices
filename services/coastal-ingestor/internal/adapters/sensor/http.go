@@ -11,7 +11,10 @@ package sensor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"io"
 	"net/http"
 	"net/url"
@@ -29,6 +32,19 @@ const (
 	// maxPagesPerFetch bounds one poll cycle while the ingestor catches up.
 	maxPagesPerFetch = 64
 )
+
+// cursorResets counts cursors the sensor no longer recognised.
+var cursorResets = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "coastal_sensor_cursor_resets_total",
+	Help: "Times the sensor answered the stored cursor with an empty final page (sensor restart or reset) and the stream was re-read from the start.",
+})
+
+// sensorRequests counts every HTTP request sent to the sensor by outcome, so
+// a breaker that stops retrying an unhealthy sensor is visible as a flat line.
+var sensorRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "coastal_sensor_requests_total",
+	Help: "HTTP requests sent to Sensor Pantai, by outcome.",
+}, []string{"outcome"})
 
 // Client fetches readings from the Sensor Pantai HTTP contract.
 type Client struct {
@@ -103,6 +119,19 @@ func (c *Client) Fetch(ctx context.Context) ([]domain.Reading, error) {
 		result, err := c.fetchPage(ctx, cursor)
 		if err != nil {
 			return nil, err
+		}
+		if cursor != "" && len(result.Items) == 0 && result.NextCursor == nil {
+			// The tail page is always re-fetched, so a healthy sensor never
+			// answers our cursor with an empty last page. An empty one means
+			// the cursor points past the sensor's stream: it restarted or
+			// reset and forgot the position while still reporting healthy.
+			// Walk again from the start; the Aggregator upserts readings by
+			// observation, so unchanged ones produce no new event.
+			cursorResets.Inc()
+			c.cursor = ""
+			c.tailSeen = map[string]struct{}{}
+			seen = map[string]struct{}{}
+			continue
 		}
 		if refreshStations(c.stations, result.Items) {
 			if err := c.refreshStations(ctx); err != nil {
@@ -220,7 +249,20 @@ func (c *Client) endpoint(path string) (string, error) {
 	return parsed.String(), nil
 }
 
-func (c *Client) getJSON(ctx context.Context, endpoint string, target any) error {
+func (c *Client) getJSON(ctx context.Context, endpoint string, target any) (err error) {
+	defer func() {
+		outcome := "ok"
+		switch {
+		case err == nil:
+		case errors.Is(err, ports.ErrSourceUnauthorized):
+			outcome = "unauthorized"
+		case errors.Is(err, ports.ErrSourcePayload):
+			outcome = "bad_payload"
+		default:
+			outcome = "unavailable"
+		}
+		sensorRequests.WithLabelValues(outcome).Inc()
+	}()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ports.ErrSourcePayload, err)

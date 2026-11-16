@@ -129,3 +129,44 @@ func TestFetchEmptyURLIsFixtureMode(t *testing.T) {
 		t.Fatalf("len(readings) = %d, want 0", len(readings))
 	}
 }
+
+// A sensor that restarts forgets positions but keeps reporting healthy: the
+// old cursor gets an empty final page. The client must re-read from the start
+// instead of waiting forever at a position that no longer exists.
+func TestFetchRecoversWhenSensorForgetsCursor(t *testing.T) {
+	restarted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/stations" {
+			_, _ = w.Write([]byte(stationsBody))
+			return
+		}
+		cursor := r.URL.Query().Get("cursor")
+		switch {
+		case !restarted && cursor == "":
+			_, _ = w.Write([]byte(`{"items":[{"observation_id":"a-1","station_id":"stn-padang-01","observed_at":"2026-03-01T11:59:00Z","quality":"ok"}],"next_cursor":"far-ahead"}`))
+		case !restarted && cursor == "far-ahead":
+			_, _ = w.Write([]byte(`{"items":[{"observation_id":"a-2","station_id":"stn-padang-01","observed_at":"2026-03-01T12:00:00Z","quality":"ok"}],"next_cursor":null}`))
+		case restarted && cursor != "":
+			_, _ = w.Write([]byte(`{"items":[],"next_cursor":null}`))
+		default:
+			_, _ = w.Write([]byte(`{"items":[{"observation_id":"b-1","station_id":"stn-padang-01","observed_at":"2026-03-01T12:05:00Z","quality":"ok","critical":true}],"next_cursor":null}`))
+		}
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "secret", time.Second)
+	if readings, err := client.Fetch(context.Background()); err != nil || len(readings) != 2 {
+		t.Fatalf("before restart: %d readings, err %v", len(readings), err)
+	}
+	restarted = true
+	readings, err := client.Fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readings) != 1 || !readings[0].Critical {
+		t.Fatalf("after restart readings = %+v, want the new critical observation", readings)
+	}
+	if client.Cursor() != "" {
+		t.Fatalf("cursor = %q, want the start of the restarted stream", client.Cursor())
+	}
+}
