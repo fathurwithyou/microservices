@@ -24,8 +24,9 @@ type Config struct {
 	// DatabaseURL enables durable state when set. Empty keeps the in-memory
 	// adapter, which is valid for tests and local development.
 	DatabaseURL string
-	// LateWindow drops detections whose acquisition time is older than this
-	// relative to the ingest clock.
+	// LateWindow is the accepted lateness: a detection whose acquisition time
+	// is more than this behind the latest acquisition time seen is counted as
+	// late instead of clustered.
 	LateWindow time.Duration
 	// MaxAge prunes detections older than this from durable state.
 	MaxAge time.Duration

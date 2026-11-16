@@ -14,6 +14,10 @@ var (
 		Name: "satellite_fires_submitted_total",
 		Help: "Fire updates sent to the Aggregator, by status.",
 	}, []string{"status"})
+	watermarkSeconds = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "satellite_event_time_watermark_seconds",
+		Help: "Latest accepted satellite acquisition time (event-time watermark), Unix seconds.",
+	})
 	feedLag = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "satellite_feed_lag_events",
 		Help: "Feed offsets between the latest event and the committed offset.",

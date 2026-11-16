@@ -50,6 +50,12 @@ type Stream struct {
 	sessionInterval time.Duration
 	leadership      Leadership
 	committed       atomic.Int64
+	// watermark is the latest satellite acquisition time accepted so far.
+	// Lateness is measured against it, never against the BNPB clock: the feed
+	// runs on its own (possibly accelerated) virtual time, and P4 groups
+	// detections by when the satellite saw them, not when they arrived.
+	watermark      time.Time
+	watermarkReady bool
 }
 
 // NewStream builds a consume loop.
@@ -237,46 +243,38 @@ func (s *Stream) process(ctx context.Context, events []ports.Event) error {
 		return ErrNotLeader
 	}
 	var maxOffset int64
-	loaded := false
-	changed := false
-	var detections []domain.Detection
-	var previous []domain.Fire
-
+	needsState := false
 	for _, event := range events {
 		if event.Offset > maxOffset {
 			maxOffset = event.Offset
 		}
+		if event.Kind != ports.KindHeartbeat {
+			needsState = true
+		}
+	}
+	if !needsState {
+		return s.saveOffset(ctx, maxOffset)
+	}
+	detections, previous, err := s.load(ctx)
+	if err != nil {
+		return err
+	}
+	s.initWatermark(detections)
+	changed := false
+	for _, event := range events {
 		switch event.Kind {
-		case ports.KindHeartbeat:
-			continue
 		case ports.KindDetection, ports.KindUpdate:
 			if !s.accept(event.Detection) {
 				continue
 			}
-			if !loaded {
-				var err error
-				detections, previous, err = s.load(ctx)
-				if err != nil {
-					return err
-				}
-				loaded = true
-			}
 			detections = upsertDetection(detections, event.Detection)
 			changed = true
 		case ports.KindRetract:
-			if !loaded {
-				var err error
-				detections, previous, err = s.load(ctx)
-				if err != nil {
-					return err
-				}
-				loaded = true
-			}
 			detections = removeDetection(detections, event.DetectionKey)
 			changed = true
 		}
 	}
-	if !loaded || !changed {
+	if !changed {
 		return s.saveOffset(ctx, maxOffset)
 	}
 	if !s.stillLeader(ctx) {
@@ -349,21 +347,55 @@ func (s *Stream) reportLag(ctx context.Context) {
 	}
 }
 
+// initWatermark restores the watermark from durable state once per process
+// lifetime, so a restarted replica judges lateness exactly like the one it
+// replaced.
+func (s *Stream) initWatermark(detections []domain.Detection) {
+	if s.watermarkReady {
+		return
+	}
+	for _, detection := range detections {
+		if at, err := detection.Time(); err == nil && at.After(s.watermark) {
+			s.watermark = at
+		}
+	}
+	s.watermarkReady = true
+	if !s.watermark.IsZero() {
+		watermarkSeconds.Set(float64(s.watermark.Unix()))
+	}
+}
+
+// accept admits a detection unless its acquisition time is more than
+// lateWindow behind the watermark. Late detections are not dropped silently:
+// they are counted (satellite_detections_dropped_total{reason="late"}) and
+// logged with their key.
 func (s *Stream) accept(detection domain.Detection) bool {
 	at, err := detection.Time()
 	if err != nil {
 		droppedDetections.WithLabelValues("invalid_time").Inc()
 		return false
 	}
-	if s.now().Sub(at) > s.lateWindow {
+	if !s.watermark.IsZero() && s.watermark.Sub(at) > s.lateWindow {
 		droppedDetections.WithLabelValues("late").Inc()
+		s.logger.Warn("late detection not clustered",
+			"service", "satellite-ingestor", "component", "stream",
+			"detection", detection.Key(), "acquired_at", at, "watermark", s.watermark, "late_by", s.watermark.Sub(at)-s.lateWindow)
 		return false
+	}
+	if at.After(s.watermark) {
+		s.watermark = at
+		watermarkSeconds.Set(float64(at.Unix()))
 	}
 	return true
 }
 
+// prune forgets detections older than maxAge behind the watermark; they can
+// no longer join or change a fire.
 func (s *Stream) prune(detections []domain.Detection) []domain.Detection {
-	cutoff := s.now().Add(-s.maxAge)
+	if s.watermark.IsZero() {
+		return detections
+	}
+	cutoff := s.watermark.Add(-s.maxAge)
 	kept := detections[:0]
 	for _, detection := range detections {
 		at, err := detection.Time()
