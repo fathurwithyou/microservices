@@ -61,10 +61,17 @@ metadata: { name: aggregator }
 spec:
   replicas: 1
   selector: { matchLabels: { app: aggregator } }
+  # Never drop below the desired count during a version change (M2 P2.8).
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
   template:
     metadata: { labels: { app: aggregator, role: aggregator } }
     spec:
       serviceAccountName: aggregator
+      # One instance per node where possible (M2 P2.1); extra replicas still
+      # schedule when there are more replicas than nodes.
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: ScheduleAnyway, labelSelector: { matchLabels: { app: aggregator } } }
+      terminationGracePeriodSeconds: 30
       # Secret files are root-owned; fsGroup lets the non-root process read
       # its client key (mode 0440).
       securityContext: { fsGroup: 10001 }
@@ -94,6 +101,8 @@ spec:
           image: bnpb-m1/aggregator:local
           resources: { requests: { memory: 256Mi }, limits: { memory: 512Mi } }
           ports: [{ name: grpc, containerPort: 9090 }, { name: http, containerPort: 8090 }]
+          # Endpoint and DNS removal propagate before SIGTERM starts the drain.
+          lifecycle: { preStop: { exec: { command: ["sleep", "5"] } } }
           envFrom: [{ configMapRef: { name: bnpb-config } }]
           env:
             - { name: AGGREGATOR_GRPC_PORT, value: "9090" }
@@ -122,6 +131,13 @@ apiVersion: v1
 kind: Service
 metadata: { name: aggregator }
 spec: { selector: { app: aggregator }, ports: [{ name: grpc, port: 9090, targetPort: grpc }, { name: http, port: 8090, targetPort: http }] }
+---
+# Headless: DNS returns every ready Aggregator pod, so Client API balances per
+# call (round_robin) instead of pinning one HTTP/2 connection to one pod.
+apiVersion: v1
+kind: Service
+metadata: { name: aggregator-grpc }
+spec: { clusterIP: None, selector: { app: aggregator }, ports: [{ name: grpc, port: 9090, targetPort: grpc }] }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -180,6 +196,8 @@ spec:
           envFrom: [{ configMapRef: { name: bnpb-config } }]
           env:
             - { name: CLIENT_API_PORT, value: "8080" }
+            # Per-call balancing over the headless Service (see aggregator-grpc).
+            - { name: AGGREGATOR_GRPC_ADDR, value: "dns:///aggregator-grpc:9090" }
             - { name: INTERNAL_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: INTERNAL_SERVICE_TOKEN } } }
           readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 2 }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }

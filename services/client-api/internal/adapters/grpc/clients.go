@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -31,9 +32,34 @@ type Clients struct {
 	close      func()
 }
 
+// aggregatorServiceConfig balances every call over all resolved Aggregator
+// instances (use a dns:/// target on a headless Service) and retries reads
+// that failed with UNAVAILABLE, e.g. while an instance drains during a
+// rolling update. Writes are not retried here.
+const aggregatorServiceConfig = `{
+  "loadBalancingConfig": [{"round_robin": {}}],
+  "methodConfig": [{
+    "name": [
+      {"service": "bnpb.aggregator.Aggregator", "method": "ListHazards"},
+      {"service": "bnpb.aggregator.Aggregator", "method": "GetHazard"},
+      {"service": "bnpb.aggregator.Aggregator", "method": "GetSourceStatus"},
+      {"service": "bnpb.aggregator.Aggregator", "method": "GetAnalytics"},
+      {"service": "bnpb.aggregator.Aggregator", "method": "HealthCheck"}
+    ],
+    "retryPolicy": {"maxAttempts": 3, "initialBackoff": "0.05s", "maxBackoff": "0.5s", "backoffMultiplier": 2, "retryableStatusCodes": ["UNAVAILABLE"]}
+  }]
+}`
+
 // Dial opens gRPC connections to the aggregator and auth services.
 func Dial(aggregatorAddress, authAddress, internalServiceToken string) (*Clients, error) {
-	aggregatorConnection, err := grpc.NewClient(aggregatorAddress, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+	aggregatorConnection, err := grpc.NewClient(aggregatorAddress,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithDefaultServiceConfig(aggregatorServiceConfig),
+		// A powered-off instance never sends a RST; pings find it in ~13 s
+		// and round_robin stops picking it.
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 10 * time.Second, Timeout: 3 * time.Second, PermitWithoutStream: true}),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("dial aggregator: %w", err)
 	}
@@ -43,7 +69,7 @@ func Dial(aggregatorAddress, authAddress, internalServiceToken string) (*Clients
 		return nil, fmt.Errorf("dial auth: %w", err)
 	}
 	return &Clients{
-		Auth:       &authClient{client: authpb.NewAuthClient(authConnection), internalServiceToken: internalServiceToken},
+		Auth:       newCachingAuth(&authClient{client: authpb.NewAuthClient(authConnection), internalServiceToken: internalServiceToken}),
 		Aggregator: &aggregatorClient{client: aggregatorpb.NewAggregatorClient(aggregatorConnection), internalServiceToken: internalServiceToken},
 		close: func() {
 			_ = aggregatorConnection.Close()
@@ -83,14 +109,21 @@ func (c *authClient) Refresh(ctx context.Context, refreshToken string) (*ports.T
 }
 
 func (c *authClient) Validate(ctx context.Context, accessToken string) (*ports.ValidatedToken, error) {
+	validated, _, err := c.validate(ctx, accessToken)
+	return validated, err
+}
+
+// validate also returns the token's expiry so callers can cache the result.
+func (c *authClient) validate(ctx context.Context, accessToken string) (*ports.ValidatedToken, time.Time, error) {
 	validated, err := c.client.ValidateToken(withInternalMetadata(ctx, c.internalServiceToken), &authpb.ValidateTokenRequest{AccessToken: accessToken})
 	if err != nil {
 		if status.Code(err) == codes.Unauthenticated {
-			return nil, ports.ErrInvalidToken
+			return nil, time.Time{}, ports.ErrInvalidToken
 		}
-		return nil, grpcError(err)
+		return nil, time.Time{}, grpcError(err)
 	}
-	return &ports.ValidatedToken{Valid: validated.GetValid(), ClientID: validated.GetClientId(), Scopes: validated.GetScopes()}, nil
+	expiresAt, _ := time.Parse(time.RFC3339Nano, validated.GetExpiresAt())
+	return &ports.ValidatedToken{Valid: validated.GetValid(), ClientID: validated.GetClientId(), Scopes: validated.GetScopes()}, expiresAt, nil
 }
 
 func toTokenPair(pair *authpb.TokenPair) *ports.TokenPair {

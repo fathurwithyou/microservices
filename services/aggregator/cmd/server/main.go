@@ -30,6 +30,7 @@ import (
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/config"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/importer"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/mapping"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/ports"
 	grpctransport "github.com/fathurwithyou/microservices/services/aggregator/internal/transport/grpc"
 	httptransport "github.com/fathurwithyou/microservices/services/aggregator/internal/transport/http"
@@ -73,6 +74,13 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("configuration failed", "service", "aggregator", "error", err)
 		return 1
 	}
+	adapters, unknown := mapping.ParseSchemaAdapters(cfg.SchemaAdapters)
+	if len(unknown) > 0 {
+		logger.Error("unknown schema adapters", "service", "aggregator", "adapters", unknown)
+		return 1
+	}
+	mapping.SetSchemaAdapters(adapters)
+	logger.Info("schema adapters", "service", "aggregator", "pvmbg_breaking_v3", adapters.PVMBGBreakingV3)
 	shutdownTracing, err := observability.Setup(ctx, "aggregator")
 	if err != nil {
 		logger.Error("tracing initialization failed", "service", "aggregator", "error", err)
@@ -126,9 +134,11 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 	var (
 		leadership applicationingest.Leadership
 		leader     *applicationingest.Leader
+		leaseName  string
 	)
 	if repository, ok := persistence.(*postgres.Repository); ok {
-		coordinator := lease.New(repository.LeaseStore("ingestion"))
+		leaseName = "ingestion"
+		coordinator := lease.New(repository.LeaseStore(leaseName))
 		leader = applicationingest.NewLeader(coordinator)
 		go leader.Run(ctx, coordinator, leaderHolder(), cfg.LeaderTTL, cfg.LeaderRenew, logger)
 		leadership = leader
@@ -136,6 +146,7 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 	poller, err := applicationingest.NewPoller(applicationingest.PollerConfig{
 		Repository: persistence,
 		Sources:    []applicationingest.Source{bmkgSource, pvmbgSource},
+		LeaseName:  leaseName,
 		Interval:   cfg.PollInterval,
 		Timeout:    cfg.RequestTimeout,
 		Leadership: leadership,

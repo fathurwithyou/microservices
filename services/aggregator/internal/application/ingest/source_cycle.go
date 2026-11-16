@@ -74,7 +74,20 @@ func (p *Poller) runSource(ctx context.Context, source Source) {
 				return
 			}
 		}
-		batchErr := p.persistBatch(ctx, events, correlationID)
+		batchErr := p.persistBatch(p.writeContext(ctx), events, correlationID)
+		if errors.Is(batchErr, domain.ErrFenced) {
+			// A newer lease term exists: this instance must not write anything,
+			// including source status or failure records, until it is leader
+			// again.
+			holder, fence := p.fence()
+			p.logger.Warn("batch fenced, not persisted", "component", "poller", "source", name, "correlation_id", correlationID, "events", len(events), "holder", holder, "fence", fence)
+			select {
+			case <-ticker.C:
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
 		if mappingErr, ok := fetchErr.(*MappingError); ok {
 			p.recordFailures(ctx, mappingErr, correlationID)
 		}
@@ -101,6 +114,9 @@ func (p *Poller) runSource(ctx context.Context, source Source) {
 			cursor = batchUpperBound
 			lastSuccess = batchUpperBound
 			p.markHealthy(ctx, name, batchUpperBound)
+			holder, fence := p.fence()
+			p.logger.Info("poll batch persisted", "component", "poller", "source", name, "correlation_id", correlationID,
+				"events", len(events), "window_until", batchUpperBound, "holder", holder, "fence", fence)
 			if fetchErr != nil {
 				// Events were ingested; only some payloads were rejected and
 				// the source already logged each rejection. Advancing the
@@ -137,6 +153,24 @@ func isMappingError(err error) bool {
 func isTransportError(err error) bool {
 	var mappingErr *MappingError
 	return errors.As(err, &mappingErr) && mappingErr.Transport
+}
+
+// writeContext attaches the current lease term so the store refuses the
+// writes atomically once the term is over.
+func (p *Poller) writeContext(ctx context.Context) context.Context {
+	holder, fence := p.fence()
+	if p.leaseName == "" || holder == "" {
+		return ctx
+	}
+	return domain.WithWriteFence(ctx, domain.WriteFence{Lease: p.leaseName, Holder: holder, Fence: fence})
+}
+
+// fence reports the lease term this poller writes under, when known.
+func (p *Poller) fence() (string, int64) {
+	if fenced, ok := p.leadership.(interface{ Fence() (string, int64) }); ok {
+		return fenced.Fence()
+	}
+	return "", 0
 }
 
 func (p *Poller) leaderAllowed() bool {

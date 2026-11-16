@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/analytics"
@@ -20,7 +21,23 @@ import (
 
 const defaultWait = 60 * time.Second
 
-type Repository struct{ pool *pgxpool.Pool }
+type Repository struct {
+	pool *pgxpool.Pool
+	// health caches UnavailableUnits: every listing, analytics and audit
+	// answer reports completeness, and the cluster metadata behind it is far
+	// more expensive than the answer itself.
+	health unitsCache
+}
+
+// unitsCacheTTL bounds how stale a completeness marker can be. A node that
+// dies is reported within this time after CockroachDB marks it not live.
+const unitsCacheTTL = 2 * time.Second
+
+type unitsCache struct {
+	mu    sync.Mutex
+	at    time.Time
+	units []string
+}
 
 func NewRepository(ctx context.Context, databaseURL string) (*Repository, error) {
 	return NewRepositoryWithWait(ctx, databaseURL, defaultWait)
@@ -51,6 +68,10 @@ func (s *Repository) PersistHazardAndEnqueue(ctx context.Context, event domain.H
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
+		return err
+	}
+	if err := checkWriteFence(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
 		return err
 	}
 	defer tx.Rollback(ctx)
@@ -278,6 +299,25 @@ ON CONFLICT (report_id) DO NOTHING`, report.ReportID, report.HazardType, report.
 	return tag.RowsAffected() == 1, nil
 }
 
+// FieldReportsByID returns the stored rows for ids, in any order.
+func (s *Repository) FieldReportsByID(ctx context.Context, ids []string) ([]domain.FieldReport, error) {
+	rows, err := s.pool.Query(ctx, `SELECT report_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, received_at, description, status, attempts, processed_at
+FROM field_reports WHERE report_id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	reports := make([]domain.FieldReport, 0, len(ids))
+	for rows.Next() {
+		report, scanErr := scanFieldReport(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		reports = append(reports, report)
+	}
+	return reports, rows.Err()
+}
+
 // ListAcceptedFieldReports returns accepted reports in arrival order.
 func (s *Repository) ListAcceptedFieldReports(ctx context.Context, limit int) ([]domain.FieldReport, error) {
 	rows, err := s.pool.Query(ctx, `SELECT report_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, received_at, description, status, attempts, processed_at
@@ -297,10 +337,15 @@ FROM field_reports WHERE status = 'accepted' ORDER BY received_at ASC LIMIT $1`,
 	return reports, rows.Err()
 }
 
-// MarkFieldReport records the terminal state of one accepted report.
-func (s *Repository) MarkFieldReport(ctx context.Context, reportID string, status domain.FieldReportStatus, processedAt time.Time) error {
-	_, err := s.pool.Exec(ctx, `UPDATE field_reports SET status = $2, attempts = attempts + 1, processed_at = $3 WHERE report_id = $1 AND status = 'accepted'`, reportID, status, processedAt)
-	return err
+// MarkFieldReport moves one accepted report to its terminal state and reports
+// whether this call made the transition. Every Aggregator instance runs the
+// worker; the conditional UPDATE lets exactly one of them win each report.
+func (s *Repository) MarkFieldReport(ctx context.Context, reportID string, status domain.FieldReportStatus, processedAt time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE field_reports SET status = $2, attempts = attempts + 1, processed_at = $3 WHERE report_id = $1 AND status = 'accepted'`, reportID, status, processedAt)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 func scanFieldReport(row scanner) (domain.FieldReport, error) {
@@ -604,6 +649,20 @@ func (s *Repository) storeNodes(ctx context.Context) (map[int64]storeNode, error
 // reporting the dead node ID until it is decommissioned. When the range
 // metadata cannot be read, every dead node counts (fail towards partial).
 func (s *Repository) UnavailableUnits(ctx context.Context) ([]string, error) {
+	s.health.mu.Lock()
+	defer s.health.mu.Unlock()
+	if !s.health.at.IsZero() && time.Since(s.health.at) < unitsCacheTTL {
+		return append([]string(nil), s.health.units...), nil
+	}
+	units, err := s.unavailableUnits(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.health.at, s.health.units = time.Now(), units
+	return append([]string(nil), units...), nil
+}
+
+func (s *Repository) unavailableUnits(ctx context.Context) ([]string, error) {
 	nodes, err := s.storeNodes(ctx)
 	if err != nil {
 		return nil, err
@@ -713,6 +772,27 @@ func (s *Repository) HazardDistribution(ctx context.Context) (audit.Distribution
 	}
 	sort.Slice(result.Nodes, func(i, j int) bool { return result.Nodes[i].NodeID < result.Nodes[j].NodeID })
 	return result, nil
+}
+
+// checkWriteFence verifies, inside the write transaction, that the lease term
+// attached to ctx is still current by the database clock. Under SERIALIZABLE
+// a concurrent takeover that rewrites the lease row conflicts with this read,
+// so the write either commits under a current term or not at all.
+func checkWriteFence(ctx context.Context, tx pgx.Tx) error {
+	fence, ok := domain.WriteFenceFrom(ctx)
+	if !ok {
+		return nil
+	}
+	var held bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM leader_lease WHERE name = $1 AND holder = $2 AND fence = $3 AND expires_at > clock_timestamp())`,
+		fence.Lease, fence.Holder, fence.Fence).Scan(&held)
+	if err != nil {
+		return fmt.Errorf("check write fence: %w", err)
+	}
+	if !held {
+		return domain.ErrFenced
+	}
+	return nil
 }
 
 // BulkPersistHazards inserts a historical catalog without emitting outbox

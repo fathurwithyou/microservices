@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -40,6 +41,44 @@ func TestRepositoryAgainstCockroach(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
+	t.Run("write fence", func(t *testing.T) {
+		store := repository.LeaseStore("fence-test-" + run)
+		token, ok, err := store.Acquire(ctx, "pod-a", 2*time.Second)
+		if err != nil || !ok {
+			t.Fatalf("acquire: ok=%v err=%v", ok, err)
+		}
+		write := func(suffix string, fence domain.WriteFence) error {
+			event := domain.HazardEvent{HazardID: run + "-f" + suffix, Source: domain.SourcePVMBG, SourceRefID: run + "-f" + suffix, HazardType: domain.HazardVolcanic, Severity: domain.SeverityNormal, AreaName: "A", OccurredAt: at, IngestedAt: at, Attributes: map[string]any{}}
+			message := domain.OutboxMessage{HazardID: event.HazardID, CorrelationID: run, RoutingKey: "hazard.event", Payload: []byte("{}")}
+			return repository.PersistHazardAndEnqueue(domain.WithWriteFence(ctx, fence), event, message)
+		}
+		current := domain.WriteFence{Lease: "fence-test-" + run, Holder: token.Holder, Fence: token.Fence}
+		if err := write("1", current); err != nil {
+			t.Fatalf("current term refused: %v", err)
+		}
+		stale := current
+		stale.Fence--
+		if err := write("2", stale); !errors.Is(err, domain.ErrFenced) {
+			t.Fatalf("stale fence err = %v, want ErrFenced", err)
+		}
+		// Expiry by the database clock ends the term even for its holder,
+		// and a takeover gets a newer fence.
+		time.Sleep(2100 * time.Millisecond)
+		if err := write("3", current); !errors.Is(err, domain.ErrFenced) {
+			t.Fatalf("expired term err = %v, want ErrFenced", err)
+		}
+		next, ok, err := store.Acquire(ctx, "pod-b", time.Minute)
+		if err != nil || !ok || next.Fence <= token.Fence {
+			t.Fatalf("takeover: token=%+v ok=%v err=%v", next, ok, err)
+		}
+		if err := write("4", current); !errors.Is(err, domain.ErrFenced) {
+			t.Fatalf("old holder after takeover err = %v, want ErrFenced", err)
+		}
+		if exists, _ := repository.HazardExists(ctx, run+"-f4"); exists {
+			t.Fatal("fenced write was persisted")
+		}
+	})
 
 	t.Run("tsunami category", func(t *testing.T) {
 		counts, err := repository.CountByHazardType(ctx, analytics.Filter{Since: at, Until: at.Add(time.Second), Bucket: analytics.BucketDay})

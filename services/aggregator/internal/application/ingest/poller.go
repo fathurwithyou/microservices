@@ -27,6 +27,7 @@ type Poller struct {
 	interval   time.Duration
 	timeout    time.Duration
 	leadership Leadership
+	leaseName  string
 	logger     *slog.Logger
 }
 
@@ -43,6 +44,9 @@ type PollerConfig struct {
 	// Leadership gates polling to the current leader. When nil, every
 	// instance polls (useful for the memory driver and tests).
 	Leadership Leadership
+	// LeaseName is the leader_lease row the leadership holds. When set, every
+	// event write re-checks the lease term inside its transaction.
+	LeaseName string
 	// Logger receives structured logs. Defaults to slog.Default().
 	Logger *slog.Logger
 }
@@ -64,7 +68,7 @@ func NewPoller(cfg PollerConfig) (*Poller, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	return &Poller{repository: cfg.Repository, sources: cfg.Sources, interval: cfg.Interval, timeout: cfg.Timeout, leadership: cfg.Leadership, logger: cfg.Logger}, nil
+	return &Poller{repository: cfg.Repository, sources: cfg.Sources, interval: cfg.Interval, timeout: cfg.Timeout, leadership: cfg.Leadership, leaseName: cfg.LeaseName, logger: cfg.Logger}, nil
 }
 
 // Run polls every registered source concurrently until ctx is cancelled.

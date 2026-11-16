@@ -29,6 +29,17 @@ func NewLeader(coordinator *lease.Coordinator) *Leader {
 // Allowed reports whether this instance believes it owns the lease.
 func (l *Leader) Allowed() bool { return l.allowed.Load() }
 
+// Fence returns the holder and fence token of the lease this instance holds,
+// or zero values when it holds none. Logged with every persisted batch so a
+// write can be attributed to exactly one lease term.
+func (l *Leader) Fence() (string, int64) {
+	if l.coordinator == nil {
+		return "", 0
+	}
+	token := l.coordinator.Fence()
+	return token.Holder, token.Fence
+}
+
 // StillLeader revalidates the lease against the database clock. A process that
 // was frozen past the TTL fails this check before its next write.
 func (l *Leader) StillLeader(ctx context.Context) (bool, error) {

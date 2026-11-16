@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fathurwithyou/microservices/services/aggregator/migrations"
@@ -51,10 +52,20 @@ func Connect(ctx context.Context, databaseURL string, wait time.Duration) (*pgxp
 // newer CockroachDB releases hide behind allow_unsafe_internals. Servers that
 // do not know the variable (PostgreSQL, older CockroachDB) answer 42704 and
 // are left as they are.
+// defaultPoolMaxConns is the per-instance connection cap when the DSN sets none.
+const defaultPoolMaxConns = 16
+
 func newPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, err
+	}
+	// pgxpool defaults to max(4, NumCPU) connections: on a 2-vCPU node that is
+	// 4 concurrent queries per instance, which caps reads long before the
+	// instance or the store is busy (M2 P2.7). An explicit pool_max_conns in
+	// the DSN still wins.
+	if !strings.Contains(databaseURL, "pool_max_conns") {
+		config.MaxConns = defaultPoolMaxConns
 	}
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		_, err := conn.Exec(ctx, "SET allow_unsafe_internals = true")
