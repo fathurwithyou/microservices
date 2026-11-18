@@ -2,6 +2,8 @@ package grpcadapter
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -75,5 +77,52 @@ func TestCachingAuthNeverCachesRejections(t *testing.T) {
 	}
 	if server.calls != 2 {
 		t.Fatalf("auth calls = %d, want 2", server.calls)
+	}
+}
+
+// blockingAuthServer counts calls and holds every validation until released.
+type blockingAuthServer struct {
+	countingAuthServer
+	mu      sync.Mutex
+	release chan struct{}
+}
+
+func (s *blockingAuthServer) ValidateToken(ctx context.Context, request *authpb.ValidateTokenRequest, opts ...grpc.CallOption) (*authpb.ValidatedToken, error) {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	<-s.release
+	return &authpb.ValidatedToken{Valid: true, ClientId: "field-team-client", Scopes: []string{"hazards:read"}, ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339Nano)}, nil
+}
+
+func TestCachingAuthCoalescesConcurrentMissesForOneToken(t *testing.T) {
+	server := &blockingAuthServer{release: make(chan struct{})}
+	cache := newCachingAuth(&authClient{client: server})
+	var wg sync.WaitGroup
+	errs := make(chan error, 100)
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			token, err := cache.Validate(context.Background(), "hot-token")
+			if err == nil && (token == nil || !token.Valid) {
+				err = errors.New("token not valid")
+			}
+			errs <- err
+		}()
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(server.release)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.calls != 1 {
+		t.Fatalf("auth calls = %d for 100 concurrent misses of one token, want 1", server.calls)
 	}
 }

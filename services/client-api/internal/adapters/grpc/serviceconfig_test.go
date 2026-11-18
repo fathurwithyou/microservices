@@ -21,3 +21,15 @@ func TestAggregatorServiceConfigParses(t *testing.T) {
 	}
 	_ = conn.Close()
 }
+
+func TestAuthServiceConfigParses(t *testing.T) {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(authServiceConfig), &parsed); err != nil {
+		t.Fatalf("auth service config is not JSON: %v", err)
+	}
+	conn, err := grpc.NewClient("auth:9091", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(authServiceConfig))
+	if err != nil {
+		t.Fatalf("auth service config rejected: %v", err)
+	}
+	_ = conn.Close()
+}

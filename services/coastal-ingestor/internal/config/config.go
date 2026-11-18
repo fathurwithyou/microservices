@@ -30,8 +30,16 @@ type Config struct {
 	PollInterval time.Duration
 	// RequestTimeout bounds one source fetch.
 	RequestTimeout time.Duration
-	// MaxAge is the oldest reading the validator accepts.
-	MaxAge time.Duration
+	// StaleAfter is the feed freshness (sensor clock minus newest
+	// observed_at, in sensor time) above which the feed is reported stale.
+	// It replaces the per-reading COASTAL_INGESTOR_MAX_AGE, which compared
+	// the sensor's virtual clock with ours and is no longer read.
+	StaleAfter time.Duration
+	// SubmitConcurrency is the number of concurrent Aggregator submits.
+	SubmitConcurrency int
+	// SubmitBudget is how long one cycle submits non-critical readings
+	// before polling the sensor again.
+	SubmitBudget time.Duration
 	// CircuitFailureThreshold is the consecutive failure count that trips
 	// the breaker.
 	CircuitFailureThreshold int
@@ -57,7 +65,15 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("load config: %w", err)
 	}
-	maxAge, err := env.Duration("COASTAL_INGESTOR_MAX_AGE", 24*time.Hour)
+	staleAfter, err := env.Duration("COASTAL_STALE_AFTER", 30*time.Minute)
+	if err != nil {
+		return Config{}, fmt.Errorf("load config: %w", err)
+	}
+	submitConcurrency, err := env.Int("COASTAL_SUBMIT_CONCURRENCY", 8)
+	if err != nil {
+		return Config{}, fmt.Errorf("load config: %w", err)
+	}
+	submitBudget, err := env.Duration("COASTAL_SUBMIT_BUDGET", time.Second)
 	if err != nil {
 		return Config{}, fmt.Errorf("load config: %w", err)
 	}
@@ -94,7 +110,9 @@ func Load() (Config, error) {
 		DatabaseURL:             env.String("COASTAL_DATABASE_URL", ""),
 		PollInterval:            pollInterval,
 		RequestTimeout:          requestTimeout,
-		MaxAge:                  maxAge,
+		StaleAfter:              staleAfter,
+		SubmitConcurrency:       submitConcurrency,
+		SubmitBudget:            submitBudget,
 		CircuitFailureThreshold: failureThreshold,
 		CircuitFailureWindow:    failureWindow,
 		CircuitOpenTimeout:      openTimeout,
@@ -117,8 +135,16 @@ func (c Config) Validate() error {
 	if c.RequestTimeout <= 0 {
 		return fmt.Errorf("COASTAL_INGESTOR_REQUEST_TIMEOUT must be positive, got %s", c.RequestTimeout)
 	}
-	if c.MaxAge <= 0 {
-		return fmt.Errorf("COASTAL_INGESTOR_MAX_AGE must be positive, got %s", c.MaxAge)
+	if c.StaleAfter <= 0 {
+		return fmt.Errorf("COASTAL_STALE_AFTER must be positive, got %s", c.StaleAfter)
+	}
+	// The upper bound keeps a typo from opening hundreds of streams against
+	// the Aggregator.
+	if c.SubmitConcurrency < 1 || c.SubmitConcurrency > 64 {
+		return fmt.Errorf("COASTAL_SUBMIT_CONCURRENCY must be between 1 and 64, got %d", c.SubmitConcurrency)
+	}
+	if c.SubmitBudget <= 0 {
+		return fmt.Errorf("COASTAL_SUBMIT_BUDGET must be positive, got %s", c.SubmitBudget)
 	}
 	if c.CircuitFailureThreshold <= 0 {
 		return fmt.Errorf("COASTAL_INGESTOR_CIRCUIT_FAILURES must be positive, got %d", c.CircuitFailureThreshold)

@@ -210,6 +210,9 @@ func (f failingAggregator) GetHazard(context.Context, string, bool) (ports.Hazar
 func (f failingAggregator) List(context.Context, ports.HazardFilter) (ports.HazardPage, error) {
 	return ports.HazardPage{}, f.err
 }
+func (f failingAggregator) Analytics(context.Context, ports.AnalyticsFilter) (ports.Analytics, error) {
+	return ports.Analytics{}, f.err
+}
 
 type rejectingFieldAggregator struct{ unusedAggregator }
 
@@ -252,5 +255,55 @@ func TestFieldReportAcceptsLowercaseEnums(t *testing.T) {
 	response := postFieldReport(t, acceptingAggregator{}, `{"report_id":"r-1","hazard_type":"seismic","severity":"siaga","area_name":"Padang","occurred_at":"2026-11-12T09:43:00+07:00"}`)
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202; body=%s", response.Code, response.Body.String())
+	}
+}
+
+// A store outage the Aggregator could not cover from memory: 503 with the
+// error body, for the listing and the dashboard alike (it was 502).
+func TestStoreOutageAnswersServiceUnavailable(t *testing.T) {
+	router := NewRouter(RouterConfig{API: application.NewAPI(summaryAuth{}, failingAggregator{err: fmt.Errorf("%w: rpc error: code = Unavailable", ports.ErrUnavailable)}), MaxInflight: 1, Timeout: time.Second, Logger: slog.Default()})
+	for _, path := range []string{"/hazards", "/analytics"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer media-token")
+		response := httptest.NewRecorder()
+
+		router.ServeHTTP(response, request)
+
+		if response.Code != http.StatusServiceUnavailable || strings.TrimSpace(response.Body.String()) != `{"error":"upstream unavailable"}` {
+			t.Fatalf("%s: status = %d body = %s, want 503 with the error body", path, response.Code, response.Body.String())
+		}
+	}
+}
+
+type staleAggregator struct{ unusedAggregator }
+
+func (staleAggregator) List(context.Context, ports.HazardFilter) (ports.HazardPage, error) {
+	return ports.HazardPage{Partial: true, UnavailableUnits: []string{"store"}, StaleSince: "2026-11-18T09:00:00Z"}, nil
+}
+
+func (staleAggregator) Analytics(context.Context, ports.AnalyticsFilter) (ports.Analytics, error) {
+	return ports.Analytics{AsOf: "2026-11-18T08:59:55.000000Z", Partial: true, UnavailableUnits: []string{"store"}, StaleSince: "2026-11-18T09:00:00Z"}, nil
+}
+
+// An answer the Aggregator served from memory reaches the client as 200 with
+// the explicit marker: partial, unavailable_units and stale_since.
+func TestDegradedAnswersCarryTheMarker(t *testing.T) {
+	router := NewRouter(RouterConfig{API: application.NewAPI(summaryAuth{}, staleAggregator{}), MaxInflight: 1, Timeout: time.Second, Logger: slog.Default()})
+	for _, path := range []string{"/hazards", "/analytics"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer media-token")
+		response := httptest.NewRecorder()
+
+		router.ServeHTTP(response, request)
+
+		body := response.Body.String()
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d body = %s", path, response.Code, body)
+		}
+		for _, want := range []string{`"partial":true`, `"unavailable_units":["store"]`, `"stale_since":"2026-11-18T09:00:00Z"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: body lacks %s: %s", path, want, body)
+			}
+		}
 	}
 }

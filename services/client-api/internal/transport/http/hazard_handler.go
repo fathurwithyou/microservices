@@ -21,10 +21,16 @@ func (h handler) listHazards(c *gin.Context) {
 		writeAPIError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	body := gin.H{
 		"hazards": page.Hazards, "next_page_token": page.NextPageToken,
 		"partial": page.Partial, "unavailable_units": page.UnavailableUnits,
-	})
+	}
+	if page.StaleSince != "" {
+		// Only on an answer the Aggregator served from memory while its
+		// store did not answer; a live answer keeps its exact shape.
+		body["stale_since"] = page.StaleSince
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 func (h handler) getHazard(c *gin.Context) {

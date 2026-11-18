@@ -28,6 +28,8 @@ type HazardList struct {
 	NextPageToken    string   `json:"next_page_token"`
 	Partial          bool     `json:"partial"`
 	UnavailableUnits []string `json:"unavailable_units"`
+	// StaleSince: see ports.HazardPage.StaleSince. Empty on a live answer.
+	StaleSince string `json:"stale_since,omitempty"`
 }
 
 // NewAPI returns the application service backed by the auth and aggregator
@@ -83,6 +85,7 @@ func (a *API) ListHazards(ctx context.Context, principal Principal, filter ports
 	return HazardList{
 		Hazards: hazards, NextPageToken: page.NextPageToken,
 		Partial: page.Partial, UnavailableUnits: page.UnavailableUnits,
+		StaleSince: page.StaleSince,
 	}, nil
 }
 

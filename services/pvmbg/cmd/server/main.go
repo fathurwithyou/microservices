@@ -46,7 +46,7 @@ func main() {
 	}
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           httptransport.NewRouter(httptransport.RouterConfig{State: runtime, Token: cfg.Token, AdminKey: cfg.AdminKey, Logger: logger}),
+		Handler:           httptransport.NewRouter(httptransport.RouterConfig{State: runtime, Token: cfg.Token, AdminKey: cfg.AdminKey, AdminOpen: cfg.AdminOpen, Logger: logger}),
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       5 * time.Second,
 		// WriteTimeout is 10s: PVMBG injects a random artificial delay of up

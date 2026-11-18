@@ -85,7 +85,7 @@ func TestListWalksEveryRowOnceAcrossTies(t *testing.T) {
 		if pages > 10 {
 			t.Fatal("pagination did not terminate")
 		}
-		items, next, err := queries.List(context.Background(), ListFilter{PageSize: 50, PageToken: token})
+		items, next, _, err := queries.List(context.Background(), ListFilter{PageSize: 50, PageToken: token})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +111,7 @@ func TestListWalksEveryRowOnceAcrossTies(t *testing.T) {
 }
 
 func TestListRejectsInvalidToken(t *testing.T) {
-	_, _, err := NewQueries(sliceRepo{}).List(context.Background(), ListFilter{PageToken: "h-1"})
+	_, _, _, err := NewQueries(sliceRepo{}).List(context.Background(), ListFilter{PageToken: "h-1"})
 	if !errors.Is(err, ErrInvalidPageToken) {
 		t.Fatalf("err = %v", err)
 	}

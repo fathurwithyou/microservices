@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -12,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/audit"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/degraded"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/failures"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 )
@@ -76,9 +79,21 @@ func (h *auditHandler) events(response http.ResponseWriter, request *http.Reques
 		writeAuditError(response, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	items, next, err := h.queries.List(request.Context(), audit.Filter{Source: source, Since: since, Limit: limit, Cursor: request.URL.Query().Get("cursor")})
+	asOf, err := auditAsOf(request.URL.Query().Get("as_of"))
 	if err != nil {
 		writeAuditError(response, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	items, next, err := h.queries.List(request.Context(), audit.Filter{Source: source, Since: since, Limit: limit, Cursor: request.URL.Query().Get("cursor"), AsOf: asOf})
+	if errors.Is(err, audit.ErrInvalidCursor) {
+		writeAuditError(response, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err != nil {
+		// A page cannot be served from memory: an old page under a new cursor
+		// would silently skip or repeat events. So the listing says the store
+		// is unavailable (503, retryable by a paging client) rather than 500.
+		writeStoreUnavailable(response, err)
 		return
 	}
 	payload := make([]auditEvent, 0, len(items))
@@ -91,10 +106,29 @@ func (h *auditHandler) events(response http.ResponseWriter, request *http.Reques
 			Attributes: item.Attributes,
 		})
 	}
-	unavailable, _ := h.queries.Unavailable(request.Context())
-	writeJSON(response, http.StatusOK, map[string]any{
-		"items": payload, "next_cursor": nullableString(next), "partial": len(unavailable) > 0, "unavailable_units": units(unavailable),
-	})
+	partial, unavailable, marker := h.queries.Completeness(request.Context(), degraded.Info{})
+	degraded.Record("audit_events", marker)
+	body := map[string]any{
+		"items": payload, "next_cursor": nullableString(next), "partial": partial, "unavailable_units": units(unavailable),
+	}
+	if !asOf.IsZero() {
+		body["as_of"] = asOf.UTC().Format(time.RFC3339Nano)
+	}
+	writeJSON(response, http.StatusOK, body)
+}
+
+// auditAsOf parses the optional as_of query parameter: an RFC3339 time
+// (fractional seconds allowed) naming the store snapshot to list, as an
+// analytics answer reports it. Empty means the present.
+func auditAsOf(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	at, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("as_of must be RFC3339")
+	}
+	return at, nil
 }
 
 func (h *auditHandler) checksum(response http.ResponseWriter, request *http.Request) {
@@ -107,15 +141,16 @@ func (h *auditHandler) checksum(response http.ResponseWriter, request *http.Requ
 		writeAuditError(response, http.StatusBadRequest, "bad_request", "source is required")
 		return
 	}
-	count, checksum, err := h.queries.Checksum(request.Context(), source)
+	count, checksum, stale, err := h.queries.Checksum(request.Context(), source)
 	if err != nil {
-		writeAuditError(response, http.StatusInternalServerError, "internal", err.Error())
+		writeStoreUnavailable(response, err)
 		return
 	}
-	unavailable, _ := h.queries.Unavailable(request.Context())
+	partial, unavailable, stale := h.queries.Completeness(request.Context(), stale)
+	degraded.Record("audit_checksum", stale)
 	writeJSON(response, http.StatusOK, map[string]any{
 		"source": string(source), "count": count, "checksum": checksum, "algorithm": "sha256",
-		"as_of": time.Now().UTC().Format(time.RFC3339), "partial": len(unavailable) > 0, "unavailable_units": units(unavailable),
+		"as_of": answeredAt(stale), "partial": partial, "unavailable_units": units(unavailable),
 	})
 }
 
@@ -142,6 +177,28 @@ func (h *auditHandler) replay(response http.ResponseWriter, request *http.Reques
 	writeJSON(response, http.StatusOK, map[string]any{"source": source, "recovered": recovered})
 }
 
+// purge deletes the events of one source. source is required so a missing
+// parameter can never mean "everything".
+func (h *auditHandler) purge(response http.ResponseWriter, request *http.Request) {
+	source, err := auditSource(request.URL.Query().Get("source"))
+	if err != nil || source == "" {
+		writeAuditError(response, http.StatusBadRequest, "bad_request", "source is required")
+		return
+	}
+	prefix := request.URL.Query().Get("source_ref_prefix")
+	deleted, err := h.queries.Purge(request.Context(), source, prefix)
+	if errors.Is(err, audit.ErrPurgeUnsupported) {
+		writeAuditError(response, http.StatusServiceUnavailable, "unavailable", err.Error())
+		return
+	}
+	if err != nil {
+		writeAuditError(response, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	slog.Warn("hazard events purged", "service", "aggregator", "component", "ops", "source", source, "source_ref_prefix", prefix, "deleted", deleted)
+	writeJSON(response, http.StatusOK, map[string]any{"source": source, "source_ref_prefix": prefix, "deleted": deleted})
+}
+
 func (h *auditHandler) unprocessed(response http.ResponseWriter, request *http.Request) {
 	source, err := auditSource(request.URL.Query().Get("source"))
 	if err != nil {
@@ -154,8 +211,13 @@ func (h *auditHandler) unprocessed(response http.ResponseWriter, request *http.R
 		return
 	}
 	items, next, err := h.queries.Unprocessed(request.Context(), source, limit, request.URL.Query().Get("cursor"))
-	if err != nil {
+	if errors.Is(err, audit.ErrInvalidCursor) {
 		writeAuditError(response, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err != nil {
+		// Anything else is the store: not the caller's mistake (400).
+		writeStoreUnavailable(response, err)
 		return
 	}
 	payload := make([]map[string]any, 0, len(items))
@@ -238,7 +300,7 @@ func (h *auditHandler) location(response http.ResponseWriter, request *http.Requ
 	}
 	exists, err := h.queries.Exists(request.Context(), hazardID)
 	if err != nil {
-		writeAuditError(response, http.StatusInternalServerError, "internal", err.Error())
+		writeStoreUnavailable(response, err)
 		return
 	}
 	if !exists {
@@ -270,12 +332,13 @@ func (h *auditHandler) location(response http.ResponseWriter, request *http.Requ
 // replicas, leases, and replica bytes per node, so "no node holds all data"
 // can be checked against the live cluster.
 func (h *auditHandler) distribution(response http.ResponseWriter, request *http.Request) {
-	result, err := h.queries.Distribution(request.Context())
+	result, stale, err := h.queries.Distribution(request.Context())
 	if err != nil {
-		writeAuditError(response, http.StatusServiceUnavailable, "unavailable", err.Error())
+		writeStoreUnavailable(response, err)
 		return
 	}
-	unavailable, _ := h.queries.Unavailable(request.Context())
+	partial, unavailable, stale := h.queries.Completeness(request.Context(), stale)
+	degraded.Record("audit_distribution", stale)
 	nodes := make([]map[string]any, 0, len(result.Nodes))
 	for _, node := range result.Nodes {
 		item := map[string]any{
@@ -289,9 +352,9 @@ func (h *auditHandler) distribution(response http.ResponseWriter, request *http.
 		nodes = append(nodes, item)
 	}
 	writeJSON(response, http.StatusOK, map[string]any{
-		"table": "hazard_events", "as_of": time.Now().UTC().Format(time.RFC3339),
+		"table": "hazard_events", "as_of": answeredAt(stale),
 		"ranges": result.Ranges, "logical_bytes": result.LogicalBytes, "nodes": nodes,
-		"partial": len(unavailable) > 0, "unavailable_units": units(unavailable),
+		"partial": partial, "unavailable_units": units(unavailable),
 	})
 }
 
@@ -329,6 +392,24 @@ func (h *auditHandler) fieldReportLookup(response http.ResponseWriter, request *
 		}
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"requested": len(body.ReportIDs), "found": len(items), "missing": missing, "items": items})
+}
+
+// answeredAt is the as_of of a cached audit answer: now for a live one, and
+// the time it was read from the store for one served while the store does not
+// answer, so partial: true comes with the age of what is being shown.
+func answeredAt(stale degraded.Info) string {
+	if stale.Since.IsZero() {
+		return time.Now().UTC().Format(time.RFC3339)
+	}
+	return stale.Since.UTC().Format(time.RFC3339)
+}
+
+// writeStoreUnavailable answers a read the store could not serve and for
+// which there is no earlier answer to fall back on. The handlers validate
+// their input before they query, so an error that reaches this point came
+// from the store: 503 with the standard error body, never 500 (Lampiran A).
+func writeStoreUnavailable(response http.ResponseWriter, err error) {
+	writeAuditError(response, http.StatusServiceUnavailable, "unavailable", err.Error())
 }
 
 func units(values []string) []string {

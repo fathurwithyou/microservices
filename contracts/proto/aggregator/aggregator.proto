@@ -60,6 +60,10 @@ message AnalyticsResponse {
   repeated TimeBucket time_buckets = 4;
   bool partial = 5;
   repeated string unavailable_units = 6;
+  // as_of is the store snapshot (RFC3339, UTC) the counts were read from. The
+  // store reads a few seconds behind now and the aggregator may serve a cached
+  // window, so the answer states its age instead of pretending to be live.
+  string as_of = 7;
 }
 // category is the dashboard bucket: the hazard_type name, or TSUNAMI for a
 // SEISMIC event that carries a correlated tsunami warning.

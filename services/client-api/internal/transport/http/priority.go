@@ -61,6 +61,10 @@ func (h handler) priorityLimit(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
+	if hasAnyScope(principal, scopes.FieldReportsWrite, scopes.HazardReadRaw) {
+		// Lets the overload gate recognise this credential while it is valid.
+		h.priority.mark(c.GetHeader("Authorization"))
+	}
 	release, allowed := h.limiter.acquire(principal)
 	if !allowed {
 		c.Header("Retry-After", "1")

@@ -3,8 +3,11 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,236 +17,280 @@ import (
 	"github.com/fathurwithyou/microservices/services/satellite-ingestor/internal/ports"
 )
 
-func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// fakeFeed replays a fixed event log. It answers "from" inclusively, like a
+// server that resends the last acknowledged event, and can cut the
+// connection after a number of events.
+type fakeFeed struct {
+	mu       sync.Mutex
+	events   []ports.Event
+	cuts     []int // events to deliver per connection before dropping it
+	session  ports.Session
+	connects int
 }
 
-func detection(window time.Time, latitude float64, confidence domain.Confidence) domain.Detection {
-	return domain.Detection{
-		Satellite:  "NOAA-20",
-		AcqDate:    window.Format("2006-01-02"),
-		AcqTime:    window.Format("1504"),
-		Latitude:   latitude,
-		Longitude:  106.8,
-		Confidence: confidence,
-		FRP:        10,
-	}
-}
-
-type failingSink struct{ calls int }
-
-func (s *failingSink) Submit(context.Context, []domain.Fire) error {
-	s.calls++
-	return errors.New("sink unavailable")
-}
-
-func TestOffsetNotAdvancedWhenSinkFails(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
-	state := memory.New()
-	if err := state.SaveDetections(ctx, []domain.Detection{detection(now, -6.2, domain.ConfidenceHigh)}); err != nil {
-		t.Fatal(err)
-	}
-
-	sink := &failingSink{}
-	stream := NewStream(StreamConfig{
-		State:      state,
-		Sink:       sink,
-		Logger:     testLogger(),
-		LateWindow: 6 * time.Hour,
-		MaxAge:     24 * time.Hour,
-		MinBackoff: time.Millisecond,
-		MaxBackoff: time.Millisecond,
-		Now:        func() time.Time { return now },
-	})
-
-	// The second detection forms a fire with the stored one, so the sink is
-	// called before the offset would be checkpointed.
-	event := ports.Event{Offset: 7, Kind: ports.KindDetection, Detection: detection(now, -6.203, domain.ConfidenceHigh)}
-	if err := stream.handle(ctx, event); err == nil {
-		t.Fatal("handle() error = nil, want sink failure")
-	}
-	if sink.calls != 1 {
-		t.Fatalf("sink calls = %d, want 1", sink.calls)
-	}
-	offset, err := state.Offset(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if offset != 0 {
-		t.Errorf("offset = %d, want 0 so the event is replayed", offset)
-	}
-	detections, err := state.Detections(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(detections) != 2 {
-		t.Errorf("stored detections = %d, want 2", len(detections))
-	}
-	fires, err := state.Fires(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The fire snapshot is checkpointed only after the sink accepts it, so a
-	// retry still sees the previous snapshot and resends the same update.
-	if len(fires) != 0 {
-		t.Errorf("stored fires = %d, want 0 until the sink succeeds", len(fires))
-	}
-}
-
-type recordingFeed struct {
-	mu      sync.Mutex
-	offsets []int64
-	calls   int
-	retried chan struct{}
-	once    sync.Once
-}
-
-func (f *recordingFeed) Session(context.Context) (ports.Session, error) {
-	return ports.Session{}, nil
-}
-
-func (f *recordingFeed) Stream(ctx context.Context, offset int64, _ ports.EventHandler) error {
+func (f *fakeFeed) Stream(ctx context.Context, offset int64, handler ports.EventHandler) error {
 	f.mu.Lock()
-	f.offsets = append(f.offsets, offset)
-	f.calls++
-	call := f.calls
+	f.connects++
+	limit := len(f.events)
+	if len(f.cuts) > 0 {
+		limit, f.cuts = f.cuts[0], f.cuts[1:]
+	}
+	events := append([]ports.Event(nil), f.events...)
 	f.mu.Unlock()
-
-	if call == 1 {
-		return errors.New("connection refused")
-	}
-	f.once.Do(func() { close(f.retried) })
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-func TestRunReconnectsFromLastOffset(t *testing.T) {
-	ctx := context.Background()
-	state := memory.New()
-	if err := state.SaveOffset(ctx, 42); err != nil {
-		t.Fatal(err)
-	}
-
-	feed := &recordingFeed{retried: make(chan struct{})}
-	stream := NewStream(StreamConfig{
-		Feed:       feed,
-		State:      state,
-		Sink:       &failingSink{},
-		Logger:     testLogger(),
-		LateWindow: 6 * time.Hour,
-		MaxAge:     24 * time.Hour,
-		MinBackoff: time.Millisecond,
-		MaxBackoff: time.Millisecond,
-	})
-
-	runCtx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- stream.Run(runCtx) }()
-
-	select {
-	case <-feed.retried:
-	case <-time.After(time.Second):
-		t.Fatal("feed was not retried after failure")
-	}
-	cancel()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("Run() error = %v, want nil on cancellation", err)
+	sent := 0
+	for _, event := range events {
+		if event.Offset != 0 && event.Offset < offset {
+			continue
 		}
-	case <-time.After(time.Second):
-		t.Fatal("Run() did not stop after cancellation")
+		if sent >= limit {
+			return errors.New("connection reset by peer")
+		}
+		event.ReceivedAt = time.Now()
+		if err := handler(ctx, event); err != nil {
+			return err
+		}
+		sent++
 	}
-
-	feed.mu.Lock()
-	defer feed.mu.Unlock()
-	if len(feed.offsets) < 2 {
-		t.Fatalf("feed calls = %v, want at least 2", feed.offsets)
-	}
-	if feed.offsets[1] != 42 {
-		t.Errorf("reconnect offset = %d, want checkpoint 42", feed.offsets[1])
-	}
-}
-
-type recordingSink struct{ batches [][]domain.Fire }
-
-func (s *recordingSink) Submit(_ context.Context, fires []domain.Fire) error {
-	s.batches = append(s.batches, append([]domain.Fire(nil), fires...))
+	<-ctx.Done()
 	return nil
 }
 
-func TestProcessBatchesDetectionsIntoOneWrite(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
-	state := memory.New()
-	if err := state.SaveDetections(ctx, []domain.Detection{detection(now, -6.2, domain.ConfidenceHigh)}); err != nil {
-		t.Fatal(err)
-	}
-	sink := &recordingSink{}
-	stream := NewStream(StreamConfig{
-		State:      state,
-		Sink:       sink,
-		Logger:     testLogger(),
-		LateWindow: 6 * time.Hour,
-		MaxAge:     24 * time.Hour,
-		MinBackoff: time.Millisecond,
-		MaxBackoff: time.Millisecond,
-		Now:        func() time.Time { return now },
-	})
+func (f *fakeFeed) Session(context.Context) (ports.Session, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.session, nil
+}
 
+// storeSink plays the Aggregator: it upserts by source_ref_id and can fail.
+type storeSink struct {
+	mu     sync.Mutex
+	events map[string]domain.Fire
+	sends  int
+	fail   func(send int) bool
+}
+
+func (s *storeSink) Submit(_ context.Context, fires []domain.Fire) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sends++
+	if s.fail != nil && s.fail(s.sends) {
+		// A partial send: the first fire arrived, then the call failed.
+		if len(fires) > 0 {
+			s.events[fires[0].SourceRefID] = fires[0]
+		}
+		return errors.New("aggregator unavailable")
+	}
+	for _, fire := range fires {
+		s.events[fire.SourceRefID] = fire
+	}
+	return nil
+}
+
+func (s *storeSink) content() map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]string{}
+	for id, fire := range s.events {
+		out[id] = fmt.Sprintf("%s|%s|%s|%.2f|%d", fire.Status, strings.Join(fire.DetectionKeys, ","), fire.Severity, fire.TotalFRP, fire.DetectionCount)
+	}
+	return out
+}
+
+func feedEvents(ops []op) []ports.Event {
+	events := make([]ports.Event, 0, len(ops)+len(ops)/10)
+	for index, o := range ops {
+		offset := int64(index + 1)
+		switch {
+		case o.retract:
+			events = append(events, ports.Event{Offset: offset, Kind: ports.KindRetract, DetectionKey: o.detection.Key()})
+		case index%17 == 0:
+			events = append(events, ports.Event{Offset: offset, Skipped: "undecodable"})
+		default:
+			events = append(events, ports.Event{Offset: offset, Kind: ports.KindDetection, Detection: o.detection})
+		}
+		if index%10 == 0 {
+			// Heartbeats carry no offset.
+			events = append(events, ports.Event{Kind: ports.KindHeartbeat})
+		}
+	}
+	return events
+}
+
+// runUntil runs the stream until the committed offset reaches target.
+func runUntil(t *testing.T, feed *fakeFeed, state *memory.State, sink *storeSink, target int64) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	stream := NewStream(StreamConfig{
+		Feed: feed, State: state, Sink: sink, Logger: testLogger(),
+		LateWindow: 8 * time.Hour, MinBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
+		SessionInterval: time.Hour,
+		Sleep:           func(context.Context, time.Duration) error { return nil },
+	})
+	done := make(chan struct{})
+	go func() { _ = stream.Run(ctx); close(done) }()
+	for {
+		snapshot, _ := state.Load(ctx)
+		if snapshot.Offset >= target {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("stream stuck at offset %d of %d", snapshot.Offset, target)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	cancel()
+	<-done
+}
+
+// Dropped connections, a failing Aggregator and failed commits (a crash
+// between send and commit) must leave exactly what an undisturbed run leaves.
+func TestInterruptedStreamEndsWithTheSameEventsAsAnUndisturbedOne(t *testing.T) {
+	for seed := int64(1); seed <= 8; seed++ {
+		events := feedEvents(randomOps(seed, 300))
+		target := int64(300)
+		session := ports.Session{Group: "g", Profile: "practice", LatestOffset: target}
+
+		cleanSink := &storeSink{events: map[string]domain.Fire{}}
+		cleanState := memory.New()
+		runUntil(t, &fakeFeed{events: events, session: session}, cleanState, cleanSink, target)
+
+		rng := rand.New(rand.NewSource(seed))
+		var cuts []int
+		for i := 0; i < 12; i++ {
+			cuts = append(cuts, 5+rng.Intn(60))
+		}
+		sink := &storeSink{events: map[string]domain.Fire{}, fail: func(send int) bool { return send%4 == 2 }}
+		state := memory.New()
+		commits := 0
+		state.FailCommit = func(ports.Batch) error {
+			commits++
+			if commits%5 == 3 {
+				return errors.New("node lost before commit")
+			}
+			return nil
+		}
+		feed := &fakeFeed{events: events, cuts: cuts, session: session}
+		runUntil(t, feed, state, sink, target)
+
+		want, got := cleanSink.content(), sink.content()
+		if len(want) == 0 {
+			t.Fatalf("seed %d: scenario produced no fires", seed)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("seed %d: %d events, undisturbed run has %d", seed, len(got), len(want))
+		}
+		for id, content := range want {
+			if got[id] != content {
+				t.Fatalf("seed %d: event %s = %q, undisturbed %q", seed, id, got[id], content)
+			}
+		}
+		if feed.connects < 3 {
+			t.Fatalf("seed %d: only %d connections, interruptions did not happen", seed, feed.connects)
+		}
+	}
+}
+
+func TestOffsetStaysWhenTheAggregatorRefuses(t *testing.T) {
 	events := []ports.Event{
-		{Offset: 10, Kind: ports.KindDetection, Detection: detection(now, -6.201, domain.ConfidenceHigh)},
-		{Offset: 11, Kind: ports.KindDetection, Detection: detection(now, -6.202, domain.ConfidenceNominal)},
+		{Offset: 1, Kind: ports.KindDetection, Detection: spot("N20", 10, 0, "n", 5)},
+		{Offset: 2, Kind: ports.KindDetection, Detection: spot("N21", 20, 0.3, "n", 5)},
 	}
-	if err := stream.process(ctx, events); err != nil {
-		t.Fatal(err)
-	}
-	if len(sink.batches) != 1 {
-		t.Fatalf("sink calls = %d, want 1", len(sink.batches))
-	}
-	if len(sink.batches[0]) != 1 || sink.batches[0][0].DetectionCount != 3 {
-		t.Fatalf("fire = %+v, want one fire of three detections", sink.batches[0])
-	}
-	offset, err := state.Offset(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if offset != 11 {
-		t.Fatalf("offset = %d, want 11", offset)
-	}
-}
-
-type fakeLeadership struct{ allowed bool }
-
-func (l *fakeLeadership) Allowed() bool { return l.allowed }
-func (l *fakeLeadership) StillLeader(context.Context) (bool, error) {
-	return l.allowed, nil
-}
-
-func TestProcessRefusesWorkWithoutLeadership(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 	state := memory.New()
-	stream := NewStream(StreamConfig{
-		State:      state,
-		Sink:       &recordingSink{},
-		Logger:     testLogger(),
-		LateWindow: 6 * time.Hour,
-		MaxAge:     24 * time.Hour,
-		Now:        func() time.Time { return now },
-		Leadership: &fakeLeadership{},
+	sink := &storeSink{events: map[string]domain.Fire{}, fail: func(send int) bool { return send <= 3 }}
+	feed := &fakeFeed{events: events, session: ports.Session{Group: "g", Profile: "p", LatestOffset: 2}}
+	runUntil(t, feed, state, sink, 2)
+	if sink.sends < 4 {
+		t.Fatalf("batch was not retried until accepted: %d sends", sink.sends)
+	}
+	if fires := state.Fires(); len(fires) != 1 || fires[0].DetectionCount != 2 {
+		t.Fatalf("stored fires = %+v", fires)
+	}
+}
+
+func TestLateDetectionsAreRecordedNotClustered(t *testing.T) {
+	events := []ports.Event{
+		{Offset: 1, Kind: ports.KindDetection, Detection: spot("N20", 20*60, 0, "n", 5)},
+		{Offset: 2, Kind: ports.KindDetection, Detection: spot("N21", 20*60-30, 0.3, "n", 5)}, // 30 min late: joins
+		{Offset: 3, Kind: ports.KindDetection, Detection: spot("N", 20*60-9*60, 0.5, "n", 5)}, // 9 h late: past the 8 h bound
+	}
+	state := memory.New()
+	sink := &storeSink{events: map[string]domain.Fire{}}
+	runUntil(t, &fakeFeed{events: events, session: ports.Session{Group: "g", Profile: "p", LatestOffset: 3}}, state, sink, 3)
+	late := state.Late()
+	if len(late) != 1 || late[0].Offset != 3 {
+		t.Fatalf("late records = %+v", late)
+	}
+	snapshot, _ := state.Load(context.Background())
+	if snapshot.Counters["late"] != 1 {
+		t.Fatalf("late counter = %d", snapshot.Counters["late"])
+	}
+	if fires := state.Fires(); len(fires) != 1 || fires[0].DetectionCount != 2 {
+		t.Fatalf("the late detection changed a fire: %+v", fires)
+	}
+}
+
+func TestNewFeedSessionStartsOver(t *testing.T) {
+	state := memory.New()
+	sink := &storeSink{events: map[string]domain.Fire{}}
+	practice := []ports.Event{
+		{Offset: 1, Kind: ports.KindDetection, Detection: spot("N20", 10, 0, "n", 5)},
+		{Offset: 2, Kind: ports.KindDetection, Detection: spot("N21", 20, 0.3, "n", 5)},
+		{Offset: 3, Kind: ports.KindDetection, Detection: spot("N21", 30, 0.4, "n", 5)},
+	}
+	runUntil(t, &fakeFeed{events: practice, session: ports.Session{Group: "g", Profile: "practice", LatestOffset: 3}}, state, sink, 3)
+
+	// The exam session restarts offsets at 1 with other data.
+	exam := []ports.Event{
+		{Offset: 1, Kind: ports.KindDetection, Detection: spot("N20", 100, 40, "n", 5)},
+		{Offset: 2, Kind: ports.KindDetection, Detection: spot("N21", 110, 40.2, "n", 5)},
+	}
+	feed := &fakeFeed{events: exam, session: ports.Session{Group: "g", Profile: "exam", LatestOffset: 2}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	stream := NewStream(StreamConfig{Feed: feed, State: state, Sink: sink, Logger: testLogger(), LateWindow: 8 * time.Hour,
+		MinBackoff: time.Millisecond, MaxBackoff: time.Millisecond, SessionInterval: time.Hour,
+		Sleep: func(context.Context, time.Duration) error { return nil }})
+	done := make(chan struct{})
+	go func() { _ = stream.Run(ctx); close(done) }()
+	for {
+		snapshot, _ := state.Load(ctx)
+		if snapshot.Session == "g/exam" && snapshot.Offset == 2 {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("did not restart on the new session: %+v", snapshot)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	snapshot, _ := state.Load(context.Background())
+	if len(snapshot.Detections) != 2 || len(snapshot.Fires) != 1 {
+		t.Fatalf("exam state carries practice data: %d detections, %d fires", len(snapshot.Detections), len(snapshot.Fires))
+	}
+}
+
+type deniedLeadership struct{}
+
+func (deniedLeadership) Allowed() bool                             { return true }
+func (deniedLeadership) StillLeader(context.Context) (bool, error) { return false, nil }
+
+func TestNothingIsWrittenWithoutAValidLease(t *testing.T) {
+	state := memory.New()
+	sink := &storeSink{events: map[string]domain.Fire{}}
+	stream := NewStream(StreamConfig{State: state, Sink: sink, Logger: testLogger(), LateWindow: time.Hour, Leadership: deniedLeadership{}})
+	r := &run{stream: stream, engine: NewEngine(time.Hour), counters: map[string]int64{}}
+	err := r.process(context.Background(), []ports.Event{
+		{Offset: 1, Kind: ports.KindDetection, Detection: spot("N20", 10, 0, "n", 5)},
+		{Offset: 2, Kind: ports.KindDetection, Detection: spot("N21", 20, 0.3, "n", 5)},
 	})
-	event := ports.Event{Offset: 9, Kind: ports.KindDetection, Detection: detection(now, -6.2, domain.ConfidenceHigh)}
-	if err := stream.process(ctx, []ports.Event{event}); !errors.Is(err, ErrNotLeader) {
-		t.Fatalf("err = %v, want ErrNotLeader", err)
+	if !errors.Is(err, ErrNotLeader) {
+		t.Fatalf("process without lease = %v", err)
 	}
-	offset, err := state.Offset(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if offset != 0 {
-		t.Fatalf("offset = %d, want 0", offset)
+	if snapshot, _ := state.Load(context.Background()); snapshot.Offset != 0 || sink.sends != 0 {
+		t.Fatalf("wrote without a lease: offset %d, sends %d", snapshot.Offset, sink.sends)
 	}
 }

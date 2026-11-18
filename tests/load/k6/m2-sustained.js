@@ -67,7 +67,11 @@ export default function (session) {
   }
   statusCounter(response.status).add(1);
   check(response, { 'served or controlled': (r) => r.status === 200 || r.status === 429 });
-  sleep(1);
+  // THINK=0 turns the VUs into a closed loop with no think time, which is
+  // what the throughput comparison needs: served requests per second are then
+  // limited by the system, not by the one-second pause.
+  const think = Number(__ENV.THINK ?? 1);
+  if (think > 0) sleep(think);
 }
 
 export function handleSummary(data) {

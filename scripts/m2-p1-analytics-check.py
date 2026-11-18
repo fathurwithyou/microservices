@@ -65,13 +65,23 @@ def main(argv: list[str]) -> int:
     if status != 200:
         print(f"analytics status {status}: {analytics}", file=sys.stderr)
         return 1
+    # The answer names the store snapshot it was read from (as_of). The Audit
+    # API is listed at that same snapshot, so both sides see exactly the same
+    # committed events; ingested_at (set by the application before the write
+    # commits, and printed to the second) cannot stand in for that. Older
+    # builds without as_of are compared at the answer time by ingested_at.
+    as_of = analytics.get("as_of")
 
-    truth = crossread.audit_ground_truth(args.aggregator, audit_token, 30)
     since, until = crossread.parse_time(args.since), crossread.parse_time(args.until)
-    counted = [
-        event for event in truth
-        if since <= crossread.parse_time(event["occurred_at"]) < until and crossread.parse_time(event["ingested_at"]) <= answered_at
-    ]
+    if as_of:
+        truth = crossread.audit_ground_truth(args.aggregator, audit_token, 30, as_of=as_of)
+        counted = [event for event in truth if since <= crossread.parse_time(event["occurred_at"]) < until]
+    else:
+        truth = crossread.audit_ground_truth(args.aggregator, audit_token, 30)
+        counted = [
+            event for event in truth
+            if since <= crossread.parse_time(event["occurred_at"]) < until and crossread.parse_time(event["ingested_at"]) <= answered_at
+        ]
     expected = {
         "hazard_types": collections.Counter(category(event) for event in counted),
         "severities": collections.Counter(event["severity"] for event in counted),
@@ -93,6 +103,7 @@ def main(argv: list[str]) -> int:
         "label": args.label,
         "window": [args.since, args.until],
         "analytics_answered_at": answered_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "analytics_as_of": as_of,
         "analytics_seconds": round(seconds, 3),
         "analytics_partial": analytics.get("partial"),
         "analytics_unavailable_units": analytics.get("unavailable_units"),

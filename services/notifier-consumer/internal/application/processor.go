@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -54,7 +55,7 @@ func (p *Processor) Process(_ context.Context, delivery consumerkit.Delivery) co
 		return consumerkit.DeadLetter
 	}
 	eventID := event.GetHazardId()
-	if p.isDuplicate(eventID) {
+	if p.isDuplicate(deliveryKey(&event)) {
 		p.logger.Debug("duplicate event skipped", "service", p.service, "event_id", eventID, "correlation_id", delivery.CorrelationID)
 		return consumerkit.Ack
 	}
@@ -70,13 +71,52 @@ func isCritical(event *eventspb.HazardEvent) bool {
 	return event.GetAttributes()["critical"] == "true"
 }
 
-// recordCriticalLatency measures the first delivery of a critical event against
-// both the source time and the ingestion time. Duplicates and redeliveries
-// never reach this point, so one event contributes one sample.
+// receivedAtAttribute is set by an ingestor on events it wants measured from
+// the moment the source data reached it.
+const receivedAtAttribute = "received_at"
+
+// deliveryKey is what "the same delivery" means for deduplication. A broker
+// redelivery repeats the message byte for byte, so the hazard ID alone
+// identifies it. An event that carries received_at is identified by the ID and
+// that receipt: when the source serves an observation ID again after a restart
+// (Sensor Pantai renumbers its stream from zero), it is a new observation that
+// happens to reuse an ID, and Tim Lapangan must hear about it. Deduplicating
+// on the ID alone would swallow it for the lifetime of this process.
+func deliveryKey(event *eventspb.HazardEvent) string {
+	if received := attributeString(event, receivedAtAttribute); received != "" {
+		return event.GetHazardId() + "|" + received
+	}
+	return event.GetHazardId()
+}
+
+// attributeString returns a string attribute. The Aggregator publishes
+// attribute values JSON-encoded, so a string arrives quoted; a bare value is
+// accepted as is.
+func attributeString(event *eventspb.HazardEvent, key string) string {
+	raw, ok := event.GetAttributes()[key]
+	if !ok {
+		return ""
+	}
+	var decoded string
+	if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
+		return decoded
+	}
+	return raw
+}
+
+// recordCriticalLatency measures the first delivery of a critical event
+// against the source time, the ingestion time, and, when the ingestor
+// supplied it, the time the source data was received. Duplicates and
+// redeliveries never reach this point, so one event contributes one sample.
 func (p *Processor) recordCriticalLatency(event *eventspb.HazardEvent) {
 	now := p.now()
 	observability.ObserveCriticalNotification(p.service, observability.LatencyFromOccurred, event.GetOccurredAt(), now)
 	observability.ObserveCriticalNotification(p.service, observability.LatencyFromIngested, event.GetIngestedAt(), now)
+	// Only sources that set received_at are measured from it; its absence
+	// is normal for the others and is not counted as a skipped sample.
+	if received := attributeString(event, receivedAtAttribute); received != "" {
+		observability.ObserveCriticalNotification(p.service, observability.LatencyFromReceived, received, now)
+	}
 }
 
 // isDuplicate records eventID and reports whether it was already seen,

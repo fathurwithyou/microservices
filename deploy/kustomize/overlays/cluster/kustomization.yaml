@@ -5,23 +5,38 @@ resources:
   - client-api-nodeport.yaml
 images:
   - { name: bnpb-m1/bmkg, newTag: m2 }
-  - { name: bnpb-m1/pvmbg, newTag: m2 }
-  - { name: bnpb-m1/aggregator, newTag: m2.10 }
+  - { name: bnpb-m1/pvmbg, newTag: m2.2 }
+  - { name: bnpb-m1/aggregator, newTag: m2.33 }
   - { name: bnpb-m1/auth, newTag: m2 }
-  - { name: bnpb-m1/client-api, newTag: m2.3 }
+  - { name: bnpb-m1/client-api, newTag: m2.10 }
   - { name: bnpb-m1/dashboard-consumer, newTag: m2 }
-  - { name: bnpb-m1/notifier-consumer, newTag: m2 }
+  - { name: bnpb-m1/notifier-consumer, newTag: m2.1 }
   - { name: bnpb-m1/portal-consumer, newTag: m2 }
-  - { name: bnpb-m1/satellite-ingestor, newTag: m2.2 }
-  - { name: bnpb-m1/coastal-ingestor, newTag: m2.3 }
+  - { name: bnpb-m1/satellite-ingestor, newTag: m2.3 }
+  - { name: bnpb-m1/satellite-feed, newTag: m2 }
+  - { name: bnpb-m1/coastal-ingestor, newTag: m2.6 }
   - { name: bnpb-m1/demo-api, newTag: m2 }
-  - { name: bnpb-m1/demo-console, newTag: m2 }
+  - { name: bnpb-m1/demo-console, newTag: m2.2 }
 replicas:
   - { name: aggregator, count: 3 }
   # RF=3 over 4 store nodes: no node holds every range (M2 P1.1).
   - { name: cockroachdb, count: 4 }
   - { name: client-api, count: 2 }
+  - { name: auth, count: 2 }
   - { name: dashboard-consumer, count: 2 }
   - { name: portal-consumer, count: 2 }
   - { name: notifier-consumer, count: 2 }
   - { name: critical-notifier, count: 2 }
+patches:
+  # A node that is powered off is only declared NotReady after about 40 s, and
+  # by default its pods are kept for another 300 s before they are replaced.
+  # Deployments here are stateless or keep their state in the stores, so they
+  # are replaced after 30 s instead: three Aggregator instances are back
+  # without anyone touching the cluster (M2 P2.1, P5.6).
+  - target: { kind: Deployment }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/tolerations
+        value:
+          - { key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 30 }
+          - { key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 30 }

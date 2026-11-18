@@ -154,13 +154,13 @@ func TestAnalyticsSplitsTsunamiFromSeismicExclusively(t *testing.T) {
 		}
 	}
 	filter := analytics.Filter{Since: at.Add(-time.Hour), Until: at.Add(time.Hour), Bucket: analytics.BucketDay}
-	counts, err := repository.CountByHazardType(context.Background(), filter)
+	result, err := analytics.NewQueries(repository).Get(context.Background(), filter)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := map[domain.HazardType]int64{}
 	var total int64
-	for _, item := range counts {
+	for _, item := range result.HazardTypes {
 		got[item.HazardType] = item.Count
 		total += item.Count
 	}

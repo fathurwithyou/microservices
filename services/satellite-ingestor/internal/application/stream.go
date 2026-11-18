@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync/atomic"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/fathurwithyou/microservices/services/satellite-ingestor/internal/domain"
@@ -18,52 +19,66 @@ type StreamConfig struct {
 	State  ports.State
 	Sink   ports.HazardSink
 	Logger *slog.Logger
-	// LateWindow drops detections older than this at ingest time.
+	// LateWindow is the accepted lateness in event time.
 	LateWindow time.Duration
-	// MaxAge prunes detections older than this from state.
-	MaxAge     time.Duration
 	MinBackoff time.Duration
 	MaxBackoff time.Duration
-	// SessionInterval is how often the feed session is polled for lag.
+	// SessionInterval is how often the feed session is polled for lag and
+	// session changes.
 	SessionInterval time.Duration
 	// Leadership gates the stream to one active replica.
 	Leadership Leadership
-	// Now and Sleep are optional test seams; production uses time.Now and a
-	// context-aware timer.
-	Now   func() time.Time
+	// Sleep is an optional test seam; production uses a context-aware timer.
 	Sleep func(ctx context.Context, delay time.Duration) error
 }
 
-// Stream consumes the feed, clusters detections, and checkpoints the feed
-// offset only after state and the sink have both accepted an event.
+// Stream consumes the feed, maintains fires, and commits the feed offset
+// together with the state it produced.
+//
+// Delivery: the offset is committed in the same transaction as the working
+// set, after the Aggregator accepted the fires of the batch. A crash before
+// the commit replays the batch from the previous offset against the previous
+// state, which yields the same fires with the same identifiers, and the
+// Aggregator upserts by identifier. That is at-least-once delivery with
+// idempotent effects: the stored result equals an uninterrupted run.
 type Stream struct {
 	feed            ports.Feed
 	state           ports.State
 	sink            ports.HazardSink
 	logger          *slog.Logger
 	lateWindow      time.Duration
-	maxAge          time.Duration
 	minBackoff      time.Duration
 	maxBackoff      time.Duration
-	now             func() time.Time
 	sleep           func(ctx context.Context, delay time.Duration) error
 	sessionInterval time.Duration
 	leadership      Leadership
-	committed       atomic.Int64
-	// watermark is the latest satellite acquisition time accepted so far.
-	// Lateness is measured against it, never against the BNPB clock: the feed
-	// runs on its own (possibly accelerated) virtual time, and P4 groups
-	// detections by when the satellite saw them, not when they arrived.
-	watermark      time.Time
-	watermarkReady bool
+
+	mu     sync.Mutex
+	status Status
+	// cancelAttempt ends the current connection (session change).
+	cancelAttempt context.CancelFunc
+}
+
+// Status is the reportable state of the processor, served as JSON.
+type Status struct {
+	Leader          bool             `json:"leader"`
+	Connected       bool             `json:"connected"`
+	Session         string           `json:"session"`
+	Speed           float64          `json:"speed"`
+	CommittedOffset int64            `json:"committed_offset"`
+	LatestOffset    int64            `json:"latest_offset"`
+	LagEvents       int64            `json:"lag_events"`
+	Watermark       string           `json:"watermark,omitempty"`
+	VirtualNow      string           `json:"virtual_now,omitempty"`
+	LateWindow      string           `json:"accepted_lateness"`
+	Working         Stats            `json:"working_set"`
+	Counters        map[string]int64 `json:"cumulative"`
+	LastError       string           `json:"last_error,omitempty"`
+	LastCommitAt    string           `json:"last_commit_at,omitempty"`
 }
 
 // NewStream builds a consume loop.
 func NewStream(cfg StreamConfig) *Stream {
-	now := cfg.Now
-	if now == nil {
-		now = time.Now
-	}
 	sleep := cfg.Sleep
 	if sleep == nil {
 		sleep = sleepContext
@@ -78,86 +93,455 @@ func NewStream(cfg StreamConfig) *Stream {
 		sink:            cfg.Sink,
 		logger:          cfg.Logger,
 		lateWindow:      cfg.LateWindow,
-		maxAge:          cfg.MaxAge,
 		minBackoff:      cfg.MinBackoff,
 		maxBackoff:      cfg.MaxBackoff,
-		now:             now,
 		sleep:           sleep,
 		sessionInterval: sessionInterval,
 		leadership:      cfg.Leadership,
+		status:          Status{LateWindow: cfg.LateWindow.String(), Counters: map[string]int64{}},
 	}
 }
 
 const (
-	// batchBuffer bounds events waiting for the processor.
+	// batchBuffer bounds events waiting for the processor; a full buffer
+	// stops reading the socket, which is the backpressure towards the feed.
 	batchBuffer = 4096
-	// maxBatchSize bounds one state rewrite while catching up.
+	// maxBatchSize bounds one commit while catching up.
 	maxBatchSize = 512
+	// horizonMargin is how far ahead of the feed's own clock an acquisition
+	// time may be before it is treated as corrupt.
+	horizonMargin = 24 * time.Hour
 )
 
 // ErrNotLeader stops the current stream when the lease is lost so the next
 // replica can take over.
 var ErrNotLeader = errors.New("not leader")
 
+// Snapshot returns the current status.
+func (s *Stream) Snapshot() Status {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status := s.status
+	status.Counters = make(map[string]int64, len(s.status.Counters))
+	for name, value := range s.status.Counters {
+		status.Counters[name] = value
+	}
+	status.Leader = s.leadership == nil || s.leadership.Allowed()
+	return status
+}
+
 // Run reconnects from the last committed offset until ctx is cancelled.
 func (s *Stream) Run(ctx context.Context) error {
-	go s.reportLag(ctx)
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
+	go s.watchSession(ctx)
 	attempt := 0
 	for {
-		if !s.waitLeader(runCtx) {
+		if !s.waitLeader(ctx) {
 			return nil
 		}
-		attemptCtx, attemptCancel := context.WithCancel(runCtx)
-		events := make(chan ports.Event, batchBuffer)
-		results := make(chan error, 1)
-		go func() {
-			results <- s.consume(attemptCtx, events)
-			attemptCancel()
-		}()
-		handler := func(streamCtx context.Context, event ports.Event) error {
-			select {
-			case events <- event:
-				return nil
-			case <-streamCtx.Done():
-				return streamCtx.Err()
-			}
-		}
-
-		offset, err := s.state.Offset(attemptCtx)
-		if err != nil {
-			attemptCancel()
-			<-results
-			return fmt.Errorf("load feed offset: %w", err)
-		}
-		streamErr := s.feed.Stream(attemptCtx, offset, handler)
-		attemptCancel()
-		processErr := <-results
+		progressed, cause, err := s.attempt(ctx)
 		if ctx.Err() != nil {
 			return nil
 		}
-		if errors.Is(processErr, ErrNotLeader) {
+		reconnects.WithLabelValues(cause).Inc()
+		if errors.Is(err, ErrNotLeader) {
 			attempt = 0
 			continue
 		}
-		if processErr != nil {
-			return processErr
-		}
-		if streamErr == nil {
+		s.setError(err)
+		s.logger.Warn("feed stream ended",
+			"service", "satellite-ingestor", "component", "stream",
+			"cause", cause, "committed_offset", s.Snapshot().CommittedOffset, "error", err)
+		if progressed {
 			attempt = 0
 		}
-		s.logger.Warn("feed stream ended",
-			"service", "satellite-ingestor",
-			"component", "stream",
-			"offset", offset,
-			"error", streamErr,
-		)
 		delay := s.backoff(attempt)
 		attempt++
 		if err := s.sleep(ctx, delay); err != nil {
 			return nil
+		}
+	}
+}
+
+// attempt runs one connection: load state, resume the stream, process until
+// it ends. Memory is rebuilt from durable state every time, so nothing a
+// failed batch did in memory can leak into the next one.
+func (s *Stream) attempt(ctx context.Context) (progressed bool, cause string, err error) {
+	attemptCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	s.mu.Lock()
+	s.cancelAttempt = cancel
+	s.mu.Unlock()
+
+	snapshot, err := s.state.Load(attemptCtx)
+	if err != nil {
+		return false, "error", fmt.Errorf("load state: %w", err)
+	}
+	session, sessionErr := s.feed.Session(attemptCtx)
+	if sessionErr == nil {
+		id := sessionID(session)
+		if snapshot.Session != id || session.LatestOffset < snapshot.Offset {
+			if snapshot.Session != "" || snapshot.Offset > 0 {
+				s.logger.Warn("feed session changed, starting over",
+					"service", "satellite-ingestor", "component", "stream",
+					"previous_session", snapshot.Session, "session", id,
+					"committed_offset", snapshot.Offset, "latest_offset", session.LatestOffset)
+				sessionResets.Inc()
+			}
+			if err := s.state.Reset(attemptCtx, id); err != nil {
+				return false, "error", fmt.Errorf("reset state for session %s: %w", id, err)
+			}
+			if snapshot, err = s.state.Load(attemptCtx); err != nil {
+				return false, "error", fmt.Errorf("load state: %w", err)
+			}
+		}
+	}
+
+	run := &run{
+		stream:    s,
+		engine:    NewEngine(s.lateWindow),
+		committed: snapshot.Offset,
+		counters:  map[string]int64{},
+		session:   snapshot.Session,
+	}
+	for name, value := range snapshot.Counters {
+		run.counters[name] = value
+	}
+	run.engine.SetFinalized(run.counters["closed_fires"], run.counters["closed_singles"])
+	run.engine.Restore(snapshot.Detections, snapshot.Fires, snapshot.Watermark)
+	if sessionErr == nil && !session.VirtualNow.IsZero() {
+		run.engine.SetHorizon(session.VirtualNow.Add(horizonMargin))
+	}
+	s.publish(run, "")
+	if sessionErr == nil {
+		s.observeSession(session)
+	}
+
+	events := make(chan ports.Event, batchBuffer)
+	results := make(chan error, 1)
+	go func() {
+		err := run.consume(attemptCtx, events)
+		// Stop the reader when processing fails.
+		cancel()
+		results <- err
+	}()
+	handler := func(streamCtx context.Context, event ports.Event) error {
+		select {
+		case events <- event:
+			return nil
+		case <-streamCtx.Done():
+			return streamCtx.Err()
+		}
+	}
+
+	s.setConnected(true)
+	streamErr := s.feed.Stream(attemptCtx, snapshot.Offset, handler)
+	s.setConnected(false)
+	// Let the processor drain what was already read before stopping it.
+	close(events)
+	processErr := <-results
+	progressed = run.committed > snapshot.Offset
+
+	switch {
+	case errors.Is(processErr, ErrNotLeader):
+		return progressed, "not_leader", ErrNotLeader
+	case processErr != nil:
+		return progressed, "process", processErr
+	case streamErr == nil:
+		return progressed, "closed", nil
+	}
+	return progressed, causeOf(streamErr), streamErr
+}
+
+func causeOf(err error) string {
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "feed status "):
+		rest := message[strings.Index(message, "feed status ")+len("feed status "):]
+		if len(rest) >= 3 {
+			return "status_" + rest[:3]
+		}
+		return "status"
+	case strings.Contains(message, "feed idle"):
+		return "idle"
+	default:
+		return "error"
+	}
+}
+
+func sessionID(session ports.Session) string {
+	return session.Group + "/" + session.Profile
+}
+
+// run is the in-memory side of one connection attempt.
+type run struct {
+	stream    *Stream
+	engine    *Engine
+	committed int64
+	counters  map[string]int64
+	session   string
+}
+
+// consume drains bursts so one commit covers many events.
+func (r *run) consume(ctx context.Context, events <-chan ports.Event) error {
+	for {
+		event, open := <-events
+		if !open {
+			return nil
+		}
+		batch := []ports.Event{event}
+	drain:
+		for len(batch) < maxBatchSize {
+			select {
+			case next, more := <-events:
+				if !more {
+					break drain
+				}
+				batch = append(batch, next)
+			default:
+				break drain
+			}
+		}
+		if ctx.Err() != nil {
+			// The connection is gone; whatever was not committed is read
+			// again after the reconnect.
+			return nil
+		}
+		if err := r.process(ctx, batch); err != nil {
+			return err
+		}
+	}
+}
+
+// process applies a batch event by event, sends the changed fires, then
+// commits state and offset in one transaction.
+func (r *run) process(ctx context.Context, events []ports.Event) error {
+	s := r.stream
+	if !s.stillLeader(ctx) {
+		return ErrNotLeader
+	}
+	var (
+		late      []ports.LateDetection
+		maxOffset = r.committed
+		applied   int
+	)
+	count := func(name string) { r.counters[name]++ }
+	for _, event := range events {
+		if event.Offset > 0 {
+			if event.Offset <= maxOffset {
+				// Replayed by the server (inclusive "from") or by a retry.
+				skippedEvents.WithLabelValues("duplicate_offset").Inc()
+				continue
+			}
+			if event.Offset != maxOffset+1 {
+				offsetGaps.Inc()
+				count("offset_gaps")
+				s.logger.Error("feed offset gap",
+					"service", "satellite-ingestor", "component", "stream",
+					"expected", maxOffset+1, "received", event.Offset)
+			}
+			maxOffset = event.Offset
+		}
+		if event.Skipped != "" {
+			skippedEvents.WithLabelValues(event.Skipped).Inc()
+			count("skipped_" + event.Skipped)
+			s.logger.Warn("feed event skipped",
+				"service", "satellite-ingestor", "component", "stream",
+				"offset", event.Offset, "reason", event.Skipped)
+			continue
+		}
+		eventsReceived.WithLabelValues(string(event.Kind)).Inc()
+		var outcome Outcome
+		switch event.Kind {
+		case ports.KindDetection, ports.KindUpdate:
+			outcome = r.engine.Upsert(event.Detection, event.Offset)
+		case ports.KindRetract:
+			outcome = r.engine.Retract(event.DetectionKey)
+		default:
+			continue
+		}
+		applied++
+		eventOutcomes.WithLabelValues(string(outcome)).Inc()
+		switch outcome {
+		case OutcomeLate:
+			// Past the accepted lateness: not clustered, but recorded with
+			// its key so the count can be reported and inspected.
+			at, _ := event.Detection.Time()
+			late = append(late, ports.LateDetection{Key: event.Detection.Key(), Offset: event.Offset, AcquiredAt: at, Watermark: r.engine.Watermark()})
+			droppedDetections.WithLabelValues("late").Inc()
+			count("late")
+			s.logger.Warn("late detection not clustered",
+				"service", "satellite-ingestor", "component", "stream",
+				"detection", event.Detection.Key(), "offset", event.Offset,
+				"acquired_at", at, "watermark", r.engine.Watermark(), "late_by", (r.engine.Watermark().Sub(at) - s.lateWindow).String())
+		case OutcomeLow:
+			droppedDetections.WithLabelValues("low_confidence").Inc()
+			count("low_confidence")
+		case OutcomeInvalidTime:
+			droppedDetections.WithLabelValues("invalid_time").Inc()
+			count("invalid_time")
+		case OutcomeFuture:
+			droppedDetections.WithLabelValues("future").Inc()
+			count("future")
+		case OutcomeUnknownKey:
+			count("retract_unknown")
+		case OutcomeDuplicate:
+			count("duplicates")
+		}
+	}
+	if maxOffset == r.committed && applied == 0 {
+		return nil
+	}
+
+	r.engine.Finalize()
+	delta := r.engine.Drain()
+	stats := r.engine.Stats()
+	r.counters["closed_fires"] = stats.FinalizedFires
+	r.counters["closed_singles"] = stats.FinalizedSingles
+
+	// Send before committing: a failed send leaves the offset where it was,
+	// and the batch is replayed from durable state.
+	if len(delta.Fires) > 0 {
+		if !s.stillLeader(ctx) {
+			return ErrNotLeader
+		}
+		if err := s.sink.Submit(ctx, delta.Fires); err != nil {
+			return fmt.Errorf("submit fires: %w", err)
+		}
+		for _, fire := range delta.Fires {
+			firesSubmitted.WithLabelValues(fire.Status).Inc()
+		}
+	}
+	counters := make(map[string]int64, len(r.counters))
+	for name, value := range r.counters {
+		counters[name] = value
+	}
+	if err := s.state.Commit(ctx, ports.Batch{
+		Offset:           maxOffset,
+		Watermark:        r.engine.Watermark(),
+		UpsertDetections: delta.UpsertDetections,
+		DeleteDetections: delta.DeleteDetections,
+		Fires:            append(append([]domain.Fire{}, delta.Fires...), delta.Closed...),
+		Late:             late,
+		Counters:         counters,
+	}); err != nil {
+		return fmt.Errorf("commit batch at offset %d: %w", maxOffset, err)
+	}
+	r.committed = maxOffset
+
+	now := time.Now()
+	for _, event := range events {
+		if event.Offset > 0 && !event.ReceivedAt.IsZero() && event.Skipped == "" && event.Kind != ports.KindHeartbeat {
+			eventToStore.Observe(now.Sub(event.ReceivedAt).Seconds())
+		}
+	}
+	batchSize.Observe(float64(len(events)))
+	s.publish(r, now.UTC().Format(time.RFC3339Nano))
+	return nil
+}
+
+// publish copies the run's numbers into the status and the gauges.
+func (s *Stream) publish(r *run, committedAt string) {
+	stats := r.engine.Stats()
+	watermark := r.engine.Watermark()
+	committedOffset.Set(float64(r.committed))
+	activeFires.Set(float64(stats.ActiveFires))
+	singleDetections.Set(float64(stats.Singles))
+	liveDetections.Set(float64(stats.Detections))
+	if !watermark.IsZero() {
+		watermarkSeconds.Set(float64(watermark.Unix()))
+	}
+	for name, value := range r.counters {
+		cumulative.WithLabelValues(name).Set(float64(value))
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status.CommittedOffset = r.committed
+	s.status.Session = r.session
+	s.status.Working = stats
+	if !watermark.IsZero() {
+		s.status.Watermark = watermark.UTC().Format(time.RFC3339)
+	}
+	s.status.Counters = make(map[string]int64, len(r.counters))
+	for name, value := range r.counters {
+		s.status.Counters[name] = value
+	}
+	if committedAt != "" {
+		s.status.LastCommitAt = committedAt
+		s.status.LastError = ""
+	}
+	lag := s.status.LatestOffset - r.committed
+	if lag < 0 {
+		lag = 0
+	}
+	s.status.LagEvents = lag
+	feedLag.Set(float64(lag))
+}
+
+func (s *Stream) setConnected(value bool) {
+	s.mu.Lock()
+	s.status.Connected = value
+	s.mu.Unlock()
+	if value {
+		streamConnected.Set(1)
+	} else {
+		streamConnected.Set(0)
+	}
+}
+
+func (s *Stream) setError(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err == nil {
+		return
+	}
+	s.status.LastError = err.Error()
+}
+
+// observeSession records what the feed says about itself and reports whether
+// the session differs from the one being consumed.
+func (s *Stream) observeSession(session ports.Session) (changed bool) {
+	latestOffset.Set(float64(session.LatestOffset))
+	feedSpeed.Set(session.Speed)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status.LatestOffset = session.LatestOffset
+	s.status.Speed = session.Speed
+	if !session.VirtualNow.IsZero() {
+		s.status.VirtualNow = session.VirtualNow.Format(time.RFC3339)
+	}
+	lag := session.LatestOffset - s.status.CommittedOffset
+	if lag < 0 {
+		lag = 0
+	}
+	s.status.LagEvents = lag
+	feedLag.Set(float64(lag))
+	return s.status.Connected && s.status.Session != "" &&
+		(s.status.Session != sessionID(session) || session.LatestOffset < s.status.CommittedOffset)
+}
+
+// watchSession polls the feed session for lag and ends the connection when
+// the feed started a new session, so the next attempt starts over.
+func (s *Stream) watchSession(ctx context.Context) {
+	ticker := time.NewTicker(s.sessionInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		session, err := s.feed.Session(ctx)
+		if err != nil {
+			continue
+		}
+		if s.observeSession(session) {
+			s.mu.Lock()
+			cancel := s.cancelAttempt
+			s.mu.Unlock()
+			if cancel != nil {
+				cancel()
+			}
 		}
 	}
 }
@@ -205,225 +589,4 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
-}
-
-// consume drains bursts so one state rewrite covers many detections.
-func (s *Stream) consume(ctx context.Context, events <-chan ports.Event) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case event := <-events:
-			batch := []ports.Event{event}
-		drain:
-			for len(batch) < maxBatchSize {
-				select {
-				case next := <-events:
-					batch = append(batch, next)
-				default:
-					break drain
-				}
-			}
-			if err := s.process(ctx, batch); err != nil {
-				return err
-			}
-		}
-	}
-}
-
-func (s *Stream) handle(ctx context.Context, event ports.Event) error {
-	return s.process(ctx, []ports.Event{event})
-}
-
-func (s *Stream) process(ctx context.Context, events []ports.Event) error {
-	if len(events) == 0 {
-		return nil
-	}
-	if !s.stillLeader(ctx) {
-		return ErrNotLeader
-	}
-	var maxOffset int64
-	needsState := false
-	for _, event := range events {
-		if event.Offset > maxOffset {
-			maxOffset = event.Offset
-		}
-		if event.Kind != ports.KindHeartbeat {
-			needsState = true
-		}
-	}
-	if !needsState {
-		return s.saveOffset(ctx, maxOffset)
-	}
-	detections, previous, err := s.load(ctx)
-	if err != nil {
-		return err
-	}
-	s.initWatermark(detections)
-	changed := false
-	for _, event := range events {
-		switch event.Kind {
-		case ports.KindDetection, ports.KindUpdate:
-			if !s.accept(event.Detection) {
-				continue
-			}
-			detections = upsertDetection(detections, event.Detection)
-			changed = true
-		case ports.KindRetract:
-			detections = removeDetection(detections, event.DetectionKey)
-			changed = true
-		}
-	}
-	if !changed {
-		return s.saveOffset(ctx, maxOffset)
-	}
-	if !s.stillLeader(ctx) {
-		return ErrNotLeader
-	}
-
-	detections = s.prune(detections)
-	fires, _ := Cluster(detections)
-	current, changes := reconcile(previous, fires)
-
-	if err := s.state.SaveDetections(ctx, detections); err != nil {
-		return fmt.Errorf("save detections: %w", err)
-	}
-	// Submit before saving the fire snapshot so a failed send is retried from
-	// the previous snapshot, including retraction tombstones.
-	if !s.stillLeader(ctx) {
-		return ErrNotLeader
-	}
-	if len(changes) > 0 {
-		if err := s.sink.Submit(ctx, changes); err != nil {
-			return fmt.Errorf("submit fires: %w", err)
-		}
-		for _, fire := range changes {
-			firesSubmitted.WithLabelValues(fire.Status).Inc()
-		}
-	}
-	if err := s.state.SaveFires(ctx, current); err != nil {
-		return fmt.Errorf("save fires: %w", err)
-	}
-	return s.saveOffset(ctx, maxOffset)
-}
-
-func (s *Stream) load(ctx context.Context) ([]domain.Detection, []domain.Fire, error) {
-	detections, err := s.state.Detections(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("load detections: %w", err)
-	}
-	previous, err := s.state.Fires(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("load fires: %w", err)
-	}
-	return detections, previous, nil
-}
-
-func (s *Stream) saveOffset(ctx context.Context, offset int64) error {
-	if err := s.state.SaveOffset(ctx, offset); err != nil {
-		return err
-	}
-	s.committed.Store(offset)
-	return nil
-}
-
-func (s *Stream) reportLag(ctx context.Context) {
-	ticker := time.NewTicker(s.sessionInterval)
-	defer ticker.Stop()
-	for {
-		session, err := s.feed.Session(ctx)
-		if err == nil {
-			lag := session.LatestOffset - s.committed.Load()
-			if lag < 0 {
-				lag = 0
-			}
-			feedLag.Set(float64(lag))
-		}
-		select {
-		case <-ticker.C:
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-// initWatermark restores the watermark from durable state once per process
-// lifetime, so a restarted replica judges lateness exactly like the one it
-// replaced.
-func (s *Stream) initWatermark(detections []domain.Detection) {
-	if s.watermarkReady {
-		return
-	}
-	for _, detection := range detections {
-		if at, err := detection.Time(); err == nil && at.After(s.watermark) {
-			s.watermark = at
-		}
-	}
-	s.watermarkReady = true
-	if !s.watermark.IsZero() {
-		watermarkSeconds.Set(float64(s.watermark.Unix()))
-	}
-}
-
-// accept admits a detection unless its acquisition time is more than
-// lateWindow behind the watermark. Late detections are not dropped silently:
-// they are counted (satellite_detections_dropped_total{reason="late"}) and
-// logged with their key.
-func (s *Stream) accept(detection domain.Detection) bool {
-	at, err := detection.Time()
-	if err != nil {
-		droppedDetections.WithLabelValues("invalid_time").Inc()
-		return false
-	}
-	if !s.watermark.IsZero() && s.watermark.Sub(at) > s.lateWindow {
-		droppedDetections.WithLabelValues("late").Inc()
-		s.logger.Warn("late detection not clustered",
-			"service", "satellite-ingestor", "component", "stream",
-			"detection", detection.Key(), "acquired_at", at, "watermark", s.watermark, "late_by", s.watermark.Sub(at)-s.lateWindow)
-		return false
-	}
-	if at.After(s.watermark) {
-		s.watermark = at
-		watermarkSeconds.Set(float64(at.Unix()))
-	}
-	return true
-}
-
-// prune forgets detections older than maxAge behind the watermark; they can
-// no longer join or change a fire.
-func (s *Stream) prune(detections []domain.Detection) []domain.Detection {
-	if s.watermark.IsZero() {
-		return detections
-	}
-	cutoff := s.watermark.Add(-s.maxAge)
-	kept := detections[:0]
-	for _, detection := range detections {
-		at, err := detection.Time()
-		if err != nil || at.Before(cutoff) {
-			continue
-		}
-		kept = append(kept, detection)
-	}
-	return kept
-}
-
-func upsertDetection(detections []domain.Detection, detection domain.Detection) []domain.Detection {
-	key := detection.Key()
-	for i := range detections {
-		if detections[i].Key() == key {
-			detections[i] = detection
-			return detections
-		}
-	}
-	return append(detections, detection)
-}
-
-func removeDetection(detections []domain.Detection, key string) []domain.Detection {
-	kept := detections[:0]
-	for _, detection := range detections {
-		if detection.Key() != key {
-			kept = append(kept, detection)
-		}
-	}
-	return kept
 }

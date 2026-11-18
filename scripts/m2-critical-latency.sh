@@ -6,16 +6,30 @@
 # 5 s >= 95%" is read straight from bucket counts, with no interpolation.
 # Nothing here is hand-entered: the artifact is derived from /metrics.
 #
-# Critical events must be flowing (sensor-pantai `exam` profile, or any
-# coastal critical observation) while this runs.
+# Critical events must have flowed (any coastal observation flagged critical;
+# `m2-demo.sh p5-critical` with CONFIRM=yes produces them in rounds).
+# MIN_SAMPLES (default 20) is the number of samples needed for a verdict.
 set -euo pipefail
 
 # Space-separated /metrics URLs; list every critical-notifier replica.
 NOTIFIER_METRICS_URLS="${NOTIFIER_METRICS_URLS:-http://localhost:8093/metrics}"
 SERVICE="${SERVICE:-critical-notifier}"
-# Reference point that gates pass/fail. occurred_at is the stricter,
-# end-to-end view; ingested_at isolates the outbox/broker/consumer pipeline.
-LATENCY_FROM="${LATENCY_FROM:-occurred_at}"
+# Reference point that gates pass/fail (GATING_REFERENCE, or the older name
+# LATENCY_FROM). All three are always reported:
+#   received_at  wall clock when the ingestor finished reading the sensor
+#                response that carried the event, to notifier delivery. Both
+#                ends are our own clocks, so this is the measured part of the
+#                path. The sensor exposes an observation at most one poll
+#                interval before the ingestor fetches it, so the end-to-end
+#                bound is this figure plus POLL_INTERVAL_SECONDS.
+#   occurred_at  sensor observation time to delivery. Informational: Sensor
+#                Pantai runs on a virtual, accelerated clock, so this mixes two
+#                clocks and is not a latency.
+#   ingested_at  Aggregator storage time (1 s resolution) to delivery; isolates
+#                outbox + broker + consumer.
+LATENCY_FROM="${GATING_REFERENCE:-${LATENCY_FROM:-received_at}}"
+# The ingestor's COASTAL_INGESTOR_POLL_INTERVAL (1s in the cluster manifest).
+POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-1}"
 TARGET_SECONDS="${TARGET_SECONDS:-5}"
 REQUIRED_RATIO="${REQUIRED_RATIO:-0.95}"
 MIN_SAMPLES="${MIN_SAMPLES:-20}"
@@ -96,13 +110,34 @@ if (( count >= MIN_SAMPLES )) && awk -v r="$ratio" -v need="$REQUIRED_RATIO" 'BE
   pass=true
 fi
 
-printf '{"generated_at":"%s","service":"%s","target_seconds":%s,"required_ratio":%s,"min_samples":%s,"gating_reference":"%s","pass":%s,"references":[%s,%s]}\n' \
+# The end-to-end bound adds the one thing the histogram cannot see: how long
+# the observation sat in the sensor before a poll picked it up.
+bound=null
+if [[ "$LATENCY_FROM" == received_at && "$p95" != null ]]; then
+  bound=$(awk -v p="$p95" -v poll="$POLL_INTERVAL_SECONDS" 'BEGIN { printf "%g", p + poll }')
+fi
+
+printf '{"generated_at":"%s","service":"%s","target_seconds":%s,"required_ratio":%s,"min_samples":%s,"gating_reference":"%s","pass":%s,"poll_interval_seconds":%s,"end_to_end_p95_upper_bound_seconds":%s,"references":[%s,%s,%s]}\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SERVICE" "$TARGET_SECONDS" "$REQUIRED_RATIO" "$MIN_SAMPLES" "$LATENCY_FROM" "$pass" \
-  "$(summary_json occurred_at)" "$(summary_json ingested_at)" >"$artifact"
+  "$POLL_INTERVAL_SECONDS" "$bound" \
+  "$(summary_json received_at)" "$(summary_json occurred_at)" "$(summary_json ingested_at)" >"$artifact"
 
 printf 'Wrote %s\n' "$artifact"
-printf '%s: %s samples, %s within %ss (ratio %s, p95 <= %ss)\n' \
+printf 'gating reference %s: %s samples, %s within %ss (ratio %s, p95 <= %ss)\n' \
   "$LATENCY_FROM" "$count" "$within" "$TARGET_SECONDS" "$ratio" "$p95"
+for other in received_at occurred_at ingested_at; do
+  [[ "$other" == "$LATENCY_FROM" ]] && continue
+  read -r oc ow orat op <<<"$(printf '%s\n' "$metrics" | summarize "$other")"
+  printf 'informational %s: %s samples, %s within %ss (ratio %s, p95 <= %ss)\n' "$other" "$oc" "$ow" "$TARGET_SECONDS" "$orat" "$op"
+done
+if [[ "$LATENCY_FROM" == received_at ]]; then
+  printf 'End-to-end bound: the histogram starts when the ingestor has read the sensor response. The sensor\n'
+  printf 'exposes an observation at most one poll interval (%ss) before that while the ingestor is polling\n' "$POLL_INTERVAL_SECONDS"
+  printf '(breaker closed, caught up), so sensor-exposure-to-notifier p95 <= %ss + %ss = %ss.\n' "$p95" "$POLL_INTERVAL_SECONDS" "$bound"
+  if [[ "$bound" != null ]] && awk -v b="$bound" -v t="$TARGET_SECONDS" 'BEGIN { exit !(b + 0 > t + 0) }'; then
+    printf 'NOTE: that bound (%ss) is above the %ss target although the measured part passes; the histogram bucket edges are 0.1 0.25 0.5 1 2 3 4 5.\n' "$bound" "$TARGET_SECONDS"
+  fi
+fi
 
 if (( count < MIN_SAMPLES )); then
   fail "only $count samples after ${WAIT_SECONDS}s; need $MIN_SAMPLES critical events"

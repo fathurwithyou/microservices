@@ -28,11 +28,9 @@ type Config struct {
 	// is more than this behind the latest acquisition time seen is counted as
 	// late instead of clustered.
 	LateWindow time.Duration
-	// MaxAge prunes detections older than this from durable state.
-	MaxAge time.Duration
-	// HTTPTimeout bounds one feed connection attempt. The application
-	// reconnects when it expires.
-	HTTPTimeout time.Duration
+	// IdleTimeout ends a feed connection that delivered nothing, not even a
+	// heartbeat, for this long.
+	IdleTimeout time.Duration
 	// MinBackoff and MaxBackoff bound the reconnect delay.
 	MinBackoff time.Duration
 	MaxBackoff time.Duration
@@ -57,15 +55,12 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("load config: %w", err)
 	}
-	lateWindow, err := env.Duration("SATELLITE_LATE_WINDOW", 360*time.Minute)
+	// 12 h covers a morning pass whose data only arrives at noon, twice over.
+	lateWindow, err := env.Duration("SATELLITE_LATE_WINDOW", 12*time.Hour)
 	if err != nil {
 		return Config{}, fmt.Errorf("load config: %w", err)
 	}
-	maxAge, err := env.Duration("SATELLITE_MAX_AGE", 24*time.Hour)
-	if err != nil {
-		return Config{}, fmt.Errorf("load config: %w", err)
-	}
-	httpTimeout, err := env.Duration("SATELLITE_HTTP_TIMEOUT", 5*time.Minute)
+	idleTimeout, err := env.Duration("SATELLITE_IDLE_TIMEOUT", 45*time.Second)
 	if err != nil {
 		return Config{}, fmt.Errorf("load config: %w", err)
 	}
@@ -94,8 +89,7 @@ func Load() (Config, error) {
 		HealthPort:     env.String("SATELIT_INGESTOR_HEALTH_PORT", "8086"),
 		DatabaseURL:    env.String("SATELLITE_DATABASE_URL", ""),
 		LateWindow:     lateWindow,
-		MaxAge:         maxAge,
-		HTTPTimeout:    httpTimeout,
+		IdleTimeout:    idleTimeout,
 		MinBackoff:     minBackoff,
 		MaxBackoff:     maxBackoff,
 		LeaderTTL:      leaderTTL,
@@ -111,8 +105,7 @@ func (c Config) Validate() error {
 		value time.Duration
 	}{
 		{"SATELLITE_LATE_WINDOW", c.LateWindow},
-		{"SATELLITE_MAX_AGE", c.MaxAge},
-		{"SATELLITE_HTTP_TIMEOUT", c.HTTPTimeout},
+		{"SATELLITE_IDLE_TIMEOUT", c.IdleTimeout},
 		{"SATELLITE_MIN_BACKOFF", c.MinBackoff},
 		{"SATELLITE_MAX_BACKOFF", c.MaxBackoff},
 		{"LEADER_TTL", c.LeaderTTL},
@@ -122,9 +115,6 @@ func (c Config) Validate() error {
 		if duration.value <= 0 {
 			return fmt.Errorf("config: environment variable %s must be positive, got %s", duration.name, duration.value)
 		}
-	}
-	if c.MaxAge < c.LateWindow {
-		return fmt.Errorf("config: SATELLITE_MAX_AGE (%s) must be at least SATELLITE_LATE_WINDOW (%s)", c.MaxAge, c.LateWindow)
 	}
 	if c.MaxBackoff < c.MinBackoff {
 		return fmt.Errorf("config: SATELLITE_MAX_BACKOFF (%s) must be at least SATELLITE_MIN_BACKOFF (%s)", c.MaxBackoff, c.MinBackoff)

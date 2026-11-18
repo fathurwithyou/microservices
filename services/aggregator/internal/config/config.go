@@ -28,8 +28,14 @@ type Config struct {
 	SchemaAdapters     string
 	OutboxPollInterval time.Duration
 	RequestTimeout     time.Duration
-	LeaderTTL          time.Duration
-	LeaderRenew        time.Duration
+	// ListCacheTTL is how long an identical hazard listing is reused; 0
+	// disables coalescing (LIST_CACHE_TTL).
+	ListCacheTTL time.Duration
+	// AnalyticsCacheTTL is how long the counts of an identical analytics
+	// window are reused; 0 disables it (ANALYTICS_CACHE_TTL).
+	AnalyticsCacheTTL time.Duration
+	LeaderTTL         time.Duration
+	LeaderRenew       time.Duration
 	// FailureRetryInterval spaces automatic retries of transient failures.
 	FailureRetryInterval time.Duration
 	// FailureRetryMaxAttempts parks a transient failure after this many tries.
@@ -57,6 +63,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	requestTimeout, err := env.Duration("REQUEST_TIMEOUT", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	listCacheTTL, err := env.Duration("LIST_CACHE_TTL", time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	analyticsCacheTTL, err := env.Duration("ANALYTICS_CACHE_TTL", 5*time.Second)
 	if err != nil {
 		return Config{}, err
 	}
@@ -93,6 +107,8 @@ func Load() (Config, error) {
 		SchemaAdapters:       env.String("PVMBG_SCHEMA_ADAPTERS", ""),
 		OutboxPollInterval:   outboxPollInterval,
 		RequestTimeout:       requestTimeout,
+		ListCacheTTL:         listCacheTTL,
+		AnalyticsCacheTTL:    analyticsCacheTTL,
 		LeaderTTL:            leaderTTL,
 		LeaderRenew:          leaderRenew,
 

@@ -81,23 +81,29 @@ func TestRepositoryAgainstCockroach(t *testing.T) {
 	})
 
 	t.Run("tsunami category", func(t *testing.T) {
-		counts, err := repository.CountByHazardType(ctx, analytics.Filter{Since: at, Until: at.Add(time.Second), Bucket: analytics.BucketDay})
+		// The events were written moments ago: read at present time so the
+		// historical snapshot does not hide them.
+		repository.AnalyticsStaleness = 0
+		result, err := analytics.NewQueries(repository).Get(ctx, analytics.Filter{Since: at, Until: at.Add(time.Second), Bucket: analytics.BucketDay})
 		if err != nil {
 			t.Fatal(err)
 		}
 		got := map[domain.HazardType]int64{}
-		for _, item := range counts {
+		for _, item := range result.HazardTypes {
 			got[item.HazardType] = item.Count
 		}
 		if got[domain.HazardSeismic] != 1 || got[analytics.CategoryTsunami] != 2 {
 			t.Fatalf("counts = %v", got)
 		}
-		buckets, err := repository.CountByTimeBucket(ctx, analytics.Filter{Since: at, Until: at.Add(time.Second), Bucket: analytics.BucketHour})
+		if result.AsOf.IsZero() {
+			t.Fatal("as_of missing")
+		}
+		hourly, err := analytics.NewQueries(repository).Get(ctx, analytics.Filter{Since: at, Until: at.Add(time.Second), Bucket: analytics.BucketHour})
 		if err != nil {
 			t.Fatal(err)
 		}
 		var tsunami int64
-		for _, bucket := range buckets {
+		for _, bucket := range hourly.Buckets {
 			if bucket.HazardType == analytics.CategoryTsunami {
 				tsunami += bucket.Count
 			}

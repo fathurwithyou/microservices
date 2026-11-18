@@ -14,7 +14,7 @@ set -euo pipefail
 NAMESPACE="${NAMESPACE:-sistem-informasi-kebencanaan-bnpb}"
 BASE_URL="${BASE_URL:?set BASE_URL to a Client API entry point}"
 OUTAGE="${OUTAGE:-90}"
-AFTER="${AFTER:-90}"
+AFTER="${AFTER:-120}"
 SAMPLE="${SAMPLE:-10}"
 OUT="${OUT:-artifacts/m2/p5/sensor-outage.jsonl}"
 mkdir -p "$(dirname "$OUT")"
@@ -23,8 +23,9 @@ mkdir -p "$(dirname "$OUT")"
 secret=$(kubectl -n "$NAMESPACE" get secret bnpb-secrets -o jsonpath='{.data.FIELD_TEAM_CLIENT_SECRET}' | base64 -d)
 # Access tokens live 60 s; take a fresh one for every sample.
 new_token() {
-  curl -s -X POST "$BASE_URL/auth/token" -H 'Content-Type: application/json' \
-    -d "{\"client_id\":\"field-team-client\",\"client_secret\":\"$secret\"}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])'
+  # Body on stdin so the secret is not visible in the process list.
+  printf '{"client_id":"field-team-client","client_secret":"%s"}' "$secret" |
+    curl -s -X POST "$BASE_URL/auth/token" -H 'Content-Type: application/json' --data-binary @- | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])'
 }
 
 metrics() {

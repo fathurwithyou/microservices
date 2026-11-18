@@ -14,7 +14,9 @@ func clearEnv(t *testing.T) {
 		"COASTAL_DATABASE_URL",
 		"COASTAL_INGESTOR_POLL_INTERVAL",
 		"COASTAL_INGESTOR_REQUEST_TIMEOUT",
-		"COASTAL_INGESTOR_MAX_AGE",
+		"COASTAL_STALE_AFTER",
+		"COASTAL_SUBMIT_CONCURRENCY",
+		"COASTAL_SUBMIT_BUDGET",
 		"COASTAL_INGESTOR_CIRCUIT_FAILURES",
 		"COASTAL_INGESTOR_CIRCUIT_WINDOW",
 		"COASTAL_INGESTOR_CIRCUIT_OPEN_TIMEOUT",
@@ -34,6 +36,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.HealthPort != "8087" || cfg.PollInterval != 30*time.Second || cfg.CircuitFailureThreshold != 5 {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
+	if cfg.StaleAfter != 30*time.Minute || cfg.SubmitConcurrency != 8 || cfg.SubmitBudget != time.Second {
+		t.Fatalf("unexpected critical-lane defaults: %+v", cfg)
+	}
 	if cfg.SensorURL != "" || cfg.SensorToken != "" {
 		t.Fatalf("fixture mode expected, got url=%q token=%q", cfg.SensorURL, cfg.SensorToken)
 	}
@@ -49,6 +54,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "zero poll interval", env: map[string]string{"COASTAL_INGESTOR_POLL_INTERVAL": "0s"}, check: true},
 		{name: "negative timeout", env: map[string]string{"COASTAL_INGESTOR_REQUEST_TIMEOUT": "-1s"}, check: true},
 		{name: "bad health port", env: map[string]string{"COASTAL_INGESTOR_HEALTH_PORT": "http"}, check: true},
+		{name: "zero submit concurrency", env: map[string]string{"COASTAL_SUBMIT_CONCURRENCY": "0"}, check: true},
+		{name: "huge submit concurrency", env: map[string]string{"COASTAL_SUBMIT_CONCURRENCY": "1000"}, check: true},
+		{name: "zero stale after", env: map[string]string{"COASTAL_STALE_AFTER": "0s"}, check: true},
 		{name: "url with token", env: map[string]string{"SENSOR_URL": "http://sensor", "SENSOR_TOKEN": "t"}},
 	}
 	for _, tc := range tests {

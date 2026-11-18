@@ -2,6 +2,7 @@ package grpctransport
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	aggregatorpb "github.com/fathurwithyou/microservices/contracts/gen/go/aggregator"
@@ -25,9 +26,13 @@ func (h *queryHandler) GetAnalytics(ctx context.Context, request *aggregatorpb.A
 	}
 	result, err := h.analytics.Get(ctx, analytics.Filter{Since: since, Until: until, Bucket: analytics.Bucket(request.GetBucket())})
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, analyticsStatus(ctx, err)
 	}
+	markDegraded(ctx, "analytics", result.Degraded)
 	response := &aggregatorpb.AnalyticsResponse{Partial: result.Partial, UnavailableUnits: result.UnavailableUnits}
+	if !result.AsOf.IsZero() {
+		response.AsOf = result.AsOf.UTC().Format(asOfFormat)
+	}
 	for _, item := range result.HazardTypes {
 		response.HazardTypes = append(response.HazardTypes, &aggregatorpb.HazardTypeCount{HazardType: hazardTypeToProto(canonicalType(item.HazardType)), Count: item.Count, Category: string(item.HazardType)})
 	}
@@ -42,6 +47,23 @@ func (h *queryHandler) GetAnalytics(ctx context.Context, request *aggregatorpb.A
 	}
 	return response, nil
 }
+
+// analyticsStatus keeps the three failure kinds apart for the caller: a bad
+// window is the caller's mistake, a deadline is the caller's deadline (the
+// client-api retries that on another instance), and anything else is the
+// store (see storeStatus). Before 18 Nov every one of them was reported as
+// InvalidArgument.
+func analyticsStatus(ctx context.Context, err error) error {
+	if errors.Is(err, analytics.ErrInvalidFilter) {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	return storeStatus(ctx, err)
+}
+
+// asOfFormat is RFC3339 with exactly six fractional digits: fine enough for a
+// consumer to compare ingestion times against, and parsed by every RFC3339
+// reader (nine digits are not).
+const asOfFormat = "2006-01-02T15:04:05.000000Z07:00"
 
 func optionalTime(value string) (time.Time, error) {
 	if value == "" {

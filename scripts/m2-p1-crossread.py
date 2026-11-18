@@ -63,10 +63,13 @@ def sort_key(item: dict) -> tuple:
     return (parse_time(item["occurred_at"]), item["hazard_id"])
 
 
-def audit_ground_truth(base: str, token: str, timeout: float) -> list[dict]:
+def audit_ground_truth(base: str, token: str, timeout: float, as_of: str | None = None) -> list[dict]:
+    """Page through every Audit API event; with as_of, from that store snapshot."""
     events, cursor = [], None
     while True:
         query = {"limit": "1000"}
+        if as_of:
+            query["as_of"] = as_of
         if cursor:
             query["cursor"] = cursor
         status, body, _ = call(f"{base}/internal/audit/events?{urllib.parse.urlencode(query)}", token=token, timeout=timeout)

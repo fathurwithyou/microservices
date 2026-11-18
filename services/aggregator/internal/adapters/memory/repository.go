@@ -7,6 +7,7 @@ import (
 	"maps"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -159,6 +160,20 @@ func (s *Repository) ListAuditEvents(_ context.Context, filter audit.Filter) ([]
 	return items, nil
 }
 
+// PurgeSource deletes the events of one source, optionally by id prefix.
+func (s *Repository) PurgeSource(_ context.Context, source domain.Source, refPrefix string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var deleted int64
+	for id, event := range s.events {
+		if event.Source == source && strings.HasPrefix(event.SourceRefID, refPrefix) {
+			delete(s.events, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 // SourceRefIDs returns sorted source_ref_id values for checksum.
 func (s *Repository) SourceRefIDs(_ context.Context, source domain.Source) ([]string, error) {
 	s.mu.RLock()
@@ -272,86 +287,40 @@ func (s *Repository) HazardExists(_ context.Context, hazardID string) (bool, err
 	return ok, nil
 }
 
-func (s *Repository) CountByHazardType(_ context.Context, filter analytics.Filter) ([]analytics.TypeCount, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	counts := map[domain.HazardType]int64{}
-	for _, event := range s.events {
-		if inWindow(event, filter) {
-			counts[analytics.Category(event)]++
-		}
-	}
-	result := make([]analytics.TypeCount, 0, len(counts))
-	for kind, count := range counts {
-		result = append(result, analytics.TypeCount{HazardType: kind, Count: count})
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].HazardType < result[j].HazardType })
-	return result, nil
-}
-
-func (s *Repository) CountBySeverity(_ context.Context, filter analytics.Filter) ([]analytics.SeverityCount, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	counts := map[domain.Severity]int64{}
-	for _, event := range s.events {
-		if inWindow(event, filter) {
-			counts[event.Severity]++
-		}
-	}
-	result := make([]analytics.SeverityCount, 0, len(counts))
-	for severity, count := range counts {
-		result = append(result, analytics.SeverityCount{Severity: severity, Count: count})
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Severity < result[j].Severity })
-	return result, nil
-}
-
-func (s *Repository) CountByArea(_ context.Context, filter analytics.Filter) ([]analytics.AreaCount, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	counts := map[string]int64{}
-	for _, event := range s.events {
-		if inWindow(event, filter) {
-			counts[event.AreaName]++
-		}
-	}
-	result := make([]analytics.AreaCount, 0, len(counts))
-	for area, count := range counts {
-		result = append(result, analytics.AreaCount{AreaName: area, Count: count})
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Count != result[j].Count {
-			return result[i].Count > result[j].Count
-		}
-		return result[i].AreaName < result[j].AreaName
-	})
-	return result, nil
-}
-
-func (s *Repository) CountByTimeBucket(_ context.Context, filter analytics.Filter) ([]analytics.TimeBucket, error) {
+// Aggregate counts the window per (bucket, category, severity, area), as the
+// store does in one scan. Memory has no snapshots: AsOf is now.
+func (s *Repository) Aggregate(_ context.Context, filter analytics.Filter) (analytics.Snapshot, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	type key struct {
-		start time.Time
-		kind  domain.HazardType
+		start    time.Time
+		category domain.HazardType
+		severity domain.Severity
+		area     string
 	}
 	counts := map[key]int64{}
 	for _, event := range s.events {
 		if inWindow(event, filter) {
-			counts[key{start: bucketStart(event.OccurredAt, filter.Bucket), kind: analytics.Category(event)}]++
+			counts[key{start: bucketStart(event.OccurredAt, filter.Bucket), category: analytics.Category(event), severity: event.Severity, area: event.AreaName}]++
 		}
 	}
-	result := make([]analytics.TimeBucket, 0, len(counts))
+	rows := make([]analytics.Row, 0, len(counts))
 	for k, count := range counts {
-		result = append(result, analytics.TimeBucket{Start: k.start, HazardType: k.kind, Count: count})
+		rows = append(rows, analytics.Row{Bucket: k.start, Category: k.category, Severity: k.severity, AreaName: k.area, Count: count})
 	}
-	sort.Slice(result, func(i, j int) bool {
-		if !result[i].Start.Equal(result[j].Start) {
-			return result[i].Start.Before(result[j].Start)
+	sort.Slice(rows, func(i, j int) bool {
+		if !rows[i].Bucket.Equal(rows[j].Bucket) {
+			return rows[i].Bucket.Before(rows[j].Bucket)
 		}
-		return result[i].HazardType < result[j].HazardType
+		if rows[i].Category != rows[j].Category {
+			return rows[i].Category < rows[j].Category
+		}
+		if rows[i].Severity != rows[j].Severity {
+			return rows[i].Severity < rows[j].Severity
+		}
+		return rows[i].AreaName < rows[j].AreaName
 	})
-	return result, nil
+	return analytics.Snapshot{Rows: rows, AsOf: time.Now().UTC()}, nil
 }
 
 func inWindow(event domain.HazardEvent, filter analytics.Filter) bool {

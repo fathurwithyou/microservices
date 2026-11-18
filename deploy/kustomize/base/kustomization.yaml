@@ -9,11 +9,13 @@ resources:
   - auth-db-bootstrap-job.yaml
   - persistentvolumeclaims.yaml
   - workloads.yaml
+  - pod-services.yaml
   - pdb.yaml
   - cockroachdb-statefulset.yaml
   - cockroachdb-certs-job.yaml
   - cockroachdb-bootstrap-job.yaml
   - satellite-ingestor.yaml
+  - satellite-feed.yaml
   - coastal-ingestor.yaml
   - sensor-pantai.yaml
   - critical-notifier.yaml

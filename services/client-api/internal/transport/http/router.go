@@ -13,17 +13,25 @@ import (
 type RouterConfig struct {
 	API         *application.API
 	MaxInflight int
-	Timeout     time.Duration
-	Logger      *slog.Logger
+	// OverloadInflight is the in-flight count past which requests are turned
+	// away before any per-request work (see overloadGate). Default: four times
+	// MaxInflight.
+	OverloadInflight int
+	Timeout          time.Duration
+	Logger           *slog.Logger
 }
 
 func NewRouter(cfg RouterConfig) *gin.Engine {
 	if cfg.MaxInflight < 1 {
 		cfg.MaxInflight = 1
 	}
-	handler := handler{api: cfg.API, timeout: cfg.Timeout, limiter: newClassLimiter(cfg.MaxInflight)}
+	if cfg.OverloadInflight < 1 {
+		cfg.OverloadInflight = 4 * cfg.MaxInflight
+	}
+	priority := newPriorityTokens()
+	handler := handler{api: cfg.API, timeout: cfg.Timeout, limiter: newClassLimiter(cfg.MaxInflight), priority: priority}
 	router := gin.New()
-	router.Use(observability.GinTracing("client-api"), correlationMiddleware(), recoveryMiddleware(cfg.Logger), requestLogMiddleware(cfg.Logger), observability.GinMetrics())
+	router.Use(overloadGate(cfg.OverloadInflight, priority), observability.GinTracing("client-api"), correlationMiddleware(), recoveryMiddleware(cfg.Logger), requestLogMiddleware(cfg.Logger), observability.GinMetrics())
 	router.GET("/health", health)
 	router.GET("/metrics", gin.WrapH(observability.MetricsHandler()))
 	// Token endpoints carry no client class yet, so they get a plain cap. A
@@ -47,6 +55,8 @@ type handler struct {
 	api     *application.API
 	timeout time.Duration
 	limiter *classLimiter
+	// priority feeds the overload gate with credentials seen as Field Team.
+	priority *priorityTokens
 }
 
 func health(c *gin.Context) {

@@ -77,12 +77,19 @@ spec:
             httpGet: { path: "/health?ready=1", port: http, scheme: HTTPS }
             initialDelaySeconds: 10
             periodSeconds: 10
-            failureThreshold: 2
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # A slow /health is not a dead node. Under a 10k VU load test on a
+          # saturated host, /health took > 5 s on every store node and the old
+          # probe (3 x 10 s, 5 s timeout) restarted two of four nodes within
+          # 7 s, which cost quorum on their ranges (17 Nov). A node that is
+          # really wedged still gets restarted, after 2 min instead of 30 s.
           livenessProbe:
             httpGet: { path: /health, port: http, scheme: HTTPS }
             initialDelaySeconds: 30
             periodSeconds: 10
-            timeoutSeconds: 5
+            timeoutSeconds: 10
+            failureThreshold: 12
           resources:
             requests: { memory: 512Mi }
             limits: { memory: 1Gi }

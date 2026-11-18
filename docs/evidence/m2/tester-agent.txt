@@ -1,0 +1,36 @@
+$ kubectl logs -n tester-agent <pod> --prefix   (game day latihan 18 Nov 2026; kolom seq/prev/mac dihilangkan; log pod di node yang di-wipe ikut hilang)
+2026-11-18T12:19:55Z tester-agent-bdlhv [L] skenario "clock-skew" (practice) mulai; 1 langkah
+2026-11-18T12:20:00Z tester-agent-bdlhv [L] langkah 1 mulai: shift_clock +300s selama 30s nodes=any
+2026-11-18T12:24:59Z tester-agent-jg2cd [L] skenario "kill-leader" (practice) mulai; 1 langkah
+2026-11-18T12:25:04Z tester-agent-jg2cd [L] langkah 1 mulai: stop_pod role=aggregator nodes=any
+2026-11-18T12:25:04Z tester-agent-jg2cd [L] langkah 1 selesai
+2026-11-18T12:25:04Z tester-agent-jg2cd [L] pemulihan akhir selesai; keadaan bersih
+2026-11-18T12:25:04Z tester-agent-jg2cd [L] pod aggregator-8558d75755-xl8jd (role=aggregator) pada node node-d dihentikan
+2026-11-18T12:25:04Z tester-agent-jg2cd [L] skenario selesai
+2026-11-18T12:30:05Z tester-agent-bdlhv [L] skenario "kill-store" (practice) mulai; 1 langkah
+2026-11-18T12:30:10Z tester-agent-bdlhv [L] langkah 1 mulai: stop_pod role=store nodes=any
+2026-11-18T12:30:10Z tester-agent-bdlhv [L] langkah 1 selesai
+2026-11-18T12:30:10Z tester-agent-bdlhv [L] pemulihan akhir selesai; keadaan bersih
+2026-11-18T12:30:10Z tester-agent-bdlhv [L] pod cockroachdb-1 (role=store) pada node node-c dihentikan
+2026-11-18T12:30:10Z tester-agent-bdlhv [L] skenario selesai
+2026-11-18T12:35:11Z tester-agent-bdlhv [L] skenario "partition" (practice) mulai; 1 langkah
+2026-11-18T12:35:11Z tester-agent-jg2cd [L] skenario "partition" (practice) mulai; 1 langkah
+2026-11-18T12:35:12Z tester-agent-vcj4x [L] skenario "partition" (practice) mulai; 1 langkah
+2026-11-18T12:35:16Z tester-agent-bdlhv [L] langkah 1 mulai: block_internode selama 30s
+2026-11-18T12:35:16Z tester-agent-jg2cd [L] langkah 1 mulai: block_internode selama 30s
+2026-11-18T12:35:17Z tester-agent-vcj4x [L] langkah 1 mulai: block_internode selama 30s
+2026-11-18T12:35:46Z tester-agent-bdlhv [L] langkah 1 selesai
+2026-11-18T12:35:46Z tester-agent-bdlhv [L] pemulihan akhir selesai; keadaan bersih
+2026-11-18T12:35:46Z tester-agent-bdlhv [L] skenario selesai
+2026-11-18T12:35:46Z tester-agent-jg2cd [L] langkah 1 selesai
+2026-11-18T12:35:46Z tester-agent-jg2cd [L] pemulihan akhir selesai; keadaan bersih
+2026-11-18T12:35:46Z tester-agent-jg2cd [L] skenario selesai
+2026-11-18T12:35:47Z tester-agent-vcj4x [L] langkah 1 selesai
+2026-11-18T12:35:47Z tester-agent-vcj4x [L] pemulihan akhir selesai; keadaan bersih
+2026-11-18T12:35:47Z tester-agent-vcj4x [L] skenario selesai
+2026-11-18T12:40:17Z tester-agent-bdlhv [L] skenario "schema" (practice) mulai; 1 langkah
+2026-11-18T12:40:22Z tester-agent-bdlhv [L] langkah 1 mulai: call_mock_admin POST /admin/schema-version
+2026-11-18T12:40:22Z tester-agent-bdlhv [L] langkah 1 selesai
+2026-11-18T12:40:22Z tester-agent-bdlhv [L] mock POST /admin/schema-version -> HTTP 200
+2026-11-18T12:40:22Z tester-agent-bdlhv [L] pemulihan akhir selesai; keadaan bersih
+2026-11-18T12:40:22Z tester-agent-bdlhv [L] skenario selesai

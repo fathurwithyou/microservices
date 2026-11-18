@@ -161,9 +161,9 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("outbox worker initialization failed", "service", "aggregator", "error", err)
 		return 1
 	}
-	queries := hazards.NewQueries(persistence)
+	queries := hazards.NewQueries(persistence).WithListCache(cfg.ListCacheTTL)
 	auditQueries := audit.NewQueries(persistence)
-	analyticsQueries := analytics.NewQueries(persistence)
+	analyticsQueries := analytics.NewQueries(persistence).WithCache(cfg.AnalyticsCacheTTL)
 	submitter, err := applicationingest.NewSubmitter(persistence, logger)
 	if err != nil {
 		logger.Error("hazard submitter initialization failed", "service", "aggregator", "error", err)
@@ -223,6 +223,7 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 	go outboxWorker.Run(ctx)
 	go fieldReportWorker.Run(ctx)
 	go retryWorker.Run(ctx)
+	go analyticsQueries.KeepWarm(ctx, analytics.Filter{})
 	go func() {
 		logger.Info("gRPC server started", "service", "aggregator", "port", cfg.GRPCPort)
 		if err := grpcServer.Serve(grpcListener); err != nil {

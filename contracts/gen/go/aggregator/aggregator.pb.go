@@ -490,8 +490,12 @@ type AnalyticsResponse struct {
 	TimeBuckets      []*TimeBucket          `protobuf:"bytes,4,rep,name=time_buckets,json=timeBuckets,proto3" json:"time_buckets,omitempty"`
 	Partial          bool                   `protobuf:"varint,5,opt,name=partial,proto3" json:"partial,omitempty"`
 	UnavailableUnits []string               `protobuf:"bytes,6,rep,name=unavailable_units,json=unavailableUnits,proto3" json:"unavailable_units,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// as_of is the store snapshot (RFC3339, UTC) the counts were read from. The
+	// store reads a few seconds behind now and the aggregator may serve a cached
+	// window, so the answer states its age instead of pretending to be live.
+	AsOf          string `protobuf:"bytes,7,opt,name=as_of,json=asOf,proto3" json:"as_of,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AnalyticsResponse) Reset() {
@@ -564,6 +568,13 @@ func (x *AnalyticsResponse) GetUnavailableUnits() []string {
 		return x.UnavailableUnits
 	}
 	return nil
+}
+
+func (x *AnalyticsResponse) GetAsOf() string {
+	if x != nil {
+		return x.AsOf
+	}
+	return ""
 }
 
 // category is the dashboard bucket: the hazard_type name, or TSUNAMI for a
@@ -1017,7 +1028,7 @@ const file_aggregator_aggregator_proto_rawDesc = "" +
 	"\x10AnalyticsRequest\x12\x14\n" +
 	"\x05since\x18\x01 \x01(\tR\x05since\x12\x14\n" +
 	"\x05until\x18\x02 \x01(\tR\x05until\x12\x16\n" +
-	"\x06bucket\x18\x03 \x01(\tR\x06bucket\"\xd1\x02\n" +
+	"\x06bucket\x18\x03 \x01(\tR\x06bucket\"\xe6\x02\n" +
 	"\x11AnalyticsResponse\x12C\n" +
 	"\fhazard_types\x18\x01 \x03(\v2 .bnpb.aggregator.HazardTypeCountR\vhazardTypes\x12>\n" +
 	"\n" +
@@ -1026,7 +1037,8 @@ const file_aggregator_aggregator_proto_rawDesc = "" +
 	"\x05areas\x18\x03 \x03(\v2\x1a.bnpb.aggregator.AreaCountR\x05areas\x12>\n" +
 	"\ftime_buckets\x18\x04 \x03(\v2\x1b.bnpb.aggregator.TimeBucketR\vtimeBuckets\x12\x18\n" +
 	"\apartial\x18\x05 \x01(\bR\apartial\x12+\n" +
-	"\x11unavailable_units\x18\x06 \x03(\tR\x10unavailableUnits\"}\n" +
+	"\x11unavailable_units\x18\x06 \x03(\tR\x10unavailableUnits\x12\x13\n" +
+	"\x05as_of\x18\a \x01(\tR\x04asOf\"}\n" +
 	"\x0fHazardTypeCount\x128\n" +
 	"\vhazard_type\x18\x01 \x01(\x0e2\x17.bnpb.events.HazardTypeR\n" +
 	"hazardType\x12\x14\n" +

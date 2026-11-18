@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	aggregatorpb "github.com/fathurwithyou/microservices/contracts/gen/go/aggregator"
@@ -37,17 +38,51 @@ func NewGRPC(target, token string) (*GRPC, error) {
 // Close releases the aggregator connection.
 func (s *GRPC) Close() error { return s.connection.Close() }
 
+// submitConcurrency bounds parallel SubmitHazard calls. A satellite pass
+// changes hundreds of fires at once; sent one by one they would hold the
+// offset back for minutes.
+const submitConcurrency = 16
+
+// Submit sends every fire and returns the first error. A batch carries each
+// fire identifier at most once, so the calls do not depend on each other.
 func (s *GRPC) Submit(ctx context.Context, fires []domain.Fire) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var (
+		wait     sync.WaitGroup
+		once     sync.Once
+		firstErr error
+		slots    = make(chan struct{}, submitConcurrency)
+	)
 	for _, fire := range fires {
-		if _, err := s.client.SubmitHazard(s.context(ctx), &aggregatorpb.SubmitHazardRequest{
-			Event:         fireEvent(fire),
-			CorrelationId: correlation.FromContext(ctx),
-		}); err != nil {
-			return fmt.Errorf("submit fire %s: %w", fire.SourceRefID, err)
+		if ctx.Err() != nil {
+			break
 		}
+		slots <- struct{}{}
+		wait.Add(1)
+		go func(fire domain.Fire) {
+			defer wait.Done()
+			defer func() { <-slots }()
+			callCtx, callCancel := context.WithTimeout(s.context(ctx), submitTimeout)
+			defer callCancel()
+			if _, err := s.client.SubmitHazard(callCtx, &aggregatorpb.SubmitHazardRequest{
+				Event:         fireEvent(fire),
+				CorrelationId: correlation.FromContext(ctx),
+			}); err != nil {
+				once.Do(func() {
+					firstErr = fmt.Errorf("submit fire %s: %w", fire.SourceRefID, err)
+					cancel()
+				})
+			}
+		}(fire)
 	}
-	return nil
+	wait.Wait()
+	return firstErr
 }
+
+// submitTimeout bounds one call so a stuck Aggregator instance fails the
+// batch (which is then replayed) instead of stalling the stream.
+const submitTimeout = 15 * time.Second
 
 func (s *GRPC) context(ctx context.Context) context.Context {
 	return metadata.NewOutgoingContext(ctx, grpckit.Authorization(s.token))

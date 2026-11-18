@@ -52,7 +52,11 @@ func (p *Poller) runSource(ctx context.Context, source Source) {
 
 		correlationID := uuid.NewString()
 		batchUpperBound := time.Now().UTC()
-		if !p.leaderAllowed() {
+		// The local flag can be stale (a process frozen past its TTL still
+		// believes it leads until its renew loop runs again), so ownership is
+		// also checked against the database clock before calling upstream:
+		// a woken ex-leader must not poll, not only not write.
+		if !p.leaderAllowed() || !p.stillLeader(ctx) {
 			select {
 			case <-ticker.C:
 				continue
@@ -74,7 +78,15 @@ func (p *Poller) runSource(ctx context.Context, source Source) {
 				return
 			}
 		}
-		batchErr := p.persistBatch(p.writeContext(ctx), events, correlationID)
+		// The lease term is read once here and attached to every write; a term
+		// that vanished since the check above (renew loop saw the lease lost)
+		// means no write at all, never an unfenced one.
+		var batchErr error
+		if writeCtx, ok := p.writeContext(ctx); ok {
+			batchErr = p.persistBatch(writeCtx, events, correlationID)
+		} else {
+			batchErr = domain.ErrFenced
+		}
 		if errors.Is(batchErr, domain.ErrFenced) {
 			// A newer lease term exists: this instance must not write anything,
 			// including source status or failure records, until it is leader
@@ -156,13 +168,19 @@ func isTransportError(err error) bool {
 }
 
 // writeContext attaches the current lease term so the store refuses the
-// writes atomically once the term is over.
-func (p *Poller) writeContext(ctx context.Context) context.Context {
-	holder, fence := p.fence()
-	if p.leaseName == "" || holder == "" {
-		return ctx
+// writes atomically once the term is over. With a lease configured it fails
+// closed: when this instance no longer holds a term (the renew loop has just
+// seen the lease lost, e.g. after a VM freeze), ok is false and nothing may be
+// written. Without a lease (memory driver, tests) writes are not fenced.
+func (p *Poller) writeContext(ctx context.Context) (context.Context, bool) {
+	if p.leaseName == "" {
+		return ctx, true
 	}
-	return domain.WithWriteFence(ctx, domain.WriteFence{Lease: p.leaseName, Holder: holder, Fence: fence})
+	holder, fence := p.fence()
+	if holder == "" {
+		return ctx, false
+	}
+	return domain.WithWriteFence(ctx, domain.WriteFence{Lease: p.leaseName, Holder: holder, Fence: fence}), true
 }
 
 // fence reports the lease term this poller writes under, when known.

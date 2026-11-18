@@ -76,21 +76,18 @@ func runServe(ctx context.Context, logger *slog.Logger) error {
 		sensorClient.SetCursor(cursor)
 	}
 	ingestor := application.NewIngestor(
-		application.IngestConfig{Interval: cfg.PollInterval},
+		application.IngestConfig{
+			Interval:          cfg.PollInterval,
+			SubmitConcurrency: cfg.SubmitConcurrency,
+			SubmitBudget:      cfg.SubmitBudget,
+			StaleAfter:        cfg.StaleAfter,
+		},
 		sensorClient,
 		state,
 		grpcSink,
-		application.NewValidator(
-			application.ValidatorConfig{
-				// The sensor accelerates its own clock (PANTAI_SPEED), so a
-				// virtual observed_at can legitimately run far ahead of the
-				// pod clock. Staleness is still checked against MaxAge.
-				MaxFutureSkew: 365 * 24 * time.Hour,
-				MaxAge:        cfg.MaxAge,
-			},
-			time.Now,
-			nil,
-		),
+		// observed_at is judged against the sensor's own generated_at, never
+		// against this pod's clock: the sensor runs on a virtual clock.
+		application.NewValidator(application.DefaultValidatorConfig(), nil),
 		application.NewCircuitBreaker(application.CircuitConfig{
 			FailureThreshold: cfg.CircuitFailureThreshold,
 			FailureWindow:    cfg.CircuitFailureWindow,

@@ -1,0 +1,115 @@
+% Diagram deployment M2: penempatan pod per node (snapshot cluster/pods.txt) dan jalur data antar-node.
+\begin{tikzpicture}[
+  >=Latex,
+  pod/.style={draw=metafg!40,rounded corners=2pt,fill=white,minimum width=3.42cm,
+    minimum height=0.5cm,inner sep=2pt,align=center,font=\sffamily\scriptsize},
+  api/.style={pod,fill=metablue!10,draw=metablue!60},
+  agg/.style={pod,fill=metablue!22,draw=metablue!75},
+  store/.style={pod,fill=fairamber!22,draw=fairamber!90!black},
+  broker/.style={pod,fill=metafg!10},
+  ing/.style={pod,fill=green!10,draw=green!45!black},
+  other/.style={pod,fill=metabg,draw=metafg!25,text=metafg!80},
+  bus/.style={line width=1.1pt,draw=metablue!75},
+  busamqp/.style={line width=1.1pt,draw=metafg!70},
+  busraft/.style={line width=1.4pt,draw=fairamber!90!black},
+  tap/.style={->,line width=0.7pt,draw=metafg!75},
+  lbl/.style={font=\sffamily\scriptsize,text=metafg,fill=white,inner sep=1.2pt},
+  stepn/.style={circle,fill=metafg,text=white,font=\sffamily\bfseries\tiny,inner sep=1pt,minimum size=0.33cm},
+]
+\def\xa{0}\def\xb{4.05}\def\xc{8.10}\def\xd{12.15}
+
+% host fisik
+\draw[draw=metafg!55,dashed,rounded corners=6pt] (-2.05,1.1) rectangle (14.2,-11.05);
+\node[anchor=west,font=\sffamily\footnotesize] at (-1.85,-10.72)
+  {\textbf{Host fisik tunggal:} Mac mini (Mac16,11), Apple M4 Pro 12 core, RAM 24 GB, macOS 15.6.1 \;|\; jaringan VM 192.168.252.0/24 \;|\; registry image :5001 (mirror docker.io)};
+
+% VM
+\foreach \x/\name/\ip/\role/\spec in {
+  \xa/node-a/192.168.252.2/control plane + worker/2 vCPU; 4{,}8 GiB,
+  \xb/node-b/192.168.252.3/worker/2 vCPU; 4{,}8 GiB,
+  \xc/node-c/192.168.252.6/worker/2 vCPU; 3{,}8 GiB,
+  \xd/node-d/192.168.252.5/worker/2 vCPU; 3{,}8 GiB}{
+  \draw[draw=metablue!55,fill=metablue!3,rounded corners=4pt] (\x-1.9,0.85) rectangle (\x+1.9,-10.35);
+  \node[api,minimum height=0.42cm] (np\name) at (\x,0.5) {NodePort :30080};
+  \node[font=\sffamily\bfseries\small] at (\x,0.0) {\name};
+  \node[font=\sffamily\tiny,text=metafg!85] at (\x,-0.33) {\role; \ip};
+  \node[font=\sffamily\tiny,text=metafg!85] at (\x,-0.6) {VM Multipass (QEMU/HVF); \spec};
+}
+
+% klien
+\node[pod,minimum width=2.6cm] (client) at (6.07,2.0) {Klien (Media, Tim Lapangan, Ops), k6};
+\foreach \n in {node-a,node-b,node-c,node-d}{\draw[tap] (client.south) -- (np\n.north);}
+\node[stepn] at (8.25,2.0) {1};
+
+% baris client-api
+\node[api] (capic) at (\xc,-1.35) {client-api};
+\node[api] (capid) at (\xd,-1.35) {client-api};
+\node[other] at (\xa,-1.35) {grafana, tempo};
+\node[api] (auth) at (\xb,-1.35) {auth};
+
+% bus gRPC
+\draw[bus] (-1.75,-2.0) -- (13.9,-2.0);
+\node[stepn] at (-1.75,-2.0) {2};
+\node[lbl] at (2.1,-2.0) {gRPC :9090, round\_robin per panggilan};
+\node[lbl] at (6.52,-2.0) {headless \texttt{aggregator-grpc}};
+\node[lbl] at (10.0,-2.0) {auth :9091};
+\draw[tap] (capic.south) -- (\xc,-2.0);
+\draw[tap] (capid.south) -- (\xd,-2.0);
+\draw[tap] (\xb+0.9,-2.0) -- (\xb+0.9,-1.1);
+
+% aggregator
+\node[agg] (agga) at (\xa,-2.7) {aggregator};
+\node[agg] (aggb) at (\xb,-2.7) {aggregator};
+\node[agg] (aggd) at (\xd,-2.7) {aggregator};
+\node[other] at (\xc,-2.7) {(tanpa aggregator)};
+\draw[tap] (\xa,-2.0) -- (agga.north);
+\draw[tap] (\xb,-2.0) -- (aggb.north);
+\draw[tap] (\xd-0.9,-2.0) -- (\xd-0.9,-2.45);
+
+% bus AMQP
+\draw[busamqp] (-1.75,-3.38) -- (13.9,-3.38);
+\node[stepn] at (-1.75,-3.38) {5};
+\node[lbl] at (2.02,-3.38) {AMQP :5672: outbox $\rightarrow$ RabbitMQ};
+\node[stepn] at (13.9,-3.38) {6};
+\node[lbl] at (10.12,-3.38) {RabbitMQ $\rightarrow$ antrean konsumen};
+\draw[tap] (agga.south) -- (\xa,-3.38);
+\draw[tap] (aggb.south) -- (\xb,-3.38);
+\draw[tap] (aggd.south) -- (\xd,-3.38);
+
+% broker dan consumer
+\node[broker,minimum height=0.95cm] (ca) at (\xa,-4.25) {dashboard, notifier, portal,\\critical-notifier};
+\node[broker,minimum height=0.95cm] (cb) at (\xb,-4.25) {dashboard,\\critical-notifier};
+\node[store,minimum height=0.95cm] (rmq) at (\xc,-4.25) {\textbf{rabbitmq} (tunggal)\\PVC local-path};
+\node[broker,minimum height=0.95cm] (cd) at (\xd,-4.25) {notifier, portal};
+\foreach \x in {\xa,\xb,\xd}{\draw[tap] (\x,-3.38) -- (\x,-3.77);}
+\draw[tap,<->] (\xc,-3.38) -- (rmq.north);
+
+% ingestor dan sumber
+\node[ing] at (\xa,-5.35) {pvmbg (mock)};
+\node[ing] at (\xb,-5.35) {bmkg (mock)};
+\node[ing] at (\xb,-5.92) {satellite-ingestor};
+\node[ing] at (\xb,-6.49) {coastal-ingestor};
+\node[ing] at (\xc,-5.35) {sensor-pantai (amd64, qemu)};
+\node[ing] at (\xc,-5.92) {satellite-ingestor};
+\node[ing] at (\xc,-6.49) {coastal-ingestor};
+\node[other] at (\xd,-5.35) {demo-api, demo-console};
+\node[other] at (\xd,-5.92) {otel-collector};
+\node[stepn] at (\xb-1.62,-6.2) {7};
+\node[stepn] at (\xc-1.62,-6.2) {7};
+\node[stepn] at (\xa-1.62,-2.7) {3};
+\node[stepn] at (\xb-1.62,-2.7) {3};
+\node[stepn] at (\xd-1.62,-2.7) {3};
+
+% store
+\draw[busraft] (\xa,-7.62) -- (\xd,-7.62);
+\node[store,minimum height=0.95cm] (c0) at (\xa,-7.62) {\textbf{cockroachdb-0}\\PV local-path};
+\node[store,minimum height=0.95cm] (c2) at (\xb,-7.62) {\textbf{cockroachdb-2}\\PV local-path};
+\node[store,minimum height=0.95cm] (c1) at (\xc,-7.62) {\textbf{cockroachdb-1}\\PV local-path};
+\node[store,minimum height=0.95cm] (c3) at (\xd,-7.62) {\textbf{cockroachdb-3}\\PV local-path};
+\node[stepn] at (2.02,-7.62) {4};
+\node[lbl] at (2.02,-8.42) {Raft antar-node :26257 (TLS), RF=3};
+\node[lbl] at (10.12,-8.42) {tiap range: 3 replika di 3 dari 4 node};
+
+\node[store] at (\xb,-9.15) {\textbf{postgres-0} (auth\_db, tunggal)};
+\node[other] at (\xb,-9.75) {prometheus};
+\end{tikzpicture}

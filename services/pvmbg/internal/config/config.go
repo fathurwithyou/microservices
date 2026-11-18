@@ -17,7 +17,10 @@ type Config struct {
 	Token string
 	// AdminKey is the credential sent in the admin key header for
 	// simulation-control routes.
-	AdminKey string
+	// AdminOpen accepts admin calls that carry no key header (in-cluster
+	// Tester Agent). A wrong key is still refused.
+	AdminOpen bool
+	AdminKey  string
 	// MinDelay and MaxDelay bound the random response delay injected into
 	// /volcanic-reports.
 	MinDelay time.Duration
@@ -67,6 +70,7 @@ func Load() (Config, error) {
 		Port:              env.String("PVMBG_PORT", "8082"),
 		Token:             token,
 		AdminKey:          adminKey,
+		AdminOpen:         env.String("PVMBG_ADMIN_OPEN", "false") == "true",
 		MinDelay:          minDelay,
 		MaxDelay:          maxDelay,
 		NewReportInterval: newReportInterval,

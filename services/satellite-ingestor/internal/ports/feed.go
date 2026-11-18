@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/fathurwithyou/microservices/services/satellite-ingestor/internal/domain"
 )
@@ -20,10 +21,16 @@ const (
 // the reconnect cursor. Detection is set for detection and update events;
 // DetectionKey is set for retract events.
 type Event struct {
+	// Offset is 0 for events that carry no id (heartbeats).
 	Offset       int64
 	Kind         EventKind
 	Detection    domain.Detection
 	DetectionKey string
+	// ReceivedAt is when the event was read off the connection.
+	ReceivedAt time.Time
+	// Skipped is set, with the reason, for an event that has an offset but
+	// could not be decoded. The offset still advances.
+	Skipped string
 }
 
 // EventHandler processes one event. It returns an error when the event could
@@ -34,11 +41,11 @@ type EventHandler func(ctx context.Context, event Event) error
 // Session is the feed's current state, used to measure how far behind the
 // ingestor is.
 type Session struct {
-	Group        string `json:"group"`
-	Profile      string `json:"profile"`
-	Speed        int    `json:"speed"`
-	VirtualNow   string `json:"virtual_now"`
-	LatestOffset int64  `json:"latest_offset"`
+	Group        string
+	Profile      string
+	Speed        float64
+	VirtualNow   time.Time
+	LatestOffset int64
 }
 
 // Feed is the inbound hotspot event stream.

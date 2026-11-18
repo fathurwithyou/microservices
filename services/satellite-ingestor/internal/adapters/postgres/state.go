@@ -4,10 +4,12 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/fathurwithyou/microservices/services/satellite-ingestor/internal/domain"
+	"github.com/fathurwithyou/microservices/services/satellite-ingestor/internal/ports"
 	"github.com/fathurwithyou/microservices/services/satellite-ingestor/migrations"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -64,40 +66,55 @@ func Up(ctx context.Context, databaseURL string) error {
 	return nil
 }
 
-func (s *State) Offset(ctx context.Context) (int64, error) {
-	var offset int64
+const (
+	metaSession   = "session"
+	metaWatermark = "watermark"
+	counterPrefix = "count:"
+)
+
+// Load returns the committed offset, working set, active fires and meta.
+func (s *State) Load(ctx context.Context) (ports.Snapshot, error) {
+	snapshot := ports.Snapshot{Counters: map[string]int64{}}
 	err := s.pool.QueryRow(ctx,
-		`SELECT offset_value FROM satellite_feed_offset WHERE consumer = $1`, consumerName).Scan(&offset)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, nil
+		`SELECT offset_value FROM satellite_feed_offset WHERE consumer = $1`, consumerName).Scan(&snapshot.Offset)
+	if err != nil && err != pgx.ErrNoRows {
+		return ports.Snapshot{}, fmt.Errorf("load feed offset: %w", err)
 	}
-	if err != nil {
-		return 0, fmt.Errorf("load feed offset: %w", err)
-	}
-	return offset, nil
-}
 
-func (s *State) SaveOffset(ctx context.Context, offset int64) error {
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO satellite_feed_offset (consumer, offset_value) VALUES ($1, $2)
-		 ON CONFLICT (consumer) DO UPDATE SET offset_value = EXCLUDED.offset_value`,
-		consumerName, offset)
+	rows, err := s.pool.Query(ctx, `SELECT name, value FROM satellite_meta`)
 	if err != nil {
-		return fmt.Errorf("save feed offset: %w", err)
+		return ports.Snapshot{}, fmt.Errorf("query meta: %w", err)
 	}
-	return nil
-}
+	for rows.Next() {
+		var name, value string
+		if err := rows.Scan(&name, &value); err != nil {
+			rows.Close()
+			return ports.Snapshot{}, fmt.Errorf("scan meta: %w", err)
+		}
+		switch {
+		case name == metaSession:
+			snapshot.Session = value
+		case name == metaWatermark:
+			if at, err := time.Parse(time.RFC3339, value); err == nil {
+				snapshot.Watermark = at.UTC()
+			}
+		case len(name) > len(counterPrefix) && name[:len(counterPrefix)] == counterPrefix:
+			if number, err := strconv.ParseInt(value, 10, 64); err == nil {
+				snapshot.Counters[name[len(counterPrefix):]] = number
+			}
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return ports.Snapshot{}, fmt.Errorf("read meta: %w", err)
+	}
 
-func (s *State) Detections(ctx context.Context) ([]domain.Detection, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT satellite, acq_date, acq_time, latitude, longitude, raw_latitude, raw_longitude, confidence, frp
-		 FROM satellite_detections ORDER BY detection_key`)
+	rows, err = s.pool.Query(ctx,
+		`SELECT satellite, acq_date, acq_time, latitude, longitude, raw_latitude, raw_longitude, confidence, frp, first_offset
+		 FROM satellite_detections ORDER BY first_offset, detection_key`)
 	if err != nil {
-		return nil, fmt.Errorf("query detections: %w", err)
+		return ports.Snapshot{}, fmt.Errorf("query detections: %w", err)
 	}
-	defer rows.Close()
-
-	var detections []domain.Detection
 	for rows.Next() {
 		var (
 			detection  domain.Detection
@@ -106,61 +123,27 @@ func (s *State) Detections(ctx context.Context) ([]domain.Detection, error) {
 		)
 		if err := rows.Scan(&satellite, &detection.AcqDate, &detection.AcqTime,
 			&detection.Latitude, &detection.Longitude, &detection.RawLatitude, &detection.RawLongitude,
-			&confidence, &detection.FRP); err != nil {
-			return nil, fmt.Errorf("scan detection: %w", err)
+			&confidence, &detection.FRP, &detection.FirstOffset); err != nil {
+			rows.Close()
+			return ports.Snapshot{}, fmt.Errorf("scan detection: %w", err)
 		}
 		detection.Satellite = domain.Satellite(satellite)
 		detection.Confidence = domain.Confidence(confidence)
-		detections = append(detections, detection)
+		snapshot.Detections = append(snapshot.Detections, detection)
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read detections: %w", err)
+		return ports.Snapshot{}, fmt.Errorf("read detections: %w", err)
 	}
-	return detections, nil
-}
 
-func (s *State) SaveDetections(ctx context.Context, detections []domain.Detection) error {
-	tx, err := s.pool.Begin(ctx)
+	rows, err = s.pool.Query(ctx,
+		`SELECT source_ref_id, occurred_at, area_name, latitude, longitude, detection_count,
+		        satellites, max_confidence, total_frp, severity, detection_keys
+		 FROM satellite_fires WHERE status = $1 ORDER BY source_ref_id`, domain.StatusActive)
 	if err != nil {
-		return fmt.Errorf("begin detections transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx, `DELETE FROM satellite_detections`); err != nil {
-		return fmt.Errorf("clear detections: %w", err)
-	}
-	for _, detection := range detections {
-		observedAt, err := detection.Time()
-		if err != nil {
-			return fmt.Errorf("save detection %q: %w", detection.Key(), err)
-		}
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO satellite_detections
-			 (detection_key, satellite, acq_date, acq_time, latitude, longitude, raw_latitude, raw_longitude, confidence, frp, observed_at)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-			detection.Key(), string(detection.Satellite), detection.AcqDate, detection.AcqTime,
-			detection.Latitude, detection.Longitude, detection.RawLatitude, detection.RawLongitude,
-			string(detection.Confidence), detection.FRP, observedAt); err != nil {
-			return fmt.Errorf("insert detection %q: %w", detection.Key(), err)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit detections: %w", err)
-	}
-	return nil
-}
-
-func (s *State) Fires(ctx context.Context) ([]domain.Fire, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT source_ref_id, occurred_at, area_name, latitude, longitude,
-		        detection_count, satellites, max_confidence, total_frp, severity
-		 FROM satellite_fires ORDER BY source_ref_id`)
-	if err != nil {
-		return nil, fmt.Errorf("query fires: %w", err)
+		return ports.Snapshot{}, fmt.Errorf("query fires: %w", err)
 	}
 	defer rows.Close()
-
-	var fires []domain.Fire
 	for rows.Next() {
 		var (
 			fire          domain.Fire
@@ -170,87 +153,138 @@ func (s *State) Fires(ctx context.Context) ([]domain.Fire, error) {
 		)
 		if err := rows.Scan(&fire.SourceRefID, &fire.OccurredAt, &fire.AreaName, &fire.Latitude,
 			&fire.Longitude, &fire.DetectionCount, &satellites, &maxConfidence,
-			&fire.TotalFRP, &severity); err != nil {
-			return nil, fmt.Errorf("scan fire: %w", err)
+			&fire.TotalFRP, &severity, &fire.DetectionKeys); err != nil {
+			return ports.Snapshot{}, fmt.Errorf("scan fire: %w", err)
 		}
-		fire.Satellites = make([]domain.Satellite, len(satellites))
-		for i, satellite := range satellites {
-			fire.Satellites[i] = domain.Satellite(satellite)
+		fire.Status = domain.StatusActive
+		fire.OccurredAt = fire.OccurredAt.UTC()
+		for _, satellite := range satellites {
+			fire.Satellites = append(fire.Satellites, domain.Satellite(satellite))
 		}
 		fire.MaxConfidence = domain.Confidence(maxConfidence)
 		fire.Severity = domain.Severity(severity)
-		fires = append(fires, fire)
+		snapshot.Fires = append(snapshot.Fires, fire)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read fires: %w", err)
+		return ports.Snapshot{}, fmt.Errorf("read fires: %w", err)
 	}
-	if len(fires) == 0 {
-		return nil, nil
-	}
-
-	rows, err = s.pool.Query(ctx,
-		`SELECT source_ref_id, detection_key FROM satellite_fire_detections
-		 ORDER BY source_ref_id, detection_key`)
-	if err != nil {
-		return nil, fmt.Errorf("query fire detections: %w", err)
-	}
-	defer rows.Close()
-
-	keys := make(map[string][]string, len(fires))
-	for rows.Next() {
-		var sourceRefID, detectionKey string
-		if err := rows.Scan(&sourceRefID, &detectionKey); err != nil {
-			return nil, fmt.Errorf("scan fire detection: %w", err)
-		}
-		keys[sourceRefID] = append(keys[sourceRefID], detectionKey)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read fire detections: %w", err)
-	}
-	for i := range fires {
-		fires[i].DetectionKeys = keys[fires[i].SourceRefID]
-	}
-	return fires, nil
+	return snapshot, nil
 }
 
-func (s *State) SaveFires(ctx context.Context, fires []domain.Fire) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin fires transaction: %w", err)
+// Commit writes the batch and the offset in one transaction. Statements are
+// pipelined, so a burst of several hundred detections costs one round trip.
+func (s *State) Commit(ctx context.Context, change ports.Batch) error {
+	batch := &pgx.Batch{}
+	for _, detection := range change.UpsertDetections {
+		observedAt, err := detection.Time()
+		if err != nil {
+			return fmt.Errorf("save detection %q: %w", detection.Key(), err)
+		}
+		batch.Queue(
+			`INSERT INTO satellite_detections
+			 (detection_key, satellite, acq_date, acq_time, latitude, longitude, raw_latitude, raw_longitude, confidence, frp, observed_at, first_offset)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			 ON CONFLICT (detection_key) DO UPDATE SET confidence = EXCLUDED.confidence, frp = EXCLUDED.frp`,
+			detection.Key(), string(detection.Satellite), detection.AcqDate, detection.AcqTime,
+			detection.Latitude, detection.Longitude, detection.RawLatitude, detection.RawLongitude,
+			string(detection.Confidence), detection.FRP, observedAt, detection.FirstOffset)
 	}
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx, `DELETE FROM satellite_fire_detections`); err != nil {
-		return fmt.Errorf("clear fire detections: %w", err)
+	if len(change.DeleteDetections) > 0 {
+		batch.Queue(`DELETE FROM satellite_detections WHERE detection_key = ANY($1)`, change.DeleteDetections)
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM satellite_fires`); err != nil {
-		return fmt.Errorf("clear fires: %w", err)
-	}
-	for _, fire := range fires {
+	for _, fire := range change.Fires {
 		satellites := make([]string, len(fire.Satellites))
 		for i, satellite := range fire.Satellites {
 			satellites[i] = string(satellite)
 		}
-		if _, err := tx.Exec(ctx,
+		keys := fire.DetectionKeys
+		if keys == nil {
+			keys = []string{}
+		}
+		batch.Queue(
 			`INSERT INTO satellite_fires
 			 (source_ref_id, occurred_at, area_name, latitude, longitude, detection_count,
-			  satellites, max_confidence, total_frp, severity)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+			  satellites, max_confidence, total_frp, severity, status, detection_keys, updated_at)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now())
+			 ON CONFLICT (source_ref_id) DO UPDATE SET
+			   occurred_at = EXCLUDED.occurred_at, area_name = EXCLUDED.area_name,
+			   latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude,
+			   detection_count = EXCLUDED.detection_count, satellites = EXCLUDED.satellites,
+			   max_confidence = EXCLUDED.max_confidence, total_frp = EXCLUDED.total_frp,
+			   severity = EXCLUDED.severity, status = EXCLUDED.status,
+			   detection_keys = EXCLUDED.detection_keys, updated_at = now()`,
 			fire.SourceRefID, fire.OccurredAt, fire.AreaName, fire.Latitude, fire.Longitude,
 			fire.DetectionCount, satellites, string(fire.MaxConfidence), fire.TotalFRP,
-			string(fire.Severity)); err != nil {
-			return fmt.Errorf("insert fire %q: %w", fire.SourceRefID, err)
-		}
-		for _, detectionKey := range fire.DetectionKeys {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO satellite_fire_detections (source_ref_id, detection_key) VALUES ($1,$2)`,
-				fire.SourceRefID, detectionKey); err != nil {
-				return fmt.Errorf("insert fire %q detection %q: %w", fire.SourceRefID, detectionKey, err)
-			}
+			string(fire.Severity), fire.Status, keys)
+	}
+	for _, late := range change.Late {
+		batch.Queue(
+			`INSERT INTO satellite_late_detections (detection_key, feed_offset, acquired_at, watermark)
+			 VALUES ($1,$2,$3,$4) ON CONFLICT (feed_offset, detection_key) DO NOTHING`,
+			late.Key, late.Offset, late.AcquiredAt, late.Watermark)
+	}
+	meta := func(name, value string) {
+		batch.Queue(`INSERT INTO satellite_meta (name, value) VALUES ($1,$2)
+		             ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value`, name, value)
+	}
+	if !change.Watermark.IsZero() {
+		meta(metaWatermark, change.Watermark.UTC().Format(time.RFC3339))
+	}
+	for name, value := range change.Counters {
+		meta(counterPrefix+name, strconv.FormatInt(value, 10))
+	}
+	batch.Queue(
+		`INSERT INTO satellite_feed_offset (consumer, offset_value) VALUES ($1, $2)
+		 ON CONFLICT (consumer) DO UPDATE SET offset_value = EXCLUDED.offset_value`,
+		consumerName, change.Offset)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin commit: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	results := tx.SendBatch(ctx, batch)
+	for i := 0; i < batch.Len(); i++ {
+		if _, err := results.Exec(); err != nil {
+			_ = results.Close()
+			return fmt.Errorf("commit statement %d: %w", i, err)
 		}
 	}
+	if err := results.Close(); err != nil {
+		return fmt.Errorf("close commit batch: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit fires: %w", err)
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// Reset starts a new feed session: the working set, fires, late records,
+// watermark and counters of the previous session are dropped and the offset
+// returns to 0.
+func (s *State) Reset(ctx context.Context, session string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin reset: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	for _, statement := range []string{
+		`DELETE FROM satellite_detections WHERE true`,
+		`DELETE FROM satellite_fire_detections WHERE true`,
+		`DELETE FROM satellite_fires WHERE true`,
+		`DELETE FROM satellite_late_detections WHERE true`,
+		`DELETE FROM satellite_meta WHERE true`,
+		`DELETE FROM satellite_feed_offset WHERE true`,
+	} {
+		if _, err := tx.Exec(ctx, statement); err != nil {
+			return fmt.Errorf("reset state: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO satellite_meta (name, value) VALUES ($1,$2)`, metaSession, session); err != nil {
+		return fmt.Errorf("save session: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit reset: %w", err)
 	}
 	return nil
 }

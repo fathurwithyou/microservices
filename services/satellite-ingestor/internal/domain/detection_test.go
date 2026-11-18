@@ -77,7 +77,9 @@ func TestDetectionTime(t *testing.T) {
 			want:  time.Date(2024, 6, 30, 14, 35, 0, 0, time.UTC),
 		},
 		{name: "bad date", date: "30-06-2024", clock: "1435", wantErr: true},
-		{name: "bad clock", date: "2024-06-30", clock: "14:35", wantErr: true},
+		{name: "unpadded", date: "2024-06-30", clock: "243", want: time.Date(2024, 6, 30, 2, 43, 0, 0, time.UTC)},
+		{name: "colon", date: "2024-06-30", clock: "14:35", want: time.Date(2024, 6, 30, 14, 35, 0, 0, time.UTC)},
+		{name: "bad clock", date: "2024-06-30", clock: "2575", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

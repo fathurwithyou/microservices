@@ -50,6 +50,42 @@ const aggregatorServiceConfig = `{
   }]
 }`
 
+// readAttemptTimeout bounds one attempt of an idempotent read. An instance
+// whose node was powered off never answers and never resets the connection,
+// and round_robin keeps handing it calls until the keepalive pings notice
+// (~13 s). Capping each attempt turns that silence into DEADLINE_EXCEEDED so
+// the retry lands on the next instance, and the HTTP request still answers
+// within its own timeout instead of 502. A variable so tests can shorten it.
+var readAttemptTimeout = 2 * time.Second
+
+// retryRead runs an idempotent read: the first attempt is capped at
+// readAttemptTimeout and, when it only timed out, a second attempt gets the
+// rest of the caller's deadline. The cap exists to escape a silent peer, so
+// it is not applied twice: a slow but live instance still gets the remaining
+// time on the retry. Any other failure is returned as is.
+func retryRead[T any](ctx context.Context, call func(context.Context) (T, error)) (T, error) {
+	attemptCtx, cancel := context.WithTimeout(ctx, readAttemptTimeout)
+	result, err := call(attemptCtx)
+	cancel()
+	if err == nil || status.Code(err) != codes.DeadlineExceeded || ctx.Err() != nil {
+		return result, err
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < readAttemptTimeout/2 {
+		return result, err
+	}
+	return call(ctx)
+}
+
+// authServiceConfig retries the idempotent token validation once the
+// transport reports UNAVAILABLE, e.g. right after the keepalive pings have
+// found the Auth pod gone and the connection is being re-established.
+const authServiceConfig = `{
+  "methodConfig": [{
+    "name": [{"service": "bnpb.auth.Auth", "method": "ValidateToken"}],
+    "retryPolicy": {"maxAttempts": 3, "initialBackoff": "0.05s", "maxBackoff": "0.5s", "backoffMultiplier": 2, "retryableStatusCodes": ["UNAVAILABLE"]}
+  }]
+}`
+
 // Dial opens gRPC connections to the aggregator and auth services.
 func Dial(aggregatorAddress, authAddress, internalServiceToken string) (*Clients, error) {
 	aggregatorConnection, err := grpc.NewClient(aggregatorAddress,
@@ -63,7 +99,16 @@ func Dial(aggregatorAddress, authAddress, internalServiceToken string) (*Clients
 	if err != nil {
 		return nil, fmt.Errorf("dial aggregator: %w", err)
 	}
-	authConnection, err := grpc.NewClient(authAddress, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+	// Without keepalive a powered-off Auth node left this connection "ready"
+	// for the TCP retransmit timeout (~15 min): every token validation hung
+	// until the request deadline and the gateway answered 502 for all of that
+	// time, even after Auth was rescheduled (P1.4 run, 17 Nov).
+	authConnection, err := grpc.NewClient(authAddress,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithDefaultServiceConfig(authServiceConfig),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 10 * time.Second, Timeout: 3 * time.Second, PermitWithoutStream: true}),
+	)
 	if err != nil {
 		_ = aggregatorConnection.Close()
 		return nil, fmt.Errorf("dial auth: %w", err)
@@ -114,8 +159,12 @@ func (c *authClient) Validate(ctx context.Context, accessToken string) (*ports.V
 }
 
 // validate also returns the token's expiry so callers can cache the result.
+// It goes through retryRead: validation is idempotent, and a silent Auth peer
+// must cost one capped attempt, not the whole request deadline.
 func (c *authClient) validate(ctx context.Context, accessToken string) (*ports.ValidatedToken, time.Time, error) {
-	validated, err := c.client.ValidateToken(withInternalMetadata(ctx, c.internalServiceToken), &authpb.ValidateTokenRequest{AccessToken: accessToken})
+	validated, err := retryRead(ctx, func(ctx context.Context) (*authpb.ValidatedToken, error) {
+		return c.client.ValidateToken(withInternalMetadata(ctx, c.internalServiceToken), &authpb.ValidateTokenRequest{AccessToken: accessToken})
+	})
 	if err != nil {
 		if status.Code(err) == codes.Unauthenticated {
 			return nil, time.Time{}, ports.ErrInvalidToken
@@ -137,13 +186,16 @@ type aggregatorClient struct {
 }
 
 func (c *aggregatorClient) List(ctx context.Context, filter ports.HazardFilter) (ports.HazardPage, error) {
-	response, err := c.client.ListHazards(withInternalMetadata(ctx, c.internalServiceToken), &aggregatorpb.ListHazardsRequest{
-		Source:     sourceProto(filter.Source),
-		HazardType: hazardTypeProto(filter.HazardType),
-		Severity:   severityProto(filter.Severity),
-		PageSize:   filter.PageSize,
-		PageToken:  filter.PageToken,
-		Raw:        filter.Raw,
+	var header metadata.MD
+	response, err := retryRead(ctx, func(ctx context.Context) (*aggregatorpb.ListHazardsResponse, error) {
+		return c.client.ListHazards(withInternalMetadata(ctx, c.internalServiceToken), &aggregatorpb.ListHazardsRequest{
+			Source:     sourceProto(filter.Source),
+			HazardType: hazardTypeProto(filter.HazardType),
+			Severity:   severityProto(filter.Severity),
+			PageSize:   filter.PageSize,
+			PageToken:  filter.PageToken,
+			Raw:        filter.Raw,
+		}, grpc.Header(&header))
 	})
 	if err != nil {
 		return ports.HazardPage{}, grpcError(err)
@@ -155,11 +207,14 @@ func (c *aggregatorClient) List(ctx context.Context, filter ports.HazardFilter) 
 	return ports.HazardPage{
 		Hazards: hazards, NextPageToken: response.GetNextPageToken(),
 		Partial: response.GetPartial(), UnavailableUnits: response.GetUnavailableUnits(),
+		StaleSince: staleSince(header),
 	}, nil
 }
 
 func (c *aggregatorClient) GetHazard(ctx context.Context, hazardID string, raw bool) (ports.Hazard, error) {
-	event, err := c.client.GetHazard(withInternalMetadata(ctx, c.internalServiceToken), &aggregatorpb.GetHazardRequest{HazardId: hazardID, Raw: raw})
+	event, err := retryRead(ctx, func(ctx context.Context) (*eventspb.HazardEvent, error) {
+		return c.client.GetHazard(withInternalMetadata(ctx, c.internalServiceToken), &aggregatorpb.GetHazardRequest{HazardId: hazardID, Raw: raw})
+	})
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
 			return ports.Hazard{}, ports.ErrNotFound
@@ -170,7 +225,9 @@ func (c *aggregatorClient) GetHazard(ctx context.Context, hazardID string, raw b
 }
 
 func (c *aggregatorClient) Status(ctx context.Context, source string) (ports.SourceStatus, error) {
-	response, err := c.client.GetSourceStatus(withInternalMetadata(ctx, c.internalServiceToken), &aggregatorpb.GetSourceStatusRequest{Source: sourceProto(source)})
+	response, err := retryRead(ctx, func(ctx context.Context) (*eventspb.SourceStatus, error) {
+		return c.client.GetSourceStatus(withInternalMetadata(ctx, c.internalServiceToken), &aggregatorpb.GetSourceStatusRequest{Source: sourceProto(source)})
+	})
 	if err != nil {
 		return ports.SourceStatus{}, grpcError(err)
 	}
@@ -195,11 +252,14 @@ func (c *aggregatorClient) SubmitFieldReport(ctx context.Context, input ports.Fi
 }
 
 func (c *aggregatorClient) Analytics(ctx context.Context, filter ports.AnalyticsFilter) (ports.Analytics, error) {
-	response, err := c.client.GetAnalytics(withInternalMetadata(ctx, c.internalServiceToken), &aggregatorpb.AnalyticsRequest{Since: filter.Since, Until: filter.Until, Bucket: filter.Bucket})
+	var header metadata.MD
+	response, err := retryRead(ctx, func(ctx context.Context) (*aggregatorpb.AnalyticsResponse, error) {
+		return c.client.GetAnalytics(withInternalMetadata(ctx, c.internalServiceToken), &aggregatorpb.AnalyticsRequest{Since: filter.Since, Until: filter.Until, Bucket: filter.Bucket}, grpc.Header(&header))
+	})
 	if err != nil {
 		return ports.Analytics{}, grpcError(err)
 	}
-	result := ports.Analytics{Partial: response.GetPartial(), UnavailableUnits: response.GetUnavailableUnits()}
+	result := ports.Analytics{AsOf: response.GetAsOf(), Partial: response.GetPartial(), UnavailableUnits: response.GetUnavailableUnits(), StaleSince: staleSince(header)}
 	for _, item := range response.GetHazardTypes() {
 		result.HazardTypes = append(result.HazardTypes, ports.AnalyticsTypeCount{HazardType: analyticsCategory(item.GetCategory(), item.GetHazardType()), Count: item.GetCount()})
 	}
@@ -213,6 +273,19 @@ func (c *aggregatorClient) Analytics(ctx context.Context, filter ports.Analytics
 		result.Buckets = append(result.Buckets, ports.AnalyticsBucket{BucketStart: item.GetBucketStart(), HazardType: analyticsCategory(item.GetCategory(), item.GetHazardType()), Count: item.GetCount()})
 	}
 	return result, nil
+}
+
+// staleSinceHeader is set by the Aggregator on an answer it served from
+// memory because its store did not answer: the time (RFC3339) that data was
+// read. Such an answer is also marked partial in the message itself; the
+// header only adds its age, without a change to the contract.
+const staleSinceHeader = "x-stale-since"
+
+func staleSince(header metadata.MD) string {
+	if values := header.Get(staleSinceHeader); len(values) > 0 {
+		return values[0]
+	}
+	return ""
 }
 
 // analyticsCategory prefers the aggregator's dashboard category (which adds

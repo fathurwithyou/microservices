@@ -32,3 +32,11 @@ REVOKE CREATE ON SCHEMA coastal_db.public FROM public;
 -- (SHOW RANGE ... FOR ROW, crdb_internal.gossip_nodes). This is cluster
 -- metadata, not data of another database.
 GRANT SYSTEM VIEWCLUSTERMETADATA TO aggregator;
+
+-- server.clock.forward_jump_check.enabled stays off. It was tried on 18 Nov so
+-- that a node whose clock jumps forward stops instead of pushing the cluster's
+-- hybrid clock ahead. On this testbed (four VMs on one busy host) a vCPU stall
+-- of a few hundred milliseconds already counts as a forward jump: three of the
+-- four nodes panicked at the same instant and crash-looped. A forward clock
+-- jump on a store node is therefore a declared limit, see docs/M2.md.
+SET CLUSTER SETTING server.clock.forward_jump_check.enabled = false;

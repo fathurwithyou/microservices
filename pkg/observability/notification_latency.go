@@ -14,6 +14,14 @@ const (
 	// LatencyFromIngested starts the clock when the aggregator stored the
 	// event. It isolates the outbox, broker, and consumer pipeline.
 	LatencyFromIngested = "ingested_at"
+	// LatencyFromReceived starts the clock when the ingestor finished
+	// reading the source response that carried the event (wall clock,
+	// nanosecond resolution, the received_at attribute). It is the only
+	// reference taken on our own clock at the moment the data first reached
+	// us, so it is the one a "delivered within N seconds" target is checked
+	// against; the source's own exposure delay (at most one poll interval
+	// while the ingestor is polling) comes on top.
+	LatencyFromReceived = "received_at"
 )
 
 var (

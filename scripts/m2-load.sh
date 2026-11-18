@@ -23,18 +23,35 @@ mkdir -p "$(dirname "$K6_SUMMARY_PATH")"
 : >"$TIMELINE"
 mark() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$TIMELINE"; }
 
+# Under 10k VUs the API server can be slow to answer; retry each kubectl
+# call instead of aborting the scenario half way.
+kk() {
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    kubectl --request-timeout=20s -n "$NAMESPACE" "$@" && return 0
+    # stderr: kk's stdout may be captured as a command result.
+    mark "kubectl $1 failed (attempt $attempt), retrying" >&2
+    sleep 5
+  done
+  return 1
+}
+k6_pid=""
+trap '[ -n "$k6_pid" ] && kill "$k6_pid" 2>/dev/null || true' EXIT
+
 scale() {
-  kubectl -n "$NAMESPACE" scale "deployment/$DEPLOYMENT" --replicas="$1" >/dev/null
+  kk scale "deployment/$DEPLOYMENT" --replicas="$1" >/dev/null
   mark "scaled $DEPLOYMENT to $1"
 }
 
 scale 3
-kubectl -n "$NAMESPACE" rollout status "deployment/$DEPLOYMENT" --timeout=180s >/dev/null
+kk rollout status "deployment/$DEPLOYMENT" --timeout=180s >/dev/null
 mark "k6 start: ramp $RAMP to $VUS VUs, hold $HOLD"
+# Secrets reach k6 through the environment (k6 exposes it as __ENV), not
+# through -e, so they never appear in the process list.
+export FIELD_TEAM_CLIENT_SECRET
 k6 run --quiet \
   -e BASE_URL="$BASE_URL" -e BASE_URLS="$BASE_URLS" \
   -e VUS="$VUS" -e RAMP="$RAMP" -e DURATION="$HOLD" -e LABEL="p2-scaling-and-rolling-update" \
-  -e FIELD_TEAM_CLIENT_SECRET="$FIELD_TEAM_CLIENT_SECRET" \
   -e K6_SUMMARY_PATH="$K6_SUMMARY_PATH" \
   tests/load/k6/m2-sustained.js >/dev/null &
 k6_pid=$!
@@ -44,13 +61,14 @@ scale 5
 sleep 35
 scale 2
 sleep 25
-container_images=$(kubectl -n "$NAMESPACE" get "deployment/$DEPLOYMENT" -o jsonpath='{range .spec.template.spec.initContainers[*]}{.name}{"\n"}{end}{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}' | sed "s|\$|=$NEW_IMAGE|" | tr '\n' ' ')
+container_images=$(kk get "deployment/$DEPLOYMENT" -o jsonpath='{range .spec.template.spec.initContainers[*]}{.name}{"\n"}{end}{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}' | sed "s|\$|=$NEW_IMAGE|" | tr '\n' ' ')
 mark "version change to $NEW_IMAGE"
 # shellcheck disable=SC2086
-kubectl -n "$NAMESPACE" set image "deployment/$DEPLOYMENT" $container_images >/dev/null
-kubectl -n "$NAMESPACE" rollout status "deployment/$DEPLOYMENT" --timeout=180s >/dev/null
+kk set image "deployment/$DEPLOYMENT" $container_images >/dev/null
+kk rollout status "deployment/$DEPLOYMENT" --timeout=300s >/dev/null
 mark "version change complete"
 
 wait "$k6_pid" || true
+k6_pid=""
 mark "k6 finished"
 printf 'load evidence: %s\n' "$K6_SUMMARY_PATH"
