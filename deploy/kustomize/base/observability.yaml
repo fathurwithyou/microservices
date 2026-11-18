@@ -244,7 +244,9 @@ spec:
           volumeMounts:
             - { name: config, mountPath: /etc/tempo, readOnly: true }
           readinessProbe: { httpGet: { path: /ready, port: http }, initialDelaySeconds: 10 }
-          livenessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 30 }
+          # /ready answers slowly while Tempo flushes blocks; the default 1 s
+          # timeout restarted it about a hundred times in two days.
+          livenessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 30, timeoutSeconds: 10, failureThreshold: 6 }
           resources:
             requests: { memory: 128Mi }
             limits: { memory: 256Mi }
@@ -309,15 +311,15 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (job) (rate(http_requests_total[1m]))",
-              "legendFormat": "{{job}}"
+              "expr": "sum by (instance) (rate(http_requests_total[1m]))",
+              "legendFormat": "{{instance}}"
             }
           ]
         },
         {
           "id": 2,
-          "title": "HTTP 5xx ratio",
-          "type": "stat",
+          "title": "HTTP 5xx ratio by service",
+          "type": "timeseries",
           "gridPos": {
             "h": 8,
             "w": 6,
@@ -331,7 +333,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 0.001)"
+              "expr": "sum by (instance) (rate(http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum by (instance) (rate(http_requests_total[5m])), 0.001)"
             }
           ],
           "fieldConfig": {
@@ -375,8 +377,8 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "histogram_quantile(0.95, sum by (le, job) (rate(http_request_duration_seconds_bucket[5m])))",
-              "legendFormat": "{{job}}"
+              "expr": "histogram_quantile(0.95, sum by (le, instance) (rate(http_request_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{instance}}"
             }
           ]
         },
@@ -475,6 +477,134 @@ data:
               "refId": "A",
               "expr": "max(satellite_feed_lag_events)",
               "legendFormat": "lag"
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "title": "Satellite feed offsets: latest vs committed",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 24
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max(satellite_feed_latest_offset)",
+              "legendFormat": "feed latest"
+            },
+            {
+              "refId": "B",
+              "expr": "max(satellite_feed_committed_offset)",
+              "legendFormat": "committed"
+            },
+            {
+              "refId": "C",
+              "expr": "max(satellite_feed_speed)",
+              "legendFormat": "feed speed (x)"
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "title": "Satellite event-to-store latency",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 24
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(satellite_event_to_store_seconds_bucket[1m])))",
+              "legendFormat": "p95"
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(satellite_event_to_store_seconds_bucket[1m])))",
+              "legendFormat": "p50"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            }
+          }
+        },
+        {
+          "id": 10,
+          "title": "Satellite working set: fires, lone detections",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 32
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max(satellite_active_fires)",
+              "legendFormat": "active fires"
+            },
+            {
+              "refId": "B",
+              "expr": "max(satellite_single_detections)",
+              "legendFormat": "lone detections"
+            },
+            {
+              "refId": "C",
+              "expr": "max(satellite_working_detections)",
+              "legendFormat": "detections kept"
+            }
+          ]
+        },
+        {
+          "id": 11,
+          "title": "Satellite cumulative: late, low confidence, closed, gaps",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 32
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (name) (satellite_cumulative_count)",
+              "legendFormat": "{{name}}"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(satellite_feed_offset_gaps_total)",
+              "legendFormat": "offset gaps (must stay 0)"
+            },
+            {
+              "refId": "C",
+              "expr": "sum by (cause) (increase(satellite_feed_reconnects_total[5m]))",
+              "legendFormat": "reconnect {{cause}}"
             }
           ]
         }

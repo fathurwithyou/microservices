@@ -19,7 +19,9 @@ var ErrInvalidReport = errors.New("invalid field report")
 type Repository interface {
 	SaveFieldReport(context.Context, domain.FieldReport) (bool, error)
 	ListAcceptedFieldReports(context.Context, int) ([]domain.FieldReport, error)
-	MarkFieldReport(context.Context, string, domain.FieldReportStatus, time.Time) error
+	// MarkFieldReport moves an accepted report to its terminal state and
+	// returns true only for the one caller that made the transition.
+	MarkFieldReport(context.Context, string, domain.FieldReportStatus, time.Time) (bool, error)
 }
 
 // Service validates and durably accepts field reports.

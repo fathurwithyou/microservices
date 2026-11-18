@@ -35,6 +35,9 @@ deploy/kustomize/overlays/local/.kustomize/
 # k3d
 .k3d/
 
+# Generated earthquake catalogs (scripts/generate-earthquake-catalog.py)
+output/catalog/
+
 # Temporary test environments
 tests/e2e/.env*
 tests/e2e/.env_example

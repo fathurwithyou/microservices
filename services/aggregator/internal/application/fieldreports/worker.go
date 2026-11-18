@@ -75,15 +75,23 @@ func (w *Worker) dispatch(ctx context.Context) {
 		return
 	}
 	for _, report := range reports {
-		status := domain.FieldReportProcessed
+		// Claim first: every instance lists the same accepted reports, and only
+		// the one whose conditional transition succeeds may run the
+		// downstream effect, so a report is never processed twice. A crash
+		// after the claim can lose the (log and metric) effect but never the
+		// report, which stays stored with status processed.
+		won, err := w.repository.MarkFieldReport(ctx, report.ReportID, domain.FieldReportProcessed, w.now())
+		if err != nil {
+			w.logger.Error("field report claim failed", "component", "field-reports", "report_id", report.ReportID, "error", err)
+			continue
+		}
+		if !won {
+			continue
+		}
 		if w.processor != nil {
 			if err := w.processor.Process(ctx, report); err != nil {
-				status = domain.FieldReportFailed
 				w.logger.Error("field report processing failed", "component", "field-reports", "report_id", report.ReportID, "error", err)
 			}
-		}
-		if err := w.repository.MarkFieldReport(ctx, report.ReportID, status, w.now()); err != nil {
-			w.logger.Error("field report acknowledgement failed", "component", "field-reports", "report_id", report.ReportID, "error", err)
 		}
 	}
 }

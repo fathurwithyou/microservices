@@ -27,8 +27,12 @@ type RouterConfig struct {
 	State    *state.Runtime
 	Token    string
 	AdminKey string
-	Rand     *rand.Rand
-	Logger   *slog.Logger
+	// AdminOpen lets a caller without the admin key header through. The
+	// course Tester Agent calls the admin endpoints from inside the cluster
+	// and carries no credential of ours.
+	AdminOpen bool
+	Rand      *rand.Rand
+	Logger    *slog.Logger
 }
 
 // NewRouter builds the gin engine with shared middleware and PVMBG routes.
@@ -53,12 +57,21 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 		Status:   http.StatusUnauthorized,
 		Message:  "invalid PVMBG credential",
 	}), handler.volcanicReports)
-	admin := ginmw.RequireHeader(ginmw.HeaderAuth{
+	requireKey := ginmw.RequireHeader(ginmw.HeaderAuth{
 		Header:   adminKeyHeader,
 		Expected: cfg.AdminKey,
 		Status:   http.StatusForbidden,
 		Message:  "invalid admin credential",
 	})
+	admin := func(c *gin.Context) {
+		// A wrong key is always refused; only a missing key is let through,
+		// and only when the deployment opted in.
+		if cfg.AdminOpen && c.GetHeader(adminKeyHeader) == "" {
+			c.Next()
+			return
+		}
+		requireKey(c)
+	}
 	router.POST("/admin/schema-version", admin, handler.schemaVersion)
 	router.POST("/admin/outage", admin, handler.outage)
 	return router

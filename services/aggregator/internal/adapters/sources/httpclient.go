@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fathurwithyou/microservices/pkg/correlation"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
@@ -43,6 +44,9 @@ type ClientConfig struct {
 	// Logger receives outbound call logs. Defaults to slog.Default().
 	Logger *slog.Logger
 }
+
+// MaxResponseBytes bounds one upstream response body.
+const MaxResponseBytes = 8 << 20
 
 // ErrInvalidConfig is returned by New for missing required configuration.
 var ErrInvalidConfig = errors.New("sources: invalid config")
@@ -88,17 +92,49 @@ func (c *Client) Get(ctx context.Context, path, correlationID string) ([]map[str
 		return nil, fmt.Errorf("%s returned status %d", c.name, response.StatusCode)
 	}
 	// Bound one response so a broken or hostile upstream cannot exhaust the
-	// aggregator heap with a giant JSON document. Keep the body on decode
-	// failure so the poller can park it instead of discarding it.
-	body, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+	// aggregator heap with a giant JSON document. Read one byte past the
+	// limit to tell "exactly at the limit" from "too large". Keep the body on
+	// every decode failure so the poller can park it instead of discarding it.
+	body, err := io.ReadAll(io.LimitReader(response.Body, MaxResponseBytes+1))
 	if err != nil {
 		c.log(correlationID, started, response.StatusCode, err)
 		return nil, fmt.Errorf("%s read body: %w", c.name, err)
 	}
-	var result []map[string]json.RawMessage
-	if err := json.Unmarshal(body, &result); err != nil {
+	if len(body) > MaxResponseBytes {
+		err := fmt.Errorf("payload_too_large: response exceeds %d bytes; first %d bytes kept", MaxResponseBytes, MaxResponseBytes)
+		c.log(correlationID, started, response.StatusCode, err)
+		return nil, &domain.MalformedPayloadError{Body: body[:MaxResponseBytes], Err: err}
+	}
+	// Split the array first: only a body that is not a JSON array at all
+	// (truncated, wrong shape, too deep) is a whole-response failure. Each
+	// element is then validated on its own so one bad record cannot hide the
+	// valid ones next to it.
+	var elements []json.RawMessage
+	if err := json.Unmarshal(body, &elements); err != nil {
+		err = fmt.Errorf("invalid_json: %w", err)
 		c.log(correlationID, started, response.StatusCode, err)
 		return nil, &domain.MalformedPayloadError{Body: body, Err: err}
+	}
+	result := make([]map[string]json.RawMessage, 0, len(elements))
+	var bad []domain.MalformedRecord
+	for _, element := range elements {
+		// encoding/json silently replaces invalid UTF-8 with U+FFFD, which
+		// would store corrupted text as if it were valid. Reject it explicitly.
+		if !utf8.Valid(element) {
+			bad = append(bad, domain.MalformedRecord{Body: element, Err: errors.New("invalid_utf8: record is not valid UTF-8")})
+			continue
+		}
+		var record map[string]json.RawMessage
+		if err := json.Unmarshal(element, &record); err != nil {
+			bad = append(bad, domain.MalformedRecord{Body: element, Err: fmt.Errorf("invalid_json: %w", err)})
+			continue
+		}
+		result = append(result, record)
+	}
+	if len(bad) > 0 {
+		err := &domain.MalformedRecordsError{Records: bad}
+		c.log(correlationID, started, response.StatusCode, err)
+		return result, err
 	}
 	c.log(correlationID, started, response.StatusCode, nil)
 	return result, nil

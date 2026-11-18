@@ -1,0 +1,1542 @@
+% Laporan Milestone 2 IF4031, kelompok SidequestProxy.
+% Build (dari akar repositori):
+%   tectonic --outdir output/pdf docs/laporan-m2.tex \
+%     && mv output/pdf/laporan-m2.pdf output/pdf/IF4031_M2_SidequestProxy.pdf
+% Bagian yang belum final ditandai \pending{...}; setiap \pending didahului
+% komentar "% TODO-MAIN:" supaya mudah dicari (grep -n 'TODO-MAIN\|\\pending').
+\RequirePackage{iftex}
+\ifPDFTeX\else
+  % fairmeta.cls ditulis untuk pdfTeX; dua penyesuaian ini membuatnya dapat
+  % dibangun dengan XeTeX (tectonic) tanpa mengubah berkas kelas.
+  \AddToHook{package/microtype/after}{\renewcommand{\DisableLigatures}[2][]{}}
+  \providecommand{\pdfmapline}[1]{}
+\fi
+\PassOptionsToPackage{indonesian}{babel}
+\PassOptionsToPackage{table}{xcolor}
+\documentclass{fairmeta}
+
+\ifPDFTeX
+  \usepackage[utf8]{inputenc}
+\else
+  \usepackage{fontspec}
+  \setsansfont{Optimistic}[Path=assets/,Extension=.ttf,Scale=0.88,BoldFont=*,ItalicFont=*,BoldItalicFont=*]
+  \setmonofont{lmmonoprop10-regular.otf}[BoldFont=lmmonoproplt10-bold.otf,ItalicFont=lmmonoprop10-oblique.otf]
+\fi
+\usepackage{amsmath}
+\usepackage{tikz}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{listings}
+\usepackage{xurl}
+\usepackage{enumitem}
+\usepackage{adjustbox}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,backgrounds}
+
+\definecolor{fairamber}{HTML}{E29400}
+\definecolor{pendingred}{HTML}{C62828}
+\definecolor{okgreen}{HTML}{1B7F3B}
+\selectlanguage{indonesian}
+\addto\captionsindonesian{%
+  \renewcommand{\contentsname}{Daftar Isi}%
+  \renewcommand{\listfigurename}{Daftar Gambar}%
+  \renewcommand{\listtablename}{Daftar Tabel}%
+  \renewcommand{\figurename}{Gambar}%
+  \renewcommand{\tablename}{Tabel}%
+}
+\setcounter{secnumdepth}{2}
+\setcounter{tocdepth}{2}
+\sloppy\emergencystretch=3em
+\renewcommand{\arraystretch}{1.12}
+\captionsetup[table]{skip=5pt}
+\captionsetup[figure]{skip=6pt}
+\setlist{itemsep=1pt,topsep=3pt,parsep=1pt}
+
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\en}[1]{\textit{#1}}
+\newtcolorbox{evidencebox}[1]{
+  enhanced,breakable,
+  colback=metabg,
+  frame hidden,
+  borderline west={2pt}{0pt}{metablue},
+  arc=2mm,
+  left=2.5mm,right=2.5mm,top=1.5mm,bottom=1.5mm,
+  before skip=0.8em,after skip=0.8em,
+  title={#1},
+  fonttitle=\sffamily\bfseries\color{metafg},
+  attach boxed title to top left={xshift=1.5mm,yshift=-1mm},
+  boxed title style={colback=metabg,frame hidden}
+}
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  columns=fullflexible,
+  keepspaces=true,
+  breaklines=true,
+  breakatwhitespace=false,
+  frame=none,
+  backgroundcolor=\color{metabg},
+  xleftmargin=0.4em,
+  aboveskip=0.3em,
+  belowskip=0.3em
+}
+
+% --- penanda konten yang belum final ---------------------------------------
+\newtcbox{\pendingbox}{on line,enhanced,boxrule=0.6pt,colframe=pendingred,
+  colback=pendingred!6,arc=1.5pt,left=2pt,right=2pt,top=1pt,bottom=1pt,
+  boxsep=0pt,tcbox width=auto limited}
+\newsavebox{\pendingtmp}
+\newcommand{\pendinginner}[1]{\raggedright\color{pendingred}\sffamily\footnotesize\textbf{BELUM:} #1}
+% Pendek: kotak sebaris. Panjang: kotak selebar baris pada paragraf sendiri.
+\newcommand{\pending}[1]{%
+  \sbox{\pendingtmp}{\pendinginner{#1}}%
+  \ifdim\wd\pendingtmp<0.5\linewidth
+    \pendingbox{\pendinginner{#1}}%
+  \else
+    \ifhmode\par\fi\noindent\pendingbox{\pendinginner{#1}}\par
+  \fi}
+% Tangkapan layar: gambar asli dipakai otomatis begitu berkasnya ada.
+\newcommand{\shot}[2]{%
+  \IfFileExists{figures/m2/#1.png}%
+    {\includegraphics[width=\linewidth,height=0.40\textheight,keepaspectratio]{figures/m2/#1.png}}%
+    {#2}}
+
+% Tangkapan layar tinggi: hanya bagian atas (#3 = bagian tinggi yang dibuang dari bawah) supaya terbaca.
+\newcommand{\shottop}[3]{%
+  \IfFileExists{figures/m2/#1.png}%
+    {\adjustbox{trim=0 {#3\height} 0 0,clip,width=0.86\linewidth}{\includegraphics{figures/m2/#1.png}}}%
+    {#2}}
+
+% --- status kriteria dan rujukan bukti ---------------------------------------
+% Text evidence captured from the cluster, included verbatim.
+\newcommand{\textshot}[1]{\IfFileExists{#1}{\lstinputlisting[basicstyle=\ttfamily\fontsize{5.6}{6.6}\selectfont,breaklines=true,columns=fullflexible,frame=single,xleftmargin=2pt,xrightmargin=2pt]{#1}}{\pending{berkas #1 belum ada}}}
+\newcommand{\stok}{{\sffamily\footnotesize\color{okgreen}\textbf{TERPENUHI}}}
+\newcommand{\stpart}{{\sffamily\footnotesize\color{fairamber!85!black}\textbf{TERPENUHI DENGAN CATATAN}}}
+\newcommand{\stfail}{{\sffamily\footnotesize\color{pendingred}\textbf{TIDAK TERPENUHI}}}
+\newcommand{\sttodo}{{\sffamily\footnotesize\color{pendingred}\textbf{BELUM DIUJI}}}
+\newcommand{\krit}[2]{\par\medskip\noindent\textbf{Kriteria #1.} #2\enspace}
+\newcommand{\bukti}[1]{\par\smallskip\noindent{\footnotesize\textbf{Bukti:} #1\par}}
+\newcommand{\jawab}[1]{\par\medskip\noindent\textbf{Butir #1.}\enspace}
+
+\makeatletter
+\renewcommand{\mymaketitle}{%
+  \thispagestyle{empty}%
+  \tcbset{enhanced,frame hidden}%
+  \tcbset{left=0.5cm,right=0.5cm,top=0.5cm,bottom=0.5cm,arc=10pt}%
+  \tcbset{colback=metabg,before skip=0pt,grow to left by=1.5pt,grow to right by=1.5pt}%
+  \tcbset{overlay={\node[anchor=north east,at=(frame.north east),
+    xshift=-0.5cm,yshift=-0.45cm,fill=metafg,rounded corners=3pt,inner sep=5pt]
+    {\includegraphics[width=2.25cm]{assets/stei-logo.png}};}}%
+  \begin{tcolorbox}
+    \setlength{\parindent}{0cm}%
+    \setlength{\parskip}{0.5cm}%
+    {\setlength{\parskip}{0cm}%
+      \raggedright\nohyphens%
+      {\setstretch{1.35}\parbox{\dimexpr\linewidth-3.3cm\relax}{\titlelist}\par}%
+      \vskip 0.2cm%
+      \authorlist\par%
+      \vskip 0.2cm%
+      \affiliationlist\par%
+      \contributionlist\par%
+    }%
+    \abstractlist\par%
+    \vskip 0.5cm%
+    {\setlength{\parskip}{0cm}%
+      \ifdefempty{\metadatalist}{\vspace*{0.65cm}}{\metadatalist\par}%
+    }%
+  \end{tcolorbox}%
+  \tcbset{reset}%
+  \FloatBarrier
+}
+\makeatother
+
+\title{Sistem Koordinasi Data Kebencanaan yang Skalabel dan Tahan Kegagalan}
+\author[1]{Benedict Presley (13523067)}
+\author[1]{Muhammad Fathur Rizky (13523105)}
+\author[1]{Ahmad Wicaksono (13523121)}
+\affiliation[1]{Program Studi Teknik Informatika, Sekolah Teknik Elektro dan Informatika, Institut Teknologi Bandung}
+\metadata[Kelompok]{SidequestProxy}
+\metadata[Sistem]{Platform Koordinasi Kebencanaan BMKG--PVMBG--BNPB}
+\metadata[Mata kuliah]{IF4031 Arsitektur Aplikasi Terdistribusi, Milestone 2}
+\metadata[Email]{\email{13523067@std.stei.itb.ac.id};\ \email{13523105@std.stei.itb.ac.id};\ \email{13523121@std.stei.itb.ac.id}}
+\abstract{Milestone 2 memindahkan platform koordinasi kebencanaan M1 dari satu mesin ke klaster Kubernetes empat node berkernel terpisah dan mengujinya terhadap kehilangan node, jam yang bergeser, proses yang membeku, mitra data yang berubah tanpa pemberitahuan, dan beban 10.000 pengguna virtual. Canonical Store dipindahkan ke CockroachDB empat node dengan faktor replikasi tiga; Aggregator berjalan tiga instance dengan \textit{leader lease} berbasis jam basis data dan \textit{fencing token} yang diperiksa di dalam transaksi tulis; pesan yang tidak dapat diproses disimpan utuh di \textit{failure inbox} dan dapat diputar ulang; Sensor Pantai dibaca di belakang \textit{circuit breaker} dan validator kontrak. Pada run bukti terakhir, satu node \textit{worker} dimatikan paksa beserta disknya dihapus: 0 dari 636.184 HazardEvent hilang dan 3.944 dari 3.944 permintaan \textit{probe} dijawab tanpa 5xx maupun \textit{timeout}. Pengambilalihan \textit{leader} setelah \textit{crash} memerlukan 18,1 detik tanpa celah dan tanpa duplikat. Uji 10.000 pengguna virtual dengan perubahan jumlah instance 3--5--2 dan pergantian versi mencatat 1.328.554 permintaan dengan 0\% kesalahan di luar penolakan terkendali. Kriteria rasio \textit{throughput} tiga banding satu instance ($\geq 2{,}0\times$) tidak terpenuhi (0,97$\times$) dan dilaporkan apa adanya beserta penyebabnya. Problem 4 dibuktikan terhadap feed pengganti karena feed asisten baru menerima token kelompok pada sesi penilaian, dan \textit{game day} baru dijalankan dengan skenario latihan Tester Agent; bagian yang belum final ditandai secara eksplisit.\\[0.6em]\textbf{Kata kunci:} sharding, replikasi, leader lease, fencing token, failure inbox, circuit breaker, load shedding.}
+\hypersetup{pdftitle={Sistem Koordinasi Data Kebencanaan yang Skalabel dan Tahan Kegagalan (IF4031 M2)},pdfauthor={Benedict Presley; Muhammad Fathur Rizky; Ahmad Wicaksono}}
+
+\begin{document}
+\selectlanguage{indonesian}
+
+\hypersetup{pageanchor=false}
+\maketitle
+\clearpage
+\pagenumbering{roman}
+\hypersetup{pageanchor=true}
+
+\section*{Identitas Kelompok dan Kontribusi}
+\addcontentsline{toc}{section}{Identitas Kelompok dan Kontribusi}
+
+\textbf{Nama kelompok:} SidequestProxy. Nama dan NIM anggota tercantum pada halaman sampul. Tabel~\ref{tab:contributions} merinci pembagian kerja kelompok pada tiga kegiatan yang dinilai: perancangan, implementasi, dan penulisan laporan.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{\textbf{Pembagian kontribusi anggota pada Milestone 2.} Kolom mengikuti tiga kegiatan yang diminta spesifikasi.}
+\label{tab:contributions}
+\begin{tabularx}{\textwidth}{@{}L{3.6cm}L{1.6cm}YYY@{}}
+\toprule
+\textbf{Anggota} & \textbf{NIM} & \textbf{Perancangan} & \textbf{Implementasi} & \textbf{Penulisan laporan}\\
+\midrule
+% TODO-MAIN: kontribusi M2 Benedict Presley (perancangan, implementasi, penulisan)
+Benedict Presley & 13523067 & \multicolumn{3}{l}{\pending{diisi kelompok}}\\
+% TODO-MAIN: kontribusi M2 Muhammad Fathur Rizky (perancangan, implementasi, penulisan)
+Muhammad Fathur Rizky & 13523105 & \multicolumn{3}{l}{\pending{diisi kelompok}}\\
+% TODO-MAIN: kontribusi M2 Ahmad Wicaksono (perancangan, implementasi, penulisan)
+Ahmad Wicaksono & 13523121 & \multicolumn{3}{l}{\pending{diisi kelompok}}\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\clearpage
+\begingroup
+\hypersetup{linkcolor=metafg}
+\tableofcontents
+\listoffigures
+\listoftables
+\endgroup
+\clearpage
+\pagenumbering{arabic}
+\hypersetup{pageanchor=true}
+
+% =============================================================================
+\section{Pendahuluan}
+
+\subsection{Gambaran sistem dan lingkup Milestone 2}
+
+Sistem ini adalah kelanjutan langsung dari prototipe M1: sebuah \textit{gateway} koordinasi milik BNPB yang mengumpulkan data kebencanaan dari instansi lain, menormalkannya menjadi HazardEvent kanonik, menyimpannya, dan menyajikannya kepada klien hilir (Media, Tim Lapangan, BNPB Ops) serta kepada konsumen event. M1 membuktikan kebenaran fungsional pada satu mesin dengan dua sumber (BMKG dan PVMBG) dan kegagalan yang diumumkan. Milestone 2 (M2) menguji sistem yang sama pada banyak mesin yang masing-masing dapat hilang kapan saja \citep{spec-m2}.
+
+Lingkup M2 yang dikerjakan:
+\begin{enumerate}
+  \item \textbf{Platform.} Seluruh komponen BNPB berjalan di Kubernetes (k3s) pada empat node berupa VM berkernel terpisah, di namespace \code{sistem-informasi-kebencanaan-bnpb}, dipasang dengan satu perintah.
+  \item \textbf{Problem 1.} Canonical Store dipecah dan direplikasi (CockroachDB empat node, faktor replikasi tiga), bertahan terhadap kehilangan satu node beserta disknya, dan menerima node baru tanpa henti layanan; ditambah dashboard analitik.
+  \item \textbf{Problem 2.} Aggregator tiga instance di belakang satu titik masuk, dengan tepat satu instance yang mengambil data dari BMKG dan PVMBG walaupun jam node bergeser atau node membeku.
+  \item \textbf{Problem 3.} Penanganan perubahan skema yang tidak kompatibel dan pesan rusak melalui \textit{failure inbox}, serta jalur tulis \code{POST /field-reports} untuk Tim Lapangan.
+  \item \textbf{Problem 4.} Sumber baru SATELIT (deteksi \textit{hotspot} lewat Server-Sent Events) yang diolah menjadi HazardEvent WILDFIRE.
+  \item \textbf{Problem 5.} Sumber baru SENSOR\_PANTAI yang tidak dapat dipercaya, jalur notifikasi kritis, dan pelepasan beban berprioritas.
+\end{enumerate}
+
+Yang tidak termasuk lingkup: integrasi ke layanan produksi BMKG/PVMBG, node pada host fisik berbeda (seluruh VM berada di satu Mac mini; lihat Bagian~\ref{sec:topology}), dan ketiga butir bonus (Bagian~\ref{sec:bonus}).
+
+\subsection{Cara membaca bukti di laporan ini}
+\label{sec:evidence-convention}
+
+Setiap angka di laporan ini berasal dari berkas bukti yang dihasilkan skrip, bukan disalin dengan tangan. Ada dua kumpulan bukti:
+\begin{itemize}
+  \item \code{RUN/} adalah singkatan untuk \path{artifacts/m2/runs/m2-20261116T163247Z/}, folder yang ditulis \textit{runner} \path{scripts/m2-demo.sh} pada 16--18 November 2026. Berkas \path{RUN/SUMMARY.md} merangkum status tiap kriteria menurut \textit{runner} (27 PASS, 1 PARTIAL, 1 FAIL, 0 NOT RUN, ditambah 2 baris INFO; beberapa kriteria digabung dalam satu baris) dan \path{RUN/run.json} mencatat \textit{commit}, image, node, serta kode keluar tiap tahap.
+  \item \code{A15/} adalah singkatan untuk \path{artifacts/m2/} (subfolder \code{p1}, \code{p2}, \code{p3}, \code{p5}), bukti uji manual pertama pada 15 November 2026 dengan katalog 100.000 baris.
+\end{itemize}
+Bila kedua kumpulan memuat skenario yang sama, angka \code{RUN/} dipakai sebagai hasil akhir dan angka \code{A15/} disebut hanya bila menjelaskan keputusan desain atau memakai dataset yang lebih besar. Waktu ditulis dalam UTC kecuali disebut WIB. Direktori \code{artifacts/} tidak dilacak Git (\code{.gitignore}).
+% TODO-MAIN: cara folder bukti diserahkan ke asisten (lampiran/arsip/tautan)
+\pending{cara penyerahan folder bukti \texttt{artifacts/m2/} (lampiran pengumpulan)}
+
+Status kriteria memakai empat label: \stok, \stpart, \stfail, dan \sttodo. Label ini lebih ketat daripada label \textit{runner}: kriteria yang PASS di \path{RUN/SUMMARY.md} tetap kami tulis \stpart{} bila buktinya memakai pengganti (katalog sendiri, feed pengganti) atau hasilnya tidak penuh. Konten yang belum final diberi kotak merah seperti contoh di atas; tidak ada angka di dalam kotak tersebut yang boleh dibaca sebagai hasil.
+
+% =============================================================================
+\section{Deskripsi Umum Sistem}
+
+\subsection{Komponen dan tanggung jawab}
+
+Tabel~\ref{tab:components} mendaftar komponen M2. Komponen yang sudah ada di M1 mempertahankan tanggung jawabnya; kolom terakhir menunjukkan apa yang berubah.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Komponen sistem pada M2.} Label \code{role} adalah label pod yang diwajibkan spesifikasi untuk Tester Agent.}
+\label{tab:components}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{2.75cm}L{1.35cm}L{1.15cm}Y@{}}
+\toprule
+\textbf{Komponen} & \textbf{role} & \textbf{Replika} & \textbf{Tanggung jawab dan perubahan dari M1}\\
+\midrule
+Aggregator & aggregator & 3 & Polling BMKG/PVMBG (hanya pemegang \textit{lease}), pemetaan kanonik, Canonical Store, outbox, \textit{failure inbox}, inbox laporan lapangan, API gRPC, Audit API dan Ops API. M1: satu instance.\\
+CockroachDB & store & 4 & Penyimpanan \code{aggregator_db}, \code{satellite_db}, \code{coastal_db}; RF=3, TLS, PV \textit{local-path} per node. Baru; menggantikan PostgreSQL untuk Canonical Store.\\
+PostgreSQL & store & 1 & Hanya \code{auth_db} milik Auth Service. M1: juga menampung Canonical Store.\\
+Client API & api & 2 & Titik masuk HTTP klien; validasi token dan cakupan; \code{GET /hazards}, \code{/analytics}, \code{/coastal/latest}, \code{POST /field-reports}; \textit{load shedding} per kelas klien.\\
+Auth Service & api & 2 & Penerbitan dan validasi token. M1: satu instance.\\
+RabbitMQ & broker & 1 & \textit{Fan-out} event; exchange \code{hazard.events} dan \code{hazard.events.critical}.\\
+dashboard, notifier, portal consumer & consumer & 2 & Konsumen \textit{fan-out} M1, kini dua replika.\\
+critical-notifier & consumer & 2 & Baru: antrean terpisah untuk event pesisir kritis bagi Tim Lapangan.\\
+satellite-ingestor & sensor & 2 & Baru: membaca Feed Satelit (SSE), membentuk kebakaran, mengirim ke Aggregator. Aktif/siaga.\\
+coastal-ingestor & sensor & 2 & Baru: polling Sensor Pantai, validasi kontrak, karantina, \textit{circuit breaker}. Aktif/siaga.\\
+sensor-pantai & sensor & 1 & Image asisten, dikunci dengan \textit{digest}, tidak dimodifikasi.\\
+BMKG, PVMBG mock & mock & 1 & Tidak berubah selain mode baru \code{POST /admin/schema-version} pada PVMBG (Problem 3).\\
+Prometheus, OTel Collector, Tempo, Grafana & other & 1 & Baru: metrik, jejak, dan dashboard metrik.\\
+demo-api, demo-console & other & 1 & Sarana demonstrasi; memuat halaman dashboard analitik (Problem 1 kriteria 7).\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Perubahan kontrak}
+
+HazardEvent memperoleh nilai \code{hazard_type} WILDFIRE dan COASTAL serta \code{source} SATELIT dan SENSOR\_PANTAI. Client API menambah \code{POST /field-reports} (cakupan \code{field-reports:write}, jawaban 202), \code{GET /analytics}, dan \code{GET /coastal/latest}. Daftar \code{GET /hazards} kini berpaginasi \textit{keyset} lewat \code{page_token} dan membawa penanda \code{partial} serta \code{unavailable_units}; jawaban \code{/hazards} dan \code{/analytics} yang dilayani dari jawaban terakhir saat penyimpanan tidak menjawab juga membawa \code{stale_since}. Aggregator menambah RPC \code{SubmitHazard} untuk kedua ingestor, Audit API (Bagian~\ref{sec:audit}), dan Ops API untuk BNPB Internal Ops. Dashboard analitik menambah kategori tampilan TSUNAMI (event SEISMIC dengan \code{potential_tsunami=true} atau peringatan tsunami terkait); HazardEvent kanonik tetap \code{hazard_type=SEISMIC} seperti pemetaan M1, dan kategori bersifat eksklusif sehingga jumlahnya sama dengan jumlah event di Audit API.
+
+\subsection{Arsitektur dan alur komunikasi}
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\textwidth}{!}{\input{figures/m2/architecture.tex}}
+\caption[Arsitektur logis M2]{\textbf{Aggregator tetap menjadi satu-satunya pemilik Canonical Store; sumber baru masuk lewat ingestor tersendiri.} Panah utuh adalah panggilan sinkron dengan protokolnya; panah putus-putus adalah alur event asinkron. Kotak jingga adalah penyimpanan; tanda bintang menandai basis data milik ingestor yang berada di klaster CockroachDB yang sama tetapi dengan pengguna SQL dan sertifikat klien terpisah. Kotak bergaris putus-putus berada di luar kode kelompok.}
+\label{fig:architecture}
+\end{figure}
+
+Gambar~\ref{fig:architecture} memperlihatkan seluruh layanan, protokol, kepemilikan penyimpanan, dan alur event. Ada empat alur utama.
+
+\textbf{Alur baca klien.} Klien memanggil Client API lewat HTTP. Client API memvalidasi token ke Auth Service (gRPC, hasilnya di-\textit{cache} paling lama 15 detik), memeriksa cakupan, lalu memanggil Aggregator lewat gRPC. Berbeda dari M1, Client API tidak memegang satu koneksi ke satu Aggregator: ia menyeimbangkan setiap panggilan ke seluruh instance yang siap (Problem 2). Aggregator membaca CockroachDB dan mengembalikan event beserta penanda kelengkapan.
+
+\textbf{Alur ingest dengan polling.} Dari tiga instance Aggregator, hanya pemegang \textit{leader lease} yang memanggil BMKG dan PVMBG setiap 3 detik. Hasilnya dipetakan menjadi HazardEvent dan disimpan bersama pesan outbox dalam satu transaksi yang juga memeriksa \textit{fencing token}. Pesan yang tidak dapat dipetakan masuk \textit{failure inbox} (Problem 3).
+
+\textbf{Alur ingest sumber baru.} satellite-ingestor membaca aliran SSE Feed Satelit dan coastal-ingestor mem-\textit{polling} Sensor Pantai. Keduanya menyimpan keadaannya sendiri (offset, deteksi, cursor, karantina) di basis data masing-masing dan menyerahkan HazardEvent ke Aggregator lewat RPC \code{SubmitHazard}; mereka tidak pernah menulis ke \code{aggregator_db}.
+
+\textbf{Alur event.} Pekerja outbox menerbitkan event ke RabbitMQ. Exchange \code{hazard.events} menyalurkan salinan ke antrean \textit{durable} tiap konsumen seperti pada M1. Event pesisir yang ditandai kritis juga dirutekan ke \code{hazard.events.critical} yang dikonsumsi critical-notifier, sehingga notifikasi Tim Lapangan tidak mengantre di belakang event biasa.
+
+\textbf{Batas kontainer dan kepemilikan penyimpanan.} Setiap kotak layanan adalah image kontainer tersendiri. Kepemilikan penyimpanan ditegakkan platform, bukan hanya konvensi kode: setiap pemilik mempunyai basis data dan pengguna SQL sendiri (\code{aggregator}, \code{satellite}, \code{coastal}), hak hanya diberikan kepada pemilik dan \code{CONNECT} dicabut dari \code{public}, setiap pod hanya memasang sertifikat klien miliknya, dan NetworkPolicy membatasi lalu lintas ke penyimpanan (Tabel~\ref{tab:netpol}).
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{NetworkPolicy menegakkan ``satu penyimpanan, satu pemilik''.} Sumber: \protect\path{deploy/kustomize/base/networkpolicy.yaml}.}
+\label{tab:netpol}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{4.9cm}L{2.5cm}Y@{}}
+\toprule
+\textbf{Policy} & \textbf{Melindungi} & \textbf{Hanya menerima koneksi dari}\\
+\midrule
+\code{cockroach-store-owners} & CockroachDB & pod CockroachDB lain, Job \textit{bootstrap}, Aggregator, satellite-ingestor, coastal-ingestor.\\
+\code{postgres-owner-only} & PostgreSQL :5432 & Auth Service dan Job \code{auth-db-bootstrap}.\\
+\code{rabbitmq-consumers-and-aggregator} & RabbitMQ :5672 & Aggregator dan pod konsumen (port manajemen 15672 hanya untuk demo-api).\\
+\code{sensor-pantai-consumer} & sensor-pantai :8080 & coastal-ingestor.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Satu pengamatan mendukung bahwa policy ini bekerja: saat investigasi pada 18 November, pod pembantu yang dibuat untuk menjalankan klien SQL ditolak terhubung ke CockroachDB karena tidak berlabel pemilik. Pengujian sistematis bahwa pengguna SQL satu pemilik ditolak pada basis data pemilik lain belum dijalankan di klaster (masih tercatat terbuka di \path{docs/M2.md}).
+
+% =============================================================================
+\section{Deployment dan Topologi}
+\label{sec:topology}
+
+\subsection{Deklarasi topologi}
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Deklarasi topologi klaster.} Empat node, semuanya VM pada satu host fisik; setiap VM menjalankan kernelnya sendiri.}
+\label{tab:topology}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{1.3cm}L{3.0cm}L{3.2cm}L{2.5cm}R{1.0cm}R{1.3cm}R{1.2cm}@{}}
+\toprule
+\textbf{Node} & \textbf{Peran} & \textbf{Jenis} & \textbf{IP} & \textbf{vCPU} & \textbf{RAM} & \textbf{Disk}\\
+\midrule
+node-a & control plane + worker & VM (Multipass, QEMU/HVF) & 192.168.252.2 & 2 & 4,8 GiB & 20 GiB\\
+node-b & worker & VM & 192.168.252.3 & 2 & 4,8 GiB & 20 GiB\\
+node-c & worker (dibuat ulang 16 Nov) & VM & 192.168.252.6 & 2 & 3,8 GiB & 20 GiB\\
+node-d & worker (ditambahkan untuk P1) & VM & 192.168.252.5 & 2 & 3,8 GiB & 20 GiB\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{itemize}
+  \item \textbf{Host fisik:} satu Mac mini (Mac16,11), Apple M4 Pro 12 core, RAM 24 GB, macOS 15.6.1. Keempat node berjalan di host ini.
+  \item \textbf{Kubernetes:} k3s v1.37.2+k3s1; setiap node Ubuntu 24.04.5 LTS dengan kernel 6.8.0-147 (arm64) dan containerd 2.3.7 (\path{RUN/cluster/nodes.txt}). Syarat minimal dua node berkernel terpisah terpenuhi; k3d dari M1 tidak dipakai lagi untuk demo.
+  \item \textbf{Registry image:} kontainer \code{registry:2} di host pada port 5001; setiap node memakai \textit{mirror} \code{docker.io} ke \code{http://192.168.252.1:5001}.
+  \item \textbf{Sensor Pantai:} image asisten hanya tersedia untuk amd64; node arm64 menjalankannya lewat emulasi \code{qemu-user-static}. Image tidak dimodifikasi.
+  \item \textbf{Skenario mematikan node} hanya dikenakan pada \textit{worker} non-control-plane (node-b pada 15 November, node-d pada run-run berikutnya).
+\end{itemize}
+
+\subsection{Diagram deployment}
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\textwidth}{!}{\input{figures/m2/deployment.tex}}
+\caption[Diagram deployment: penempatan komponen dan jalur data antar-node]{\textbf{Tidak ada node yang memegang seluruh data, dan setiap tingkat tanpa keadaan tersebar di lebih dari satu node.} Penempatan pod mengikuti \protect\path{RUN/cluster/pods.txt} (16 November, 16.32 UTC). Yang dijamin manifest hanyalah aturannya: satu pod CockroachDB per node (anti-afinitas), Aggregator dan Auth disebar per node (\textit{topology spread}); pod lain ditempatkan penjadwal dan dapat berpindah. Warna: biru muda = API, biru tua = Aggregator, jingga = penyimpanan pada disk lokal node, hijau = sumber dan ingestor, abu-abu = konsumen dan pendukung. Angka dalam lingkaran merujuk ke Tabel~\ref{tab:datapaths}.}
+\label{fig:deployment}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Jalur data antar-node.} Nomor sesuai Gambar~\ref{fig:deployment}.}
+\label{tab:datapaths}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{0.5cm}L{3.9cm}L{3.5cm}Y@{}}
+\toprule
+\textbf{\#} & \textbf{Dari $\rightarrow$ ke} & \textbf{Protokol} & \textbf{Perilaku saat satu node hilang}\\
+\midrule
+1 & Klien $\rightarrow$ Client API & HTTP, NodePort 30080 di setiap node & Klien dapat masuk dari node mana pun; pod Client API di node yang hilang keluar dari Service setelah node NotReady.\\
+2 & Client API $\rightarrow$ Aggregator, Auth & gRPC, \code{round_robin} per panggilan atas DNS \textit{headless}; \textit{keepalive} 10 s/3 s & Koneksi ke \textit{peer} yang mati terdeteksi oleh \textit{keepalive}; RPC baca diulang sekali ke instance lain setelah 2 s.\\
+3 & Aggregator $\rightarrow$ CockroachDB & SQL di atas TLS, sertifikat klien per pemilik & Setiap node CockroachDB dapat menjadi \textit{gateway}; range tetap tersedia selama dua dari tiga replikanya hidup.\\
+4 & CockroachDB $\leftrightarrow$ CockroachDB & Raft dan \textit{gossip}, :26257 & Setelah 5 menit, range yang kehilangan replika direplikasi ulang ke node tersisa.\\
+5 & Aggregator $\rightarrow$ RabbitMQ & AMQP, pesan persisten dari outbox & Outbox menahan pesan selama broker tidak terjangkau (perilaku M1).\\
+6 & RabbitMQ $\rightarrow$ konsumen & AMQP, antrean \textit{durable} per konsumen & Replika konsumen di node lain meneruskan konsumsi.\\
+7 & Ingestor $\rightarrow$ Aggregator & gRPC \code{SubmitHazard} & Replika siaga mengambil \textit{lease} dan melanjutkan dari offset atau cursor yang tersimpan.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Dua komponen berkeadaan masih instance tunggal: PostgreSQL (\code{auth_db}) dan RabbitMQ, masing-masing dengan PVC \textit{local-path} di satu node. Keduanya adalah titik kegagalan tunggal yang disadari dan sudah dua kali menjadi penyebab insiden (Bagian~\ref{sec:incidents}). Uji kehilangan node karena itu memilih korban yang tidak memegang keduanya.
+
+\textbf{Penjadwalan ulang saat node mati.} Bawaan Kubernetes membiarkan pod di node yang NotReady selama 300 detik sebelum menggantinya. Sejak 18 November overlay klaster menambahkan toleransi \code{not-ready} dan \code{unreachable} selama 30 detik pada semua Deployment (\code{patches} di \path{deploy/kustomize/overlays/cluster/kustomization.yaml}), sehingga replika pengganti muncul di node lain kira-kira 70 detik setelah node dimatikan (sekitar 40 detik sampai node dinyatakan NotReady, lalu 30 detik toleransi); angka ini teramati pada skenario \code{wipe-node} (Tabel~\ref{tab:gameday}). StatefulSet (CockroachDB, PostgreSQL) tidak dikenai \textit{patch} ini, dan RabbitMQ, walaupun Deployment, tidak dapat pindah karena PVC-nya terikat pada disk node asalnya.
+
+\subsection{Sumber daya dan kepatuhan platform}
+
+Tabel~\ref{tab:resources} membandingkan deklarasi \code{resources} pada manifest dengan Lampiran B spesifikasi. Batas CPU tidak dideklarasikan (diizinkan spesifikasi).
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Deklarasi memori per kelas komponen.} Satu penyimpangan dari Lampiran B dilaporkan pada baris Client API.}
+\label{tab:resources}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{4.6cm}L{2.3cm}L{2.3cm}Y@{}}
+\toprule
+\textbf{Komponen} & \textbf{requests / limits} & \textbf{Lampiran B} & \textbf{Catatan}\\
+\midrule
+Aggregator & 256Mi / 512Mi & 256Mi / 512Mi & Sesuai.\\
+CockroachDB, PostgreSQL & 512Mi / 1Gi & 512Mi / 1Gi & Sesuai.\\
+RabbitMQ & 512Mi / 1Gi & 512Mi / 1Gi & Sesuai.\\
+Konsumen, critical-notifier & 128Mi / 256Mi & 128Mi / 256Mi & Sesuai.\\
+Auth Service & 128Mi / 256Mi & 128Mi / 256Mi & Sesuai.\\
+\textbf{Client API} & \textbf{192Mi / 512Mi} & 128Mi / 256Mi & \textbf{Menyimpang.} Dengan 256Mi pod di-\textit{OOMKill} di bawah 10.000 koneksi (investigasi P2 kriteria 6). Angka uji beban P2 dan P5 diukur dengan batas 512Mi.\\
+BMKG, PVMBG mock & 64Mi / 128Mi & 64Mi / 128Mi & Sesuai.\\
+Ingestor, sensor-pantai, observabilitas, demo & 128Mi / 256Mi & 128Mi / 256Mi & Kelas ``komponen lain''.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Ketentuan platform lain: (1) semua komponen berjalan di Kubernetes; (5) sistem dipasang dengan satu perintah (\code{make m2-deploy}, yaitu \code{kubectl apply -k deploy/kustomize/overlays/cluster}); (7) kredensial berada di Secret \code{bnpb-secrets} dan konfigurasi di ConfigMap \code{bnpb-config}, dengan \code{.env.example} untuk pengembangan lokal; (8) kepemilikan penyimpanan ditegakkan seperti pada Tabel~\ref{tab:netpol}; data komponen \code{role=store} berada di disk node (PV \textit{local-path}).
+
+\textbf{Tester Agent.} Dipasang dengan manifest asisten tanpa perubahan (\code{kubectl apply -f} URL pada spesifikasi, \en{image} ber-\en{digest} yang sama); satu pod per node, termasuk \en{control plane} (Gambar~\ref{fig:shot-nodes}). Tidak ada RBAC, NetworkPolicy, \en{taint}, atau batas sumber daya dari kami yang mengenainya. Menjalankan keenam skenario latihan memperlihatkan empat hal di sisi kami yang membuat aksi agen gagal diam-diam, dan semuanya kami perbaiki supaya agen dapat bekerja:
+\begin{itemize}
+  \item \code{block_internode} gagal dengan ``biner iptables tidak ditemukan di host'': pada Ubuntu \code{/usr/sbin/iptables} adalah \en{symlink} absolut lewat \code{/etc/alternatives}, yang tidak terurai di bawah awalan \code{/host} milik agen. \en{Symlink} dijadikan relatif pada tiap node (langkahnya ada di README).
+  \item \code{call_mock_admin} gagal dengan ``tidak ada Service role=mock'': agen mencari Service, bukan pod, berlabel \code{role=mock}. Service PVMBG kini berlabel demikian.
+  \item Panggilan admin dijawab 403 karena agen tidak membawa kunci admin kami. Dengan \code{PVMBG_ADMIN_OPEN=true} panggilan tanpa kunci diterima; kunci yang salah tetap ditolak.
+  \item Panggilan dijawab 400 karena agen mengirim \code{{"version":2}}, sedangkan mock hanya mengenal \code{enabled} dan \code{mode}. Mock kini menerima \code{version}: 1 skema awal, 2 menambah \code{confidence_level}, 3 ke atas skema tak kompatibel.
+\end{itemize}
+Setelah \code{wipe_and_shutdown}, VM yang dimatikan harus dihidupkan dari host (\code{multipass start}); selama status \en{run} latihan masih berlaku, agen pada node itu mengulang aksinya saat \en{boot}, sehingga \en{run} berikutnya harus dimulai dulu.
+
+\begin{figure}[htbp]
+\centering
+% TODO-MAIN: tangkapan layar kubectl get nodes / pods -o wide
+\textshot{evidence/m2/cluster.txt}
+\caption[Node dan pod pada klaster demo]{\textbf{Empat node Ready dan sebaran pod per node.} Keluaran \code{kubectl} pada 18 November 2026, disalin apa adanya (\protect\path{docs/evidence/m2/cluster.txt}); kolom terakhir daftar pod adalah label \code{role}.}
+\label{fig:shot-nodes}
+\end{figure}
+
+% =============================================================================
+\section{Perubahan dari M1}
+
+Tabel~\ref{tab:m1-changes} mendaftar keputusan M1 satu per satu beserta nasibnya di M2 dan alasannya.
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{longtable}{@{}L{1.9cm}L{4.6cm}L{8.9cm}@{}}
+\caption{\textbf{Keputusan M1 yang dipertahankan, diubah, atau dibatalkan.}}\label{tab:m1-changes}\\
+\toprule
+\textbf{Status} & \textbf{Keputusan M1} & \textbf{Keadaan di M2 dan alasannya}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Status} & \textbf{Keputusan M1} & \textbf{Keadaan di M2 dan alasannya}\\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+Dipertahankan & Polling BMKG/PVMBG dengan cursor, \textit{overlap} 2 s, dan dedupe \code{(source, source_ref_id)} & Kontrak kedua mock tidak berubah dan hanya menyediakan REST; pola ini tetap benar. Yang ditambahkan adalah siapa yang boleh mem-\textit{polling} (Problem 2).\\
+Dipertahankan & \textit{Transactional outbox} ke RabbitMQ dan konsumen idempoten & Tetap menjadi cara menjaga penyimpanan dan penerbitan event konsisten; transaksi outbox kini juga memuat pemeriksaan \textit{fencing}.\\
+Dipertahankan & Aggregator sebagai satu-satunya pemilik Canonical Store; Client API membaca lewat gRPC & Kini ditegakkan platform (pengguna SQL, sertifikat, NetworkPolicy), tidak hanya oleh hak akses basis data.\\
+Dipertahankan & Kolom kanonik bertipe + \code{attributes} JSONB untuk field aditif & Menjadi bagian ``diterima otomatis'' pada kebijakan skema Problem 3.\\
+Diubah & Canonical Store pada PostgreSQL tunggal & Dipindahkan ke CockroachDB empat node (pemecahan per range, replikasi Raft). PostgreSQL tunggal tidak dapat kehilangan node tanpa kehilangan data (Problem 1).\\
+Diubah & Satu instance Aggregator & Tiga instance dengan \textit{leader lease} berbasis jam basis data dan \textit{fencing} di dalam transaksi tulis (Problem 2).\\
+Diubah & Client API memakai satu koneksi HTTP/2 ke Aggregator & gRPC \code{round_robin} per panggilan atas Service \textit{headless}. Satu koneksi terpaku ke satu pod sehingga dua instance lain menganggur.\\
+Diubah & Klaster uji K3d (node berupa kontainer berkernel bersama) & k3s pada empat VM. Spesifikasi M2 melarang node berkernel bersama untuk demo.\\
+Diubah & Seluruh klien hanya-baca & Tim Lapangan memperoleh jalur tulis \code{POST /field-reports}.\\
+Diubah & Perubahan skema tak kompatibel ``memerlukan penanganan eksplisit'' tanpa mekanisme & Kini ada mekanismenya: \textit{park}, adapter yang diaktifkan operator, dan \textit{replay} (Problem 3).\\
+Dibatalkan & Pembatas laju global di depan semua rute Client API & Dihapus. Pembatas itu bekerja sebelum kelas klien diketahui, sehingga banjir permintaan Media dapat memenuhinya dan menolak Tim Lapangan (29\% permintaan Tim Lapangan ditolak sebelum perbaikan; Problem 5 kriteria 5).\\
+Dibatalkan & Polling sebagai satu-satunya pola pengambilan data & Tidak dipakai untuk Feed Satelit, yang menyediakan aliran SSE ber-offset (Problem 4).\\
+Ditambah & -- & Ingestor SATELIT dan SENSOR\_PANTAI, \textit{failure inbox}, inbox laporan lapangan, jalur notifikasi kritis, Audit API, observabilitas (metrik, jejak).\\
+\end{longtable}
+}
+
+% =============================================================================
+\section{Teknologi dan Alasan Pemilihan}
+
+Teknologi M1 (Go, Gin pada batas HTTP, gRPC/Protobuf antarlayanan internal, RabbitMQ, Kustomize, k6) dipertahankan dengan alasan yang sama seperti laporan M1. Tabel~\ref{tab:tech} memuat pilihan yang baru atau berubah.
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{longtable}{@{}L{2.9cm}L{3.0cm}L{9.4cm}@{}}
+\caption{\textbf{Teknologi yang ditambahkan atau diganti pada M2 dan kebutuhan yang dijawabnya.}}\label{tab:tech}\\
+\toprule
+\textbf{Teknologi} & \textbf{Dipakai untuk} & \textbf{Alasan dikaitkan dengan kebutuhan; alternatif}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Teknologi} & \textbf{Dipakai untuk} & \textbf{Alasan dikaitkan dengan kebutuhan; alternatif}\\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+CockroachDB v25.4.0 & Canonical Store, state ingestor, \textit{lease} & Menyediakan pemecahan range otomatis, replikasi Raft, dan penyeimbangan ulang saat node datang dan pergi, dengan protokol kawat PostgreSQL sehingga kueri dan \code{pgx} M1 tetap terpakai \citep{cockroach-sigmod}. Alternatif: \textit{sharding} PostgreSQL di tingkat aplikasi dengan replikasi \textit{streaming} per \textit{shard}; ditolak karena perpindahan data saat keanggotaan berubah dan baca lintas \textit{shard} harus ditulis sendiri.\\
+k3s v1.37.2 pada VM Multipass & Platform & Ringan untuk empat VM pada satu host 24 GB; setiap VM berkernel sendiri sehingga jam dapat digeser dan VM dapat dibekukan per node.\\
+PV \textit{local-path} & Data \code{role=store} & Spesifikasi mewajibkan data berada di disk node agar kehilangan node dapat diuji.\\
+gRPC \code{round_robin} + Service \textit{headless} & Titik masuk Aggregator & Penyeimbangan per panggilan tanpa komponen tambahan; pod yang tidak Ready keluar dari DNS. Alternatif: \textit{proxy} L7 (Envoy/Linkerd); ditolak karena menambah komponen yang juga harus dibuat tahan kegagalan.\\
+\textit{Lease} pada tabel basis data & Pemilihan \textit{leader} & Satu sumber waktu (jam basis data) dan pemeriksaan \textit{fencing} dapat berada di transaksi yang sama dengan tulisan. Alternatif: Lease API Kubernetes atau etcd; ditolak karena tokennya tidak dapat diperiksa secara atomik bersama tulisan ke Canonical Store.\\
+Server-Sent Events & Feed Satelit & Ditentukan oleh antarmuka feed; offset monoton memungkinkan lanjut tepat setelah putus.\\
+Prometheus, OpenTelemetry Collector, Tempo, Grafana & Metrik, jejak, dashboard & Memenuhi tiga kewajiban observabilitas dengan komponen standar; \code{/metrics} per layanan, OTLP ke Collector, satu dashboard Grafana.\\
+k6 (di host) & Uji beban & Sama dengan M1; skenario \code{ramping-vus} untuk 10.000 VU.\\
+\end{longtable}
+}
+
+% =============================================================================
+\section{Asumsi}
+
+\begin{enumerate}
+  \item \textbf{Satu host fisik.} Keempat node berbagi CPU, disk, dan jaringan virtual satu Mac mini, dan k6 berjalan di host yang sama. Latensi antar-node jauh lebih kecil daripada jaringan nyata, dan beban uji bersaing dengan sistem yang diuji. Angka \textit{throughput} dan latensi menggambarkan testbed ini, bukan kapasitas produksi.
+  \item \textbf{Satu node hilang dalam satu waktu.} Dengan RF=3, sistem dirancang bertahan dari kehilangan satu node penyimpanan. Kehilangan dua node bersamaan dapat membuat sebagian range kehilangan kuorum; ini terjadi sekali karena \textit{probe} yang terlalu agresif (insiden 8, Bagian~\ref{sec:incidents}).
+  \item \textbf{Jam basis data adalah otoritas waktu.} Keputusan \textit{lease} tidak pernah memakai jam lokal pod. CockroachDB sendiri menolak node yang selisih jamnya melebihi 500 ms.
+  \item \textbf{Dataset katalog.} Katalog gempa asisten belum tersedia saat pengujian. Problem 1 memakai katalog 100.000 baris hasil generator (\path{scripts/generate-earthquake-catalog.py}, \textit{seed} 4031) dan katalog uji 2.000 baris berformat CSV BMKG. Pengulangan dengan dataset dan \textit{checksum} asisten dijadwalkan pada jendela pengujian setelah tenggat.
+  \item \textbf{Token asisten.} Token Audit dibaca dari Secret dan dapat diganti dengan satu perintah (\code{set-audit-token}). Token Feed Satelit yang terpasang saat run bukti ditolak feed (401); lihat Problem 4.
+  \item \textbf{Mock dan image asisten tidak diubah} selain penambahan mode admin PVMBG yang diwajibkan Problem 3.
+  \item \textbf{Klien yang patuh.} Klien menghormati \code{Retry-After} pada 429 dan mengirim ulang laporan lapangan dengan \code{report_id} yang sama bila tidak menerima jawaban.
+\end{enumerate}
+
+% =============================================================================
+\section{Petunjuk Menjalankan Sistem}
+
+Langkah lengkap dari kondisi awal, daftar variabel konfigurasi, deklarasi topologi, dan cara memicu setiap skenario berada di README repositori \url{https://github.com/fathurwithyou/microservices} (tag \code{milestone-2}) dan di \path{docs/M2.md}. Ringkasnya:
+
+\begin{lstlisting}
+# pengembangan lokal (Compose, profil m2 memerlukan FEED_TOKEN)
+cp .env.example .env && make generate && make test
+docker compose --env-file .env --profile m2 up --build
+
+# klaster (satu perintah), lalu pemeriksaan kesehatan dan Audit API
+make m2-deploy          # kubectl apply -k deploy/kustomize/overlays/cluster
+make m2-smoke
+
+# bukti per skenario; setiap run menulis artifacts/m2/runs/m2-<waktu UTC>/
+./scripts/m2-demo.sh all
+CONFIRM=yes ./scripts/m2-demo.sh p1-node-loss
+CONFIRM=yes ./scripts/m2-demo.sh p2-skew p2-freeze
+CONFIRM=yes NEW_IMAGE=<image aggregator> ./scripts/m2-demo.sh p2-load
+./scripts/m2-demo.sh summary && ./scripts/m2-demo.sh restore
+\end{lstlisting}
+
+Job \code{cockroachdb-certs} menerbitkan satu sertifikat klien per pemilik penyimpanan dan Job \code{cockroachdb-bootstrap} menginisialisasi klaster serta membuat basis data dan pengguna SQL per pemilik; migrasi skema berjalan sebagai \textit{init container} Aggregator. Tahap yang merusak (mematikan node, menggeser jam, membekukan VM, uji beban) memerlukan \code{CONFIRM=yes}, dan \code{restore} mengembalikan perubahan khusus uji. Sebelum setiap tahap, \textit{runner} membandingkan jam setiap VM dengan host dan berhenti bila selisihnya lebih dari 3 detik.
+
+% =============================================================================
+\section{Observabilitas}
+\label{sec:observability}
+
+\subsection{Metrik dalam satu dashboard}
+
+Setiap layanan membuka \code{/metrics}; Prometheus mengambilnya dan Grafana menampilkan satu dashboard bernama ``BNPB M2'' (\path{deploy/kustomize/base/observability.yaml}) dengan panel: laju permintaan HTTP per layanan, rasio HTTP 5xx, latensi p95 HTTP per layanan, pembacaan pesisir diterima dan kritis, karantina pesisir per alasan, deteksi satelit yang dibuang dan dikirim, serta ketertinggalan feed satelit dalam jumlah event. Metrik khusus yang dipakai sebagai bukti di laporan ini antara lain \code{grpc_requests_total} (sebaran per pod Aggregator), \code{coastal_circuit_state}, \code{coastal_sensor_requests_total}, \code{coastal_readings_quarantined_total}, \code{client_api_overload_rejections_total}, \code{field_reports_processed_total}, dan histogram \code{critical_notification_latency_seconds}.
+
+\begin{figure}[htbp]
+\centering
+% TODO-MAIN: tangkapan layar dashboard Grafana per layanan
+\shot{grafana-services}{\pending{tangkapan layar: dashboard Grafana ``BNPB M2'' (latensi, error rate, throughput per layanan) (\texttt{docs/figures/m2/grafana-services.png})}}
+\caption[Dashboard metrik per layanan]{\textbf{Satu dashboard memuat latensi, rasio kesalahan, dan \textit{throughput} setiap layanan.}}
+\label{fig:shot-grafana}
+\end{figure}
+
+\subsection{Jejak permintaan lintas layanan}
+
+Client API dan Aggregator memancarkan \textit{span} server, dan panggilan gRPC antara Client API, Aggregator, dan Auth Service ikut terlacak. \textit{Span} dikirim lewat OTLP ke OpenTelemetry Collector, disimpan di Tempo, dan dibuka dari Grafana. \textit{Sampling} diatur 10\% berbasis induk (\code{OTEL_TRACES_SAMPLER_ARG=0.1}): pada uji 10.000 VU, biaya \textit{span} untuk setiap permintaan, termasuk yang ditolak, ikut menghabiskan CPU (Problem 2 kriteria 6). Konsekuensinya, tidak setiap permintaan mempunyai jejak; satu alur tertentu dicari lewat \textit{correlation ID} di log. Penerusan konteks jejak melewati RabbitMQ ke konsumen tidak diklaim.
+
+\begin{figure}[htbp]
+\centering
+% TODO-MAIN: tangkapan layar satu trace lintas layanan di Tempo/Grafana
+\shot{trace-hazards}{\pending{tangkapan layar: satu jejak \texttt{GET /hazards} lintas Client API, Auth, Aggregator dengan durasi tiap langkah di Tempo/Grafana (\texttt{docs/figures/m2/trace-hazards.png})}}
+\caption[Jejak satu permintaan lintas layanan]{\textbf{Satu permintaan klien terlihat sebagai rangkaian \textit{span} dengan durasi tiap langkah.}}
+\label{fig:shot-trace}
+\end{figure}
+
+\subsection{Log terstruktur ber-\textit{correlation ID}}
+
+Semua layanan menulis log JSON satu baris dengan \code{correlation_id}. ID yang sama diteruskan ke sumber hulu, sehingga log mock dapat dicocokkan dengan pod Aggregator pemanggilnya. Kutipan berikut adalah satu siklus polling BMKG oleh \textit{leader} baru setelah \textit{failover} (Problem 2 kriteria 3): baris pertama dan ketiga dari pod Aggregator, baris kedua dari mock BMKG, dengan \code{correlation_id} yang sama.
+
+\begin{evidencebox}{Satu siklus polling terlacak dari Aggregator ke mock BMKG dan kembali}
+\begin{lstlisting}
+{"time":"2026-11-16T16:43:02.574959688Z","level":"INFO","msg":"outbound call","component":"source-client","remote_service":"bmkg","correlation_id":"15f5fc6a-afb4-4e73-a69f-2612c169d8d1","latency_ms":108,"status":200}
+{"time":"2026-11-16T16:43:02.643110735Z","level":"INFO","msg":"request completed","service":"bmkg","component":"http","operation":"GET /seismic-events","correlation_id":"15f5fc6a-afb4-4e73-a69f-2612c169d8d1","latency_ms":103,"status":200}
+{"time":"2026-11-16T16:43:02.708402759Z","level":"INFO","msg":"poll batch persisted","component":"poller","source":"BMKG","correlation_id":"15f5fc6a-afb4-4e73-a69f-2612c169d8d1","events":2,"window_until":"2026-11-16T16:43:02.466900378Z","holder":"aggregator-559fccd5d9-7dw74","fence":51}
+\end{lstlisting}
+\noindent\footnotesize Sumber: \path{RUN/p2/logs/aggregator-aggregator-559fccd5d9-7dw74.log} dan \path{RUN/p2/logs/bmkg.log}. Baris \code{poll batch persisted} memuat pemegang \textit{lease} dan nilai \textit{fence} yang dipakai transaksi tulis.
+\end{evidencebox}
+
+\begin{figure}[htbp]
+\centering
+% TODO-MAIN: tangkapan layar pencarian log ber-correlation ID lintas layanan
+\textshot{evidence/m2/correlation-log.txt}
+\caption[Log ber-\textit{correlation ID} lintas layanan]{\textbf{Satu \textit{correlation ID} menghubungkan baris log di beberapa layanan.}}
+\label{fig:shot-logs}
+\end{figure}
+
+% =============================================================================
+\section{Audit API}
+\label{sec:audit}
+
+Audit API dilayani Aggregator pada port HTTP 8090 dengan \code{Authorization: Bearer <audit-token>} (Secret). Keempat endpoint Lampiran A tersedia dengan nama field yang sama; satu parameter dan satu endpoint tambahan dipakai sebagai bukti Problem 1.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Endpoint Audit API dan Ops API pada Aggregator.}}
+\label{tab:audit}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{5.1cm}Y@{}}
+\toprule
+\textbf{Endpoint} & \textbf{Perilaku}\\
+\midrule
+\code{GET /internal/audit/events} & Seluruh HazardEvent, urut \code{ingested_at} lalu \code{hazard_id}, cursor \textit{keyset}, \code{limit} maksimum 1000. Tambahan: \code{?as_of=<RFC3339>} membaca \textit{snapshot} penyimpanan pada waktu itu dan menggemakannya di jawaban, sehingga angka dashboard dapat direproduksi persis.\\
+\code{GET /internal/audit/checksum} & Jumlah dan SHA-256 atas \code{source_ref_id} terurut per sumber. Dilayani dari \textit{cache} 2 s (basi paling lama 30 s saat penyimpanan lambat; jawaban terakhir bertanda \code{partial: true} bila penyimpanan tidak menjawab).\\
+\code{GET /internal/audit/location} & Node dan peran replika untuk satu \code{hazard_id}, dari \code{SHOW RANGE FROM TABLE ... FOR ROW}; 404 bila tidak ada.\\
+\code{GET /internal/audit/unprocessed} & Pesan \code{retrying} dan \code{parked} tanpa isi pesan; pesan yang sudah pulih tidak muncul.\\
+\code{GET /internal/audit/distribution} & Tambahan: per node penyimpanan, jumlah replika, \textit{leaseholder}, dan byte replika tabel \code{hazard_events}, serta \code{holds_all_ranges}. \textit{Cache} 2 s, dengan degradasi yang sama seperti \code{checksum}.\\
+\code{GET /internal/ops/failures}, \code{/failures/{id}}, \code{POST /internal/ops/replay}, \code{POST /internal/ops/field-reports/lookup} & Hanya token BNPB Ops: daftar dan isi mentah pesan gagal, \textit{replay}, dan pencarian status laporan lapangan.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Semua jawaban audit membawa \code{partial} dan \code{unavailable_units}. Sebuah node penyimpanan yang mati dihitung ``tidak terjangkau'' hanya selama ia masih memegang replika \code{aggregator_db}; setelah range-nya direplikasi ulang, jawaban kembali lengkap walaupun ID node itu belum di-\textit{decommission}. Sejak 18 November kegagalan penyimpanan tidak lagi dijawab 500: \code{checksum} dan \code{distribution} mengembalikan jawaban terakhir instance itu dengan \code{partial: true}, \code{unavailable_units} yang tidak pernah kosong (nama node yang diketahui mati, atau \code{store} bila tidak ada yang dapat disebut), dan \code{as_of} berisi waktu jawaban itu dibaca dari penyimpanan; bila instance belum pernah menjawab kunci itu, jawabannya 503 \code{unavailable}. Listing \code{events} tidak pernah dilayani dari memori, karena halaman lama di bawah cursor baru dapat melewatkan atau mengulang event; kegagalannya dijawab 503 \code{unavailable} dan dapat diulang pemanggil. Cursor rusak tetap 400. Listing memakai indeks \textit{hash-sharded} \code{(ingested_at, hazard_id)} (migrasi 007): sebelum indeks itu ada, setiap halaman adalah pemindaian penuh dan pada 540 ribu baris listing gagal dengan \code{memory budget exceeded} (SQLSTATE 53200); sesudahnya satu halaman 40--70 ms dan pembandingan penuh 573.260 event selesai dalam 33 detik.
+
+% =============================================================================
+\section{Problem 1: Yang Pulang Membawa Laptopnya}
+\label{sec:p1}
+
+\subsection{Identifikasi masalah}
+
+Cerita Problem 1 memuat empat persoalan yang berbeda, masing-masing dengan nama baku dalam literatur \citep{kleppmann-ddia}.
+\begin{itemize}
+  \item \textbf{Pemecahan data (\en{partitioning}, \en{sharding}) dan beban timpang (\en{data skew}, \en{hot spot}).} Satu penyimpanan tidak lagi cukup, tetapi pembagian menurut atribut alami data (wilayah, waktu) mengikuti ketimpangan data itu sendiri: gempa terkumpul di jalur yang sama, sehingga satu mesin menjadi \en{hot spot}.
+  \item \textbf{Replikasi dan toleransi kegagalan.} Data yang hanya berada di satu node hilang bersama node itu. Ketersediaan saat sebagian replika hilang ditentukan oleh kuorum; di sini kuorum dicapai lewat konsensus Raft per range \citep{raft}.
+  \item \textbf{Perubahan keanggotaan dan penyeimbangan ulang (\en{rebalancing}).} Node pergi dan datang tanpa menghentikan sistem; data harus berpindah sendiri dan faktor replikasi harus pulih.
+  \item \textbf{Kueri lintas partisi (\en{scatter-gather}) dan jawaban terdegradasi (\en{partial results}).} Daftar ``N event terbaru dari semua jenis'' harus menggabungkan hasil banyak range dalam urutan global yang benar, dan saat sebagian data tidak terjangkau jawabannya harus menyatakan ketidaklengkapannya.
+\end{itemize}
+
+\subsection{Rancangan solusi dan mekanisme}
+
+\textbf{Penyimpanan.} Canonical Store berada di CockroachDB empat node (satu pod per node Kubernetes lewat anti-afinitas) dengan faktor replikasi tiga dan \en{locality} \code{cloud=<nama node>}. Tabel dipecah menjadi range; setiap range adalah satu grup Raft dengan tiga replika di tiga node berbeda \citep{cockroach-sigmod}.
+
+\textbf{Mengapa empat node, bukan tiga.} Dengan RF=3 di tiga node, setiap node pasti memegang 100\% range, yang melanggar kriteria 1. Ini terukur sebelum node keempat ditambahkan: 55 dari 55 replika berada di tiap node (\path{A15/p1/store-3-nodes-before.json}). Dengan empat node, setiap node memegang kira-kira tiga perempat range.
+
+\textbf{Di mana sebuah data disimpan.} Kunci primer \code{hazard_id} adalah UUID yang diturunkan dari SHA-1 atas \code{source:source_ref_id}, sehingga posisi baris di ruang kunci seragam berapa pun timpangnya wilayah atau waktu kejadian. Migrasi \code{006_hazard_events_distribution.sql} memasang batas pecah tetap pada 16 awalan heksadesimal kunci primer, mengganti indeks listing dengan indeks \en{hash-sharded} (8 \en{bucket}, \code{hazard_id} sebagai penentu urutan terakhir), dan memecah indeks unik per sumber. Tanpa \en{hash-sharding}, indeks berurut waktu akan menerima semua tulisan baru di range terakhirnya, yaitu \en{hot spot} yang sama dalam bentuk lain.
+
+\textbf{Bagaimana keputusan itu berubah saat node pergi dan datang.} Aplikasi tidak menyimpan peta penempatan. CockroachDB menyimpan deskriptor tiap range (rentang kunci dan daftar replikanya) dan mengubahnya lewat Raft. Bila sebuah node tidak terdengar selama 5 menit (\code{server.time_until_store_dead}), antrean replikasi membuat replika pengganti di node tersisa. Bila node baru bergabung, penyeimbang memindahkan replika dan \en{lease} ke node itu sampai jumlah replika per node kembali merata. Kunci sebuah baris tidak berubah; yang berubah adalah node mana yang memegang range tempat kunci itu berada.
+
+\textbf{Baca lintas lokasi.} \code{GET /hazards} memakai paginasi \en{keyset} \code{(occurred_at DESC, hazard_id DESC)}. Karena indeksnya \en{hash-sharded}, satu halaman dibaca dari kedelapan \en{bucket} lalu digabung terurut (\en{k-way merge}) oleh basis data; \code{page_token} membawa kunci terakhir halaman sebelumnya. Satu cacat ditemukan dan diperbaiki di sini: adapter CockroachDB semula mengabaikan \code{page_token}, sehingga halaman kedua sama dengan halaman pertama.
+
+\textbf{Penanda kelengkapan.} Setiap jawaban daftar, analitik, dan audit membawa \code{partial} dan \code{unavailable_units}. Aggregator menandai sebuah node penyimpanan tidak terjangkau hanya bila node itu mati dan masih terdaftar memegang replika \code{aggregator_db} (\code{SHOW RANGES}), dengan hasil di-\en{cache} 2 detik dan disegarkan di latar belakang. Selama satu node hilang tetapi kuorum tiap range masih ada, data yang dikembalikan tetap lengkap; penanda menyatakan bahwa cadangan replika sedang berkurang dan jawaban tidak dapat dijamin lengkap sampai replikasi ulang selesai.
+
+\textbf{Degradasi baca saat penyimpanan tidak menjawab.} Kuorum melindungi dari kehilangan satu node, tetapi tidak dari penyimpanan yang menolak semua pernyataan (misalnya saat jam satu node melompat). Sejak 18 November keempat \en{cache} baca (daftar \code{/hazards}, \code{/analytics}, \code{checksum}, dan \code{distribution} Audit API; paket \path{services/aggregator/internal/application/degraded/}) menyimpan jawaban baik terakhir per kunci. Bila penyegaran gagal, atau tidak selesai dalam 1 detik, jawaban terakhir itu dikembalikan berapa pun umurnya dengan \code{partial: true} dan \code{unavailable_units} yang tidak pernah kosong (node yang diketahui mati, atau \code{store} bila tidak ada yang dapat disebut); selama kegagalan berlanjut permintaan berikutnya dijawab seketika dan penyegaran dicoba lagi di latar belakang. Umur jawaban dinyatakan: Client API menambahkan \code{stale_since} pada \code{/hazards} dan \code{/analytics}, dan Audit API mengisi \code{as_of} dengan waktu jawaban itu dibaca. Bila pemeriksaan kesehatan penyimpanan sendiri gagal, kelengkapan dianggap tidak diketahui dan dilaporkan sebagai \code{partial: true}, bukan sebagai lengkap. Kunci yang belum pernah dijawab instance itu (filter, halaman, atau jendela lain) tidak mempunyai jawaban lama: Aggregator melaporkan \code{Unavailable} dan klien menerima 503, bukan 500 atau 502. Setiap jawaban terdegradasi dihitung pada \code{aggregator_degraded_answers_total}. Pengaruh terukurnya ada pada skenario \code{clock-skew} di Tabel~\ref{tab:gameday}.
+
+\textbf{Dashboard analitik.} \code{GET /analytics} mengembalikan agregasi per kategori bahaya terhadap waktu, per \en{severity}, dan per wilayah; halaman \path{apps/demo-console/src/pages/Analytics.tsx} menampilkannya dengan pilihan rentang waktu, waktu \en{snapshot} (\code{as_of}), dan \en{banner} ``data belum lengkap'' beserta nama unit yang tidak terjangkau saat \code{partial} bernilai benar. Cara menghitungnya dijelaskan pada butir 5 di Bagian~\ref{sec:p1-answers}.
+
+\subsection{Alasan keputusan: alternatif dan \en{trade-off}}
+
+\textbf{Skema partisi.} Tiga skema dibandingkan pada baris yang sama dan empat node (Tabel~\ref{tab:p1-alternatives}); rasio beban node tersibuk terhadap rata-rata (maks/rata-rata) bernilai 1,00 bila merata sempurna dan 4,00 bila semua beban jatuh ke satu node.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Hanya partisi berbasis \en{hash} yang tetap merata saat satu wilayah melonjak.} Katalog 100.000 baris dan lonjakan 20.000 baris di Laut Maluku; sumber \protect\path{A15/p1/alternative-partitioning.json}. Perhitungan ulang pada katalog 2.000 baris dan lonjakan 3.000 baris memberi 1,02/1,02, 1,53/4,00, dan 1,00/4,00 (\protect\path{RUN/p1/alternative-partitioning.json}).}
+\label{tab:p1-alternatives}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{4.1cm}R{2.1cm}R{2.6cm}Y@{}}
+\toprule
+\textbf{Skema} & \textbf{Katalog (maks/rata-rata)} & \textbf{Lonjakan satu wilayah} & \textbf{Konsekuensi}\\
+\midrule
+\textbf{\en{Hash} atas \code{hazard_id} (dipilih)} & 1,01 & 1,02 & Beban tulis merata apa pun bentuk datanya. Harga: baca menurut wilayah atau waktu harus menyentuh semua range, dan kedekatan data (\en{locality}) hilang.\\
+Partisi per wilayah (\code{area_name}) & 1,42 & 4,00 & Baca per wilayah murah, tetapi lonjakan di satu wilayah jatuh 100\% ke satu node. Ini persis keadaan pada cerita soal.\\
+Range per waktu (\code{occurred_at}) & 1,00 & 4,00 & Katalog historis dapat dibagi rata, tetapi semua tulisan baru jatuh ke potongan waktu terakhir.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Dataset uji sendiri timpang: pada katalog 100.000 baris wilayah terpadat (Jawa Timur) memuat 9.818 baris dan tersepi (Kalimantan Timur) 515; hari tersibuk memuat 5.117 baris sedangkan mediannya 10 baris per hari.
+
+\textbf{Basis data terdistribusi atau \en{sharding} di aplikasi.} Alternatifnya adalah beberapa PostgreSQL dengan \en{consistent hashing} di Aggregator dan replikasi per \en{shard}. Itu memberi kendali penuh atas penempatan, tetapi tiga hal harus ditulis sendiri: perpindahan data saat node datang dan pergi, gabungan terurut lintas \en{shard}, dan pemilihan primer saat node hilang. CockroachDB dipilih karena ketiganya sudah menjadi sifat penyimpanan. Harganya: latensi tulis lebih tinggi (setiap tulisan menunggu kuorum Raft), kepekaan terhadap selisih jam antar-node (dua insiden, Bagian~\ref{sec:incidents}), dan kebutuhan memori yang ketat pada batas 1 GiB per instance.
+
+\textbf{Menjawab ``tetap eksplisit'' saat node hilang.} Kriteria 4 melarang 500 dan permintaan yang menggantung. Data tidak pernah hilang sejak uji pertama, tetapi butuh delapan kali uji sebelum tidak ada satu pun permintaan yang gagal. Tabel~\ref{tab:p1-probe-history} mencatat setiap penyebab karena di situlah keputusan desain sebenarnya diambil: kegagalan tidak pernah berada di penyimpanan, melainkan di dependensi kecil dan di koneksi tanpa deteksi \en{peer} mati.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Riwayat uji kehilangan node: permintaan \en{probe} yang gagal, penyebab, dan perbaikan.} Semua run pada 18 November 2026 (WIB), korban node-d; data tidak hilang pada run mana pun. Hanya berkas \en{probe} run terakhir yang tersimpan (\protect\path{RUN/p1/node-loss/probe.json}); angka run sebelumnya berasal dari catatan kerja kelompok karena berkasnya tertimpa.}
+\label{tab:p1-probe-history}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{1.0cm}R{1.65cm}YY@{}}
+\toprule
+\textbf{Jam} & \textbf{Gagal / total} & \textbf{Penyebab utama} & \textbf{Perbaikan}\\
+\midrule
+02.01 & 146 / 476 & Auth replika tunggal berada di node korban; koneksi gRPC Client API ke Auth tanpa \en{keepalive}, sehingga satu pod Client API menjawab 502 selama 13 menit, termasuk 8 menit setelah Auth hidup lagi di node lain. & \en{Keepalive} 10 s/3 s dan \en{retry} pada koneksi Auth; Auth dua replika disebar per node, PDB \code{minAvailable: 1}.\\
+02.35 & 30 / 1.936 & 20 permintaan analitik melewati 5 s saat replikasi ulang (empat kueri agregat atas 391 ribu event). & \en{Cache} hasil analitik dengan \en{coalescing} dan \en{stale-while-revalidate}.\\
+03.41 & 22 / 5.036 & 13 permintaan \code{audit/distribution} melewati 5 s saat penyeimbangan ulang. & \en{Cache} 2 s untuk \code{distribution}.\\
+04.23 & 10 / 8.700 & 2 jawaban 500 \code{checksum}: SQLSTATE 40001 (\en{read within uncertainty interval}) saat node baru bergabung. & Kueri baca diulang hingga 3 kali pada 40001.\\
+05.14 & 9 / 12.292 & 8 \en{timeout} sebelum node NotReady; 1 analitik dingin sebelum node dimatikan. & Analitik: satu pemindaian \en{snapshot} historis (butir 5).\\
+08.04 & 8 / 3.680 & 8 \en{timeout} pada detik 20--69, sebelum Kubernetes menandai node NotReady: Service masih meneruskan koneksi baru ke pod di node mati. & Penyeimbangan per permintaan di sisi klien atas Service \en{headless} \code{client-api-pods} dan \code{aggregator-pods}.\\
+11.35 & 4 / 3.964 & 0 di jendela NotReady; 4 kegagalan sebelum node dimatikan (kunci \en{cache} analitik tidak seragam; \code{checksum} memindai ulang tiap panggilan). & Normalisasi kunci \en{cache}; \en{cache} \code{checksum} per sumber; jeda 30 s sebelum \en{probe}.\\
+\textbf{12.01} & \textbf{0 / 3.944} & -- & Run bukti akhir.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Untuk jendela sebelum NotReady ada dua pilihan: memperpendek \code{node-monitor-grace-period} k3s, atau membuat klien tidak bergantung pada Service. Pilihan kedua diambil supaya klaster tetap pada konfigurasi bawaan dan karena pola yang sama sudah dipakai Client API untuk gRPC. Konsekuensinya dinyatakan di batasan.
+
+\subsection{Batasan yang disadari}
+\label{sec:p1-limits}
+
+\begin{itemize}
+  \item \textbf{Dataset dan \en{checksum} asisten belum dipakai.} Katalog berasal dari generator sendiri dan pembanding \en{checksum} adalah berkas katalog itu sendiri, dihitung dengan aturan Lampiran A.
+  % TODO-MAIN: ulang P1 dengan dataset dan checksum asisten setelah dibagikan
+  \pending{hasil P1 dengan katalog dan \en{checksum} asisten (\texttt{./scripts/m2-demo.sh prep dataset <berkas> p1 summary})}
+  \item \textbf{Jendela sebelum NotReady.} Selama kira-kira 40--70 detik setelah node mati mendadak, Service Kubernetes (ClusterIP dan NodePort) masih mengarahkan sebagian koneksi baru ke pod di node itu, dan koneksi tersebut menggantung. Hasil 0 kegagalan dicapai oleh klien yang menyeimbangkan per permintaan atas alamat pod (\en{connect timeout} 1 s, pod yang diam dilewati 15 s). Klien yang hanya memakai satu NodePort atau ClusterIP tetap dapat mengalami \en{timeout} di jendela itu; pada run 08.04 WIB yang memakai Service, 8 dari 3.680 permintaan (0,2\%) gagal demikian. Pada deployment nyata celah ini ditutup penyeimbang beban L7 dengan pemeriksaan kesehatan aktif.
+  \item \textbf{Node mati belum di-\en{decommission}.} ID node CockroachDB yang mati tetap terdaftar sampai \code{cockroach node decommission} dijalankan dengan sertifikat root. Akibatnya range sistem (RF=5) tercatat \en{under-replicated}; tabel aplikasi tidak terpengaruh.
+  \item \textbf{Angka dashboard tidak seketika.} Analitik membaca \en{snapshot} 5 detik lalu dan di-\en{cache} 5 detik (basi paling lama 60 detik saat penyimpanan lambat); jawaban menyatakan umurnya lewat \code{as_of}.
+  \item \textbf{Degradasi baca bersifat per instance dan per kunci.} Jawaban terakhir hanya ada untuk kunci yang pernah dibaca instance itu; instance yang baru menyala, atau permintaan dengan filter yang belum pernah diminta, dijawab 503 sampai penyimpanan kembali. Listing Audit \code{events} tidak mempunyai jawaban cadangan.
+  \item \textbf{Bukti berasal dari dua dataset.} Sebaran 100.000 baris diukur 15 November (\code{A15/}); uji kehilangan node terakhir dilakukan pada keadaan penyimpanan 18 November dengan katalog rujukan 2.000 baris (\code{RUN/}).
+\end{itemize}
+
+\subsection{Bukti penyelesaian per kriteria}
+
+\krit{1}{Dataset dimuat; tidak ada node yang menyimpan seluruh data.}\stpart\ (katalog asisten belum dipakai). Katalog 100.000 baris diimpor dalam 24 detik dengan 0 baris ditolak. Tabel \code{hazard_events} terbagi menjadi 65 range dan \code{holds_all_ranges} bernilai salah di semua node (Tabel~\ref{tab:p1-distribution}). Pada run \en{runner} dengan katalog CSV 2.000 baris: 2.000 masuk, 0 ditolak, 32 range, tiap node 24 replika (75\%).
+\bukti{\path{A15/p1/import-log.json}, \path{A15/p1/distribution-after-import.json}, \path{RUN/p1/import-log.json}, \path{RUN/p1/distribution-after-import.json}, \path{RUN/p1/catalog-report.json}.}
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Sebaran data per node setelah impor 100.000 baris} (65 range, RF=3; \protect\path{A15/p1/distribution-after-import.json}).}
+\label{tab:p1-distribution}
+\footnotesize
+\begin{tabularx}{0.86\textwidth}{@{}L{1.6cm}R{2.0cm}R{2.4cm}R{2.4cm}R{2.4cm}Y@{}}
+\toprule
+\textbf{Node} & \textbf{Replika} & \textbf{Bagian range} & \textbf{\en{Leaseholder}} & \textbf{Byte replika} & \\
+\midrule
+node-a & 46 & 70,8\% & 15 & 141,9 MB & \\
+node-b & 51 & 78,5\% & 17 & 138,6 MB & \\
+node-c & 49 & 75,4\% & 21 & 114,4 MB & \\
+node-d & 49 & 75,4\% & 12 & 76,5 MB & \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\krit{2}{Beban tersebar walau dataset timpang; beban diukur saat impor dan saat lonjakan satu wilayah.}\stok\ Beban tulis diukur sebagai laju perintah Raft per node pada jendela puncak (Tabel~\ref{tab:p1-load}). Saat impor 100.000 baris bagian tiap node 24,2--26,2\% (maks/rata-rata 1,047); saat lonjakan 20.000 gempa di Laut Maluku 24,1--25,5\% (1,021). Pada katalog kecil \en{runner} (2.000 dan 3.000 baris, jendela 20 s dan 8 s) rasionya 1,172 dan 1,149; sampelnya jauh lebih sedikit sehingga variasinya lebih besar, tetapi tidak ada node yang menanggung lebih dari 29,3\%.
+\bukti{\path{A15/p1/load-during-import-peak.json}, \path{A15/p1/load-during-burst-peak.json}, \path{A15/p1/burst-dataset-summary.json}, \path{RUN/p1/load-during-import-peak.json}, \path{RUN/p1/load-during-burst-peak.json}.}
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Beban tulis per node: perintah Raft per detik pada jendela puncak} (\code{A15/}).}
+\label{tab:p1-load}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{5.2cm}R{1.7cm}R{1.7cm}R{1.7cm}R{1.7cm}Y@{}}
+\toprule
+\textbf{Skenario} & \textbf{node-a} & \textbf{node-b} & \textbf{node-c} & \textbf{node-d} & \textbf{maks/rata-rata}\\
+\midrule
+Impor katalog 100.000 baris & 815,5 & 754,1 & 775,0 & 771,9 & 1,047\\
+Lonjakan 20.000 baris, satu wilayah & 460,7 & 435,3 & 449,4 & 461,2 & 1,021\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\krit{3}{Baca lintas seluruh lokasi penyimpanan dengan paginasi dan urutan benar.}\stok\ 450 halaman berisi 100 event (45.000 event dari tiga jenis bahaya dan tiga sumber) dibaca berurutan: urutan \code{(occurred_at, hazard_id)} menurun ketat, 0 duplikat, 0 event hilang dibanding seluruh isi Audit API pada jendela waktu yang sama, halaman paling lambat 95 ms; uji 20 halaman berisi 50 event paling lambat 113 ms. \en{Runner}: 60 halaman, 6.000 event, 0 duplikat, 0 hilang, paling lambat 158 ms.
+\bukti{\path{A15/p1/crossread-deep.json}, \path{A15/p1/crossread-normal.json}, \path{RUN/p1/crossread.json}.}
+
+\krit{4}{Satu \en{worker} dimatikan dan datanya dihapus: tidak ada event hilang; setiap permintaan tetap dijawab.}\stpart\ (memakai \en{checksum} sendiri, dan klien ber-\en{balancing}; lihat batasan). Run akhir 18 November: node-d dimatikan paksa lewat sysrq pada 05.01.32 UTC, lalu direktori PV CockroachDB-nya (1,7 GB) dihapus.
+\begin{itemize}
+  \item \textbf{Data.} 0 dari 636.184 HazardEvent hilang; 2.184 event baru tetap masuk selama node hilang. \en{Checksum} katalog rujukan yang tersimpan sama dengan \en{checksum} berkasnya (\code{7c9dec885d42...}, 2.000 baris), sebelum dan sesudah. Pada uji 15 November dengan katalog 100.000 baris: 0 dari 159.855 hilang dan \en{checksum} 100.000 ID sama (\code{210940f6c9a4...}).
+  \item \textbf{Jawaban.} \en{Probe} di dalam klaster mengirim empat jenis permintaan tiap detik selama 989 detik dengan batas 5 detik: 3.944 dari 3.944 dijawab 200 (\code{/hazards}, \code{/analytics}, \code{audit/checksum}, \code{audit/distribution} masing-masing 986), 0 jawaban 5xx, 0 \en{timeout}. Jawaban paling lambat 2,0 s (satu percobaan 2 s diputus lalu dijawab instance lain) dan 1,0--1,2 s untuk Audit API (tepat satu \en{connect timeout} ke pod di node mati; 3 permintaan melewati pod yang diam).
+  \item \textbf{Penanda.} Jawaban membawa \code{partial: true} pada detik 30--447 \en{probe}, yaitu sejak node terdeteksi mati sampai replikasi ulang selesai, lalu kembali \code{false}.
+  \item \textbf{Pemulihan.} Node NotReady pada 05.02.16; seluruh 34 range kembali tiga replika di node-a/b/c pada 05.09.03 (ambang 5 menit ditambah waktu salin). Tidak ada range yang \en{unavailable}.
+\end{itemize}
+\bukti{\path{RUN/p1/node-loss/compare.json}, \path{RUN/p1/node-loss/probe.json}, \path{RUN/p1/node-loss/timeline.txt}, \path{RUN/p1/node-loss/killed-at.txt}, \path{RUN/p1/node-loss/wipe.txt}, \path{RUN/p1/node-loss/distribution-after-node-loss.json}, \path{A15/p1/node-loss-compare.json}, \path{A15/p1/probe-node-loss.json}.}
+
+\krit{5}{Node baru (atau node sama dengan disk kosong) ikut menanggung data dan beban tanpa menghentikan tulis dan baca.}\stok\ node-d dinyalakan dengan disk kosong pada 05.09.47, Ready 05.12.09, dan bergabung sebagai node CockroachDB baru (ID 17). Impor 20.000 baris yang dijalankan saat penyeimbangan ulang selesai dalam 16 detik dengan 0 ditolak, dan \en{probe} pada kriteria 4 tetap 100\% selama fase ini. Pada 05.14.48 node-d memegang 26 dari 32 range dan 11 \en{leaseholder}. Uji 15 November: node-b kembali sebagai ID 5 dan memegang 47 dari 58 replika dalam kira-kira 80 detik; impor 20.000 baris selesai 4 detik.
+\bukti{\path{RUN/p1/node-loss/timeline.txt}, \path{RUN/p1/node-loss/rejoin-import-log.json}, \path{RUN/p1/node-loss/distribution-final.json}, \path{RUN/p1/node-loss/load-during-rejoin-peak.json}, \path{A15/p1/rejoin-import-log.json}.}
+
+\krit{6}{Sistem kembali mampu bertahan dari kehilangan satu node berikutnya.}\stok\ Keadaan akhir: 32 range, masing-masing tiga replika pada empat node hidup (node-a 21, node-b 23, node-c 26, node-d 26 replika), tidak ada node yang memegang semua range, \code{partial} salah, dan 0 dari 636.184 event awal hilang sampai akhir (23.844 event bertambah). Bukti paling langsung adalah pengulangan: skenario kehilangan node dijalankan berturut-turut pada klaster yang sama (Tabel~\ref{tab:p1-probe-history}; tiga run terakhir tercatat di \en{timeline} pada 01.05, 04.35, dan 05.01 UTC), dan setiap run berangkat dari keadaan akhir run sebelumnya.
+\bukti{\path{RUN/p1/node-loss/distribution-final.json}, \path{RUN/p1/node-loss/compare-final.json}, \path{RUN/p1/node-loss/timeline.txt}.}
+
+\krit{7}{Dashboard analitik; angka sama dengan Audit API; ditandai saat tidak lengkap.}\stok\ Pembanding membaca seluruh event dari Audit API, menghitung ulang per kategori, \en{severity}, wilayah, dan garis waktu, lalu membandingkannya dengan \code{GET /analytics}: 219.955 = 219.955 event dengan 0 selisih pada 30 wilayah (16 November); setelah node kembali, 633.647 = 633.647 pada \code{as_of} yang sama (18 November). Rincian per kategori pada run pertama: SEISMIC 145.013, COASTAL 65.547, VOLCANIC 4.700, TSUNAMI 4.695; WILDFIRE 0 karena pada 16 November ingestor satelit belum memproses feed apa pun (Problem 4). Penanda \code{partial} pada \code{/analytics} aktif pada detik 31--447 uji kehilangan node. Angka-angka itu dibandingkan pada tingkat API; halaman dashboard di peramban sendiri sampai 18 November memanggil \code{/analytics} tanpa awalan \code{/api} sehingga gagal di klaster, dan baru setelah diperbaiki (\path{apps/demo-console/src/api/clientApi.ts}) Gambar~\ref{fig:shot-analytics} dapat diambil: keadaan normal, dan \en{banner} ``Data belum lengkap. Unit yang tidak terjangkau: node-c'' saat node-c mati.
+\bukti{\path{RUN/p1/analytics-vs-audit.json}, \path{RUN/p1/node-loss/analytics-vs-audit-after-rejoin.json}, \path{RUN/p1/node-loss/probe.json}; halaman \path{apps/demo-console/src/pages/Analytics.tsx}.}
+
+\begin{figure}[htbp]
+\centering
+% TODO-MAIN: tangkapan layar dashboard analitik keadaan normal
+\shottop{analytics-normal}{\pending{tangkapan layar: dashboard analitik keadaan normal (line chart per jenis bahaya, severity, wilayah, pilihan rentang waktu) (\texttt{docs/figures/m2/analytics-normal.png})}}{0.67}
+\par\medskip
+% TODO-MAIN: tangkapan layar dashboard analitik dengan banner partial saat satu node mati
+\shottop{analytics-partial}{\pending{tangkapan layar: dashboard analitik dengan \en{banner} ``data belum lengkap'' saat satu node mati (\texttt{docs/figures/m2/analytics-partial.png})}}{0.67}
+\caption[Dashboard analitik saat normal dan saat satu node hilang]{\textbf{Dashboard analitik menampilkan agregasi per jenis bahaya, \en{severity}, dan wilayah, serta menandai angka yang belum lengkap.} Atas: keadaan normal. Bawah: node-c mati, dengan \en{banner} ``Data belum lengkap. Unit yang tidak terjangkau: node-c''. Kedua tangkapan layar dipotong pada bagian atasnya supaya terbaca; tabel per wilayah dan grafik tren waktu ada pada berkas utuh di \protect\path{docs/figures/m2/}.}
+\label{fig:shot-analytics}
+\end{figure}
+
+\subsection{Jawaban butir ``Di laporan''}
+\label{sec:p1-answers}
+
+\jawab{1 (persoalan dan namanya)} Lihat subbagian identifikasi masalah: \en{partitioning/sharding} dengan \en{data skew} dan \en{hot spot}; replikasi dan kuorum; \en{rebalancing} saat keanggotaan berubah; kueri \en{scatter-gather} dan \en{partial results}.
+
+\jawab{2 (mekanisme penempatan data dan perubahannya)} Posisi sebuah HazardEvent ditentukan kuncinya: \code{hazard_id} hasil \en{hash} menempatkannya di salah satu range, dan deskriptor range menyebut tiga node pemegang replikanya. Saat node pergi, setelah 5 menit replika yang hilang dibuat ulang di node tersisa dari dua replika yang masih ada; saat node datang, replika dan \en{lease} dipindahkan ke node itu sampai merata. Kedua perubahan dilakukan per range lewat Raft tanpa menghentikan tulis atau baca; aplikasi tidak perlu diberi tahu.
+
+\jawab{3 (dua pendekatan alternatif)} Tabel~\ref{tab:p1-alternatives}: partisi per wilayah dan range per waktu sama-sama menjatuhkan 100\% lonjakan satu wilayah ke satu node (rasio 4,00), sedangkan \en{hash} menjaga rasio 1,02.
+
+\jawab{4 (jaminan konsistensi per endpoint)} Tabel~\ref{tab:p1-consistency}.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Jaminan konsistensi per endpoint saat normal dan saat satu node hilang.} Kolom terakhir juga memuat perilaku saat penyimpanan tidak menjawab sama sekali (degradasi baca, sejak 18 November).}
+\label{tab:p1-consistency}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{3.0cm}YY@{}}
+\toprule
+\textbf{Endpoint} & \textbf{Kondisi normal} & \textbf{Satu node hilang}\\
+\midrule
+\code{GET /hazards} & Baca transaksi \en{serializable}; hasil daftar identik di-\en{cache} 1 s per instance, jadi tertinggal paling lama 1 s. Tiap halaman adalah \en{snapshot} tersendiri: event baru di antara dua halaman dapat muncul di halaman berikutnya, tanpa duplikat atau loncatan pada rentang yang sudah dibaca. & Tetap lengkap selama kuorum tiap range ada (RF=3, satu node hilang), dengan \code{partial: true} sampai replikasi ulang selesai. \en{Cache} boleh basi sampai 15 s bila penyimpanan lambat. Penanda dapat terlambat 2 s. Bila penyimpanan tidak menjawab sama sekali: halaman terakhir kunci itu dengan \code{partial: true}, \code{unavailable_units}, dan \code{stale_since}; kunci yang belum pernah dibaca instance itu 503.\\
+\code{GET /analytics} & Satu pemindaian \en{snapshot} 5 s lalu; \en{cache} 5 s. Keempat kelompok angka berasal dari himpunan event yang sama; jawaban menyebut \code{as_of}. & Sama, dengan \en{cache} basi paling lama 60 s. \code{partial} dan \code{unavailable_units} tidak pernah di-\en{cache}; dihitung segar tiap panggilan. Bila penyimpanan tidak menjawab: angka terakhir jendela itu, \code{partial: true}, \code{stale_since}, dan \code{as_of} lama; jendela yang belum pernah dihitung 503.\\
+Audit \code{events} & Tanpa parameter: baca masa kini, \en{serializable}. Dengan \code{as_of}: \en{snapshot} pada waktu itu, dapat diulang dengan hasil identik. & Sama; \code{partial} menandai node yang masih memegang replika tetapi mati. Tidak ada jawaban cadangan: bila penyimpanan tidak menjawab, 503 \code{unavailable}.\\
+Audit \code{checksum}, \code{distribution} & Tertinggal paling lama 2 s (\en{cache}), \code{as_of} tercantum. & Basi paling lama 30 s; kegagalan baca 40001 diulang hingga 3 kali. Bila penyimpanan tidak menjawab: jawaban terakhir dengan \code{partial: true} dan \code{as_of} waktu jawaban itu dibaca; tanpa jawaban terakhir 503 \code{unavailable}.\\
+\code{POST /field-reports} & 202 hanya setelah baris tersimpan dengan kuorum (Problem 3). & Sama; tulisan butuh dua dari tiga replika.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Alasannya: semua baca dan tulis melewati konsensus per range, sehingga kehilangan satu dari tiga replika tidak mengubah isi jawaban, hanya mengurangi cadangan. Pelonggaran yang ada (\en{cache} dan \en{snapshot} historis) dipilih sadar untuk menjaga jawaban di bawah batas waktu, dan setiap pelonggaran dinyatakan di jawaban (\code{as_of}). Kehilangan satu node tidak memicu degradasi baca; yang memicunya adalah penyimpanan yang menolak atau tidak menjawab pernyataan. Pada keadaan itu pilihan kami adalah ketersediaan dengan tanda: jawaban lama yang menyatakan diri tidak lengkap dan menyebut umurnya (\code{stale_since} atau \code{as_of}) lebih berguna bagi pembaca data bencana daripada galat, sedangkan kegagalan tanpa jawaban cadangan dinyatakan sebagai 503, tidak pernah 500.
+
+\jawab{5 (cara angka dashboard dihitung dan ditandai)} Aggregator menjalankan satu kueri \code{GROUP BY} yang mengembalikan baris \code{(bucket waktu, kategori, severity, wilayah, jumlah)}; basis data menyebar kueri itu ke semua range dan menggabungkan hasilnya, lalu aplikasi melipat baris tersebut menjadi empat tampilan (\code{analytics.fold}). Karena keempat tampilan berasal dari satu pemindaian, totalnya selalu sama. Pemindaian dijalankan sebagai transaksi baca \code{AS OF SYSTEM TIME '-5s'}: \en{snapshot} yang lebih tua dari semua transaksi ingest yang sedang berjalan tidak bertemu \en{write intent}, sehingga tidak mengantre di belakang tulisan. Rancangan ini lahir dari temuan terukur: empat kueri terpisah pada masa kini masing-masing rata-rata 1,8--3,8 s atas 400--470 ribu baris, dan permintaan analitik yang belum ter-\en{cache} selalu berakhir 502; setelah diganti, tujuh variasi jendela dingin dijawab 0,8--1,4 s. Cap waktu \en{snapshot} dikirim sebagai \code{as_of}; auditor dapat memanggil Audit API dengan \code{as_of} yang sama dan memperoleh himpunan event yang identik, dan itulah cara pembanding kriteria 7 bekerja. Bila sebagian data tidak terjangkau, jawaban membawa \code{partial: true} dan nama unitnya, dan dashboard menampilkan \en{banner} dengan nama unit itu; penanda itu dihitung terpisah dari angka dan tidak di-\en{cache}. Ada dua keadaan yang ditandai. Bila satu node penyimpanan mati tetapi kuorum ada, angkanya tetap dihitung dari seluruh data dan penanda menyebut node itu. Bila penyimpanan tidak menjawab, angka yang ditampilkan adalah hasil terakhir jendela itu pada instance tersebut: \code{partial: true}, \code{unavailable_units} berisi node yang diketahui mati atau \code{store}, \code{stale_since} menyebut kapan angka itu dibaca, dan \code{as_of} tetap cap waktu \en{snapshot} lamanya; jendela yang belum pernah dihitung instance itu dijawab 503. Bila pemeriksaan kelengkapan sendiri gagal, jawaban ditandai tidak lengkap, bukan lengkap.
+
+% =============================================================================
+\section{Problem 2: Dua Nakhoda, Satu Kapal}
+\label{sec:p2}
+
+\subsection{Identifikasi masalah}
+
+\begin{itemize}
+  \item \textbf{Kriteria 2: \en{mutual exclusion} terdistribusi dan pemrosesan tepat sekali.} Tiga instance yang sama-sama mem-\en{polling} menghasilkan tiga salinan tiap kejadian. Yang dibutuhkan adalah pemilihan \en{leader} (\en{leader election}) agar satu instance saja yang mengambil data, dan pemrosesan \en{effectively-once}: pengambilan \en{at-least-once} digabung penulisan idempoten.
+  \item \textbf{Kriteria 4: jam yang tidak dapat dipercaya (\en{clock skew}).} \en{Lease} berbatas waktu \citep{gray-leases} hanya aman bila semua pihak sepakat tentang waktu. Jam fisik node dapat bergeser, dan urutan kejadian dalam sistem terdistribusi tidak boleh disandarkan pada jam lokal \citep{lamport-clocks}.
+  \item \textbf{Kriteria 5: jeda proses (\en{process pause}) dan \en{zombie leader}.} Proses yang membeku (VM \en{suspend}, laptop ditutup, jeda GC) tidak tahu bahwa waktunya telah habis; saat bangun ia masih merasa menjadi \en{leader}. Pengaman bakunya adalah \en{fencing token}: nomor yang naik monoton setiap pergantian pemegang dan diperiksa oleh penyimpanan saat menulis \citep{kleppmann-locking}.
+\end{itemize}
+
+\subsection{Rancangan solusi dan mekanisme}
+
+\textbf{Titik masuk dan penyebaran (kriteria 1).} Tiga pod Aggregator disebar satu per node (\code{topologySpreadConstraints}). Titik masuknya adalah Service \en{headless} \code{aggregator-grpc}; Client API memakai gRPC \code{round_robin} sehingga setiap panggilan dapat jatuh ke instance mana pun. Instance yang tidak sehat berhenti menerima permintaan lewat tiga mekanisme: pod yang gagal \en{readiness} keluar dari DNS \en{headless}; \en{keepalive} klien (10 s, batas 3 s) memutus koneksi ke \en{peer} yang mati tanpa mengirim RST; dan \code{MaxConnectionAge} 30 s memaksa klien me-\en{resolve} ulang sehingga instance baru hasil \en{scale-up} ikut dipakai. RPC baca yang idempoten diberi batas 2 s per percobaan dan diulang sekali ke instance lain.
+
+\textbf{\en{Leader lease} (kriteria 2--3).} Satu baris di tabel \code{leader_lease} menyimpan pemegang, \code{expires_at}, dan \code{fence}. Mengambil dan memperpanjang \en{lease} adalah pernyataan SQL bersyarat yang membandingkan \code{expires_at} dengan \code{clock_timestamp()} milik basis data; \code{fence} bertambah satu setiap kali pemegang berganti. Hanya pemegang \en{lease} yang mem-\en{polling} BMKG dan PVMBG dan menjalankan pekerja \en{retry} \en{failure inbox}. Implementasi: \path{pkg/lease} dan \path{services/aggregator/internal/application/ingest}.
+
+\textbf{Sumber kebenaran waktu (kriteria 4).} Tidak ada keputusan \en{lease} yang memakai jam pod atau jam node tempat pod berjalan: yang menentukan apakah sebuah \en{lease} masih berlaku adalah jam basis data pada saat pernyataan dieksekusi. CockroachDB sendiri menjaga jamnya dengan menolak node yang selisihnya melebihi 500 ms dari mayoritas. Jadi node yang jamnya bergeser tidak dapat ``meyakinkan'' sistem bahwa \en{lease}-nya masih berlaku atau bahwa \en{lease} orang lain sudah habis.
+
+\textbf{\en{Fencing} di dalam transaksi tulis (kriteria 4--5).} Memeriksa \en{lease} sebelum menulis tidak cukup, karena proses dapat membeku di antara pemeriksaan dan tulisan. Karena itu \code{PersistHazardAndEnqueue} memeriksa \code{(name, holder, fence, expires_at > clock_timestamp())} di dalam transaksi \en{serializable} yang sama dengan tulisan event dan outbox. Tulisan dari masa jabatan lama ditolak dengan \code{ErrFenced}; status sumber pun tidak diubah. Dua pengetatan ditambahkan setelah uji \en{freeze} menemukan celah (Bagian~\ref{sec:p2-decisions}): \en{fencing} bersifat \en{fail-closed} (bila \en{lease} dipakai tetapi token kosong, tulisan ditolak), dan \en{lease} divalidasi ke jam basis data sebelum memanggil sumber hulu, tidak hanya sebelum menulis.
+
+\textbf{Idempotensi.} \code{hazard_id} deterministik dari \code{(source, source_ref_id)} dan tulisan memakai \code{ON CONFLICT}, sehingga \en{overlap} 2 detik antar-jendela polling dan pengambilan ulang setelah \en{failover} tidak menghasilkan baris ganda.
+
+\textbf{Pergantian versi dan perubahan skala (kriteria 6, 8).} \en{Rolling update} memakai \code{maxUnavailable: 0}, \code{maxSurge: 1}, \code{preStop} 5 detik, dan \code{GracefulStop} gRPC; PDB \code{minAvailable: 1}.
+
+\textbf{Bukti siapa memanggil sumber hulu.} Mock tidak diubah. \path{scripts/m2-p2-analyze.py} mencocokkan \code{correlation_id} pada log mock dengan baris \code{outbound call} per pod Aggregator, lalu memeriksa bahwa tidak ada dua pod yang memanggil dalam satu interval dan bahwa nilai \code{fence} pada tulisan tidak pernah mundur.
+
+\subsection{Alasan keputusan: alternatif dan \en{trade-off}}
+\label{sec:p2-decisions}
+
+\textbf{\en{Lease} di basis data atau Lease API Kubernetes/etcd.} Pemilihan \en{leader} bawaan Kubernetes memberi \en{lease}, tetapi tokennya hidup di penyimpanan lain (etcd) daripada data yang dilindunginya, sehingga pemeriksaan token tidak dapat atomik dengan tulisan; ia juga membandingkan waktu dengan jam lokal klien. Menaruh \en{lease} di basis data yang sama dengan data membuat pemeriksaan \en{fencing} dan tulisan berada dalam satu transaksi. Harganya: ketersediaan ingest terikat pada kesehatan basis data; bila perpanjangan \en{lease} gagal karena basis data lambat, ingest berhenti walaupun aman.
+
+\textbf{Mengapa \en{fencing} tidak boleh \en{fail-open}.} Uji \en{freeze} otomatis pertama (image \code{m2.10}) menemukan bahwa \en{ex-leader} yang dibangunkan mencatat \code{poll batch persisted} dengan \code{holder: ""} dan \code{fence: 0}. Penyebabnya adalah \en{race}: di antara pemeriksaan ``masih \en{leader}'' dan pembuatan konteks tulis, \en{loop} perpanjangan melihat \en{lease} hilang dan mengosongkan token; konteks tanpa token lalu melewati pemeriksaan karena ``tidak ada token'' diartikan ``tidak perlu diperiksa''. Perbaikan pertama (\code{m2.12}) membuat konteks tanpa token ditolak. Run berikutnya menemukan sisa masalah: \en{ex-leader} masih memanggil sumber hulu tiga kali dalam kira-kira 1,5 detik setelah bangun walaupun hasilnya dibuang, sehingga log hulu mencatat dua pemanggil. Perbaikan kedua (\code{m2.14}) memvalidasi \en{lease} sebelum \en{fetch}. Kedua perbaikan mempunyai uji regresi yang gagal pada kode lama (\code{TestRunSourceDoesNotWriteUnfencedWhenTermVanishesBeforeWrite}, \code{TestRunSourceDoesNotFetchWithStaleLease}). Berkas sebelum perbaikan disimpan: \path{RUN/p2/freeze-before-fix-m2.10.json} dan \path{RUN/p2/freeze-m2.12-upstream-overlap.json}.
+
+\textbf{Titik masuk: Service \en{headless} + penyeimbangan di klien, atau ClusterIP, atau \en{proxy}.} ClusterIP menyeimbangkan per koneksi; satu koneksi HTTP/2 gRPC yang berumur panjang membuat semua panggilan menempel ke satu pod (keadaan M1). \en{Proxy} L7 menyelesaikannya tetapi menambah komponen. Penyeimbangan di klien dipilih; harganya adalah logika kesehatan (\en{keepalive}, batas per percobaan) harus benar di setiap klien, dan kelalaian di satu koneksi (ke Auth) menjadi insiden 10.
+
+\textbf{Biaya penolakan.} Penyelidikan kriteria 6 (run 17 November dengan 4,86\% dan 8,2\% kesalahan di luar 429) menemukan lima penyebab berantai, masing-masing diperbaiki dan diuji:
+\begin{enumerate}
+  \item Daftar identik memicu kueri \en{scatter-gather} masing-masing (\code{ListHazards} 2,5--10 s; hanya 3 jawaban 200 dari 140 ribu permintaan pada run diagnostik). Perbaikan: \en{request coalescing}, \en{cache} 1 s, dan \en{stale-while-revalidate} (\path{hazards/list_cache.go}).
+  \item Penanda \code{partial} menjalankan \code{SHOW RANGES} di bawah \en{mutex} tiap 2 s dan menahan semua daftar. Perbaikan: penyegaran tunggal di latar belakang.
+  \item Client API di-\en{OOMKill} pada 256 Mi dan \en{probe} 1 detik mengeluarkan pod yang hanya sibuk; \en{liveness} Aggregator 1 detik me-\en{restart} instance sehat. Perbaikan: memori 512 Mi, \en{timeout probe} 3 s, \code{failureThreshold} \en{liveness} 6.
+  \item \en{Thundering herd} pada \en{cache} validasi token saat entri kedaluwarsa. Perbaikan: \code{singleflight} per token.
+  \item Setiap 429 tetap membayar \en{span}, log JSON, dan autentikasi; kira-kira 1.700 penolakan per detik per pod menghabiskan CPU. Perbaikan: gerbang \en{overload} murah di depan semua \en{middleware} (in-flight $> 4\times$ \code{MAX_INFLIGHT_REQUESTS}) dan \en{sampling} jejak 10\%.
+\end{enumerate}
+Pelajarannya: di bawah \en{overload}, biaya menolak sama pentingnya dengan biaya melayani; penolakan yang mahal menyebabkan \en{congestion collapse}.
+
+\subsection{Batasan yang disadari}
+
+\begin{itemize}
+  \item \textbf{Aman tetapi tidak selalu hidup.} Saat CPU host jenuh, perpanjangan \en{lease} dapat gagal dan ingest berhenti beberapa menit sampai \en{lease} diperoleh lagi. Tidak ada tulisan ganda, tetapi data tertunda.
+  \item \textbf{Geser jam memengaruhi basis data di node yang sama.} Pada uji \en{clock skew}, node yang jamnya digeser juga menjalankan satu pod CockroachDB, yang lalu ditolak klaster; ingest terhenti selama pergeseran berlangsung (rincian pada kriteria 4).
+  \item \textbf{Kapasitas layanan kecil.} Pada 10.000 VU, 88\% permintaan dijawab 429. Angka itu adalah penolakan terkendali, bukan kegagalan, tetapi menunjukkan kapasitas testbed.
+  \item \textbf{Konfigurasi khusus uji beban.} Uji 10.000 VU memakai \code{ACCESS_TOKEN_TTL=10m} dan Client API empat replika (dikembalikan setelahnya; \path{RUN/p2/load-test-config.txt}); lihat butir 4.
+  \item \textbf{Kriteria 7 tidak terpenuhi} di testbed ini (rincian di bawah).
+\end{itemize}
+
+\subsection{Bukti penyelesaian per kriteria}
+
+\krit{1}{Tiga instance di node berbeda di belakang satu titik masuk.}\stok\ 60 permintaan \code{GET /hazards} yang dikirim bergiliran lewat NodePort keempat node terbagi 21/20/19 ke tiga pod Aggregator di node-a, node-c, dan node-b (run ulang 18 November; selisih \code{grpc_requests_total} per pod); semua 200. Penghentian arah ke instance tidak sehat terlihat pada kriteria 3 dan pada Problem 1 kriteria 4 (0 kegagalan saat satu pod Aggregator berada di node yang dimatikan).
+\bukti{\path{RUN/p2/entry-spread.json}; manifest \path{deploy/kustomize/base/workloads.yaml}.}
+
+\krit{2}{Setiap sumber diambil tepat sekali; tidak ada event ganda; hulu tidak menerima permintaan berlipat.}\stok\ Pada keempat skenario gangguan, jumlah permintaan hulu yang teratribusi ke dua pod dalam satu interval adalah 0 dan nilai \code{fence} tidak pernah mundur (Tabel~\ref{tab:p2-exactly-once}). Sebagian permintaan tidak dapat diatribusikan ke pod mana pun dari log yang terkumpul (10 pada uji \en{crash}, 10 pada uji geser jam, 20 pada uji beban); tidak satu pun bertumpang-tindih dengan pemanggil lain. Pemeriksaan duplikat di penyimpanan: 0 \code{source_ref_id} ganda.
+\bukti{\path{RUN/p2/failover.json}, \path{RUN/p2/clock-skew.json}, \path{RUN/p2/freeze.json}, \path{RUN/p2/load-exactly-once.json}, \path{RUN/p2/failover-gap-check.json}, log di \path{RUN/p2/logs/}.}
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Satu pemanggil hulu per interval pada semua skenario gangguan.}}
+\label{tab:p2-exactly-once}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{3.4cm}R{1.7cm}R{1.9cm}R{1.9cm}Y@{}}
+\toprule
+\textbf{Skenario} & \textbf{Permintaan hulu} & \textbf{Teratribusi} & \textbf{Ke dua pod} & \textbf{Masa jabatan (\code{fence})}\\
+\midrule
+\en{Leader} dihapus paksa & 114 & 104 & 0 & 50 $\rightarrow$ 51\\
+Jam node \en{leader} digeser & 230 & 220 & 0 & 69 $\rightarrow$ 70 $\rightarrow$ 71\\
+VM \en{leader} dibekukan & 153 & 153 & 0 & 68 $\rightarrow$ 69\\
+10.000 VU, skala 3--5--2, ganti versi & 196 & 176 & 0 & $\rightarrow$ 124 saat \en{rollout}\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\krit{3}{Instance pengambil data mati: dilanjutkan instance lain dalam $\leq$ 60 detik tanpa celah dan duplikat.}\stok\ Pod \en{leader} (\code{fence} 50, node-b) dihapus paksa pada 16.42.44,58; pod lain memperoleh \en{lease} (\code{fence} 51) pada 16.43.00,49, memanggil hulu pada 16.43.02,64, dan menyimpan \en{batch} pertamanya pada 16.43.02,71: \textbf{18,13 detik}. Masa jabatan lama tidak menulis apa pun setelah gangguan. Dari 13 event yang dihasilkan mock BMKG sejak awal jendela (9 di antaranya selama gangguan), 13 tersimpan, 0 hilang, 0 ganda. Uji 15 November dengan SIGKILL pada kontainer (\code{crictl stop -t 0}): 16,97 detik dan 105 dari 105 event tersimpan tepat sekali.
+\bukti{\path{RUN/p2/failover.json}, \path{RUN/p2/failover-actions.txt}, \path{RUN/p2/failover-gap-check.json}, \path{A15/p2/failover.json}, \path{A15/p2/failover-gap-check.json}.}
+
+\krit{4}{Sinkronisasi waktu satu node mati dan jamnya bergeser: tidak pernah ada dua instance yang berhasil menyimpan pada periode yang sama.}\stok\ NTP node-c (tempat \en{leader} berjalan) dimatikan; jamnya digeser +45 detik (terukur +44 s) selama 2 menit, lalu $-$30 detik (terukur $-$32 s) selama 2 menit, lalu NTP dipulihkan. Tiga masa jabatan tercatat dan tidak bertumpang-tindih: \code{fence} 69 menulis 17.44.05--17.44.26, \code{fence} 70 pada 17.46.09--17.46.16, \code{fence} 71 pada 17.47.09--17.50.15; 0 dua pemanggil dalam satu interval, 0 kemunduran \code{fence}. Harga keamanan ini terlihat pada jeda antar-masa-jabatan: ingest berhenti kira-kira 1 menit 43 detik selama fase +45 s, karena basis data menolak permintaan \en{lease} dari node itu (\code{remote wall time is too far ahead (41.15s)}) dan pod CockroachDB di VM yang sama ditolak klaster.
+\bukti{\path{RUN/p2/clock-skew.json}, \path{RUN/p2/clock-skew-actions.txt}.}
+
+\krit{5}{Node \en{leader} membeku lebih lama dari batas waktu lalu bangun: tidak menyimpan apa pun sampai statusnya diperbarui.}\stok\ VM node-d (\en{leader}, \code{fence} 68) di-\en{suspend} pada 17.40.56 dan dibangunkan 17.42.09 (73 detik, hampir lima kali TTL 15 s). Tulisan terakhir masa jabatan lama 17.40.46; instance lain mengambil alih sebagai \code{fence} 69 dan menulis pada 17.41.29, 33,82 detik setelah pembekuan. Setelah bangun, \en{ex-leader} tidak memanggil hulu dan tidak menulis: 153 dari 153 permintaan hulu teratribusi, 0 ke dua pod, \code{old_term_wrote_after_event: false}. Angka ini berasal dari image \code{m2.14}, setelah dua perbaikan pada Bagian~\ref{sec:p2-decisions}.
+\bukti{\path{RUN/p2/freeze.json}, \path{RUN/p2/freeze-actions.txt}; sebelum perbaikan: \path{RUN/p2/freeze-before-fix-m2.10.json}, \path{RUN/p2/freeze-m2.12-upstream-overlap.json}.}
+
+\krit{6}{10.000 VU, $\geq$ 120 detik, instance 3 $\rightarrow$ 5 $\rightarrow$ 2: kesalahan di luar penolakan terkendali $<$ 1\%; kriteria 2 tetap terpenuhi.}\stok\ Naik 30 detik ke 10.000 VU lalu bertahan 150 detik (total 202,5 s): 1.328.554 permintaan, 6.560 permintaan/s, \textbf{0\% kesalahan di luar 429}; 162.290 dijawab 200 (801/s), 1.166.259 dijawab 429; p50 151 ms, p95 792 ms, p99 1.419 ms. Aggregator diskalakan ke 5 pada 20.05.33 dan ke 2 pada 20.06.09. Pemanggil hulu tetap tunggal selama uji (baris terakhir Tabel~\ref{tab:p2-exactly-once}). Riwayat: 0,64\% pada 15 November (hanya 2.271 jawaban 200), 4,86\% dan 8,2\% pada 17 November, lalu 0\% setelah lima perbaikan pada Bagian~\ref{sec:p2-decisions}.
+\bukti{\path{RUN/p2/load.json}, \path{RUN/p2/load-timeline.txt}, \path{RUN/p2/load-exactly-once.json}; sebelum perbaikan: \path{RUN/p2/before-p26-fixes/}, \path{RUN/p2/entry-workers-only/}.}
+
+\krit{7}{\en{Throughput} 3 instance $\geq$ 2,0$\times$ 1 instance.}\stfail\ Tabel~\ref{tab:p2-throughput}. \en{Throughput} diukur sebagai jawaban 200 per detik pada 10.000 VU selama 60 detik, dengan Client API empat replika.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Rasio \en{throughput} tiga banding satu instance Aggregator tidak mencapai 2,0$\times$.} Jawaban 200 per detik selama 60 detik; 10.000 VU kecuali disebut lain. Berkas di \code{RUN/p2/}. Angka yang dipakai untuk kriteria 7 adalah baris pertama; baris berbatas CPU adalah percobaan memindahkan \en{bottleneck} ke Aggregator dan dilaporkan apa adanya.}
+\label{tab:p2-throughput}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{3.0cm}R{1.35cm}R{1.35cm}R{1.0cm}L{2.2cm}Y@{}}
+\toprule
+\textbf{Konfigurasi} & \textbf{1 instance} & \textbf{3 instance} & \textbf{Rasio} & \textbf{p95 (1 $\rightarrow$ 3)} & \textbf{Kesalahan di luar 429; berkas}\\
+\midrule
+Tanpa batas CPU (angka \code{SUMMARY.md}) & 1.207,7 & 1.175,9 & \textbf{0,97$\times$} & 1.094 $\rightarrow$ 699 ms & 0,07\% / 0\%; \path{throughput-{1,3}-instance-uncapped.json}\\
+Batas CPU Aggregator 500m & 1.028,4 & 1.238,7 & 1,20$\times$ & 419 $\rightarrow$ 597 ms & 0\% / 0\%; \path{...-cpu500m.json}\\
+Batas CPU Aggregator 200m (18 Nov 05.24 UTC) & 445,8 & 641,7 & 1,44$\times$ & 625 $\rightarrow$ 1.121 ms & \textbf{28,3\% / 31,0\%} (188 ribu permintaan tanpa jawaban): tidak sah sebagai bukti; \path{...-cpu200m.json}\\
+Batas CPU 50m, 256 VU tanpa jeda (18 Nov 06.44 UTC) & 2,6 & 12,3 & 4,7$\times$ & tidak terukur & Hanya 196 dan 925 jawaban 200 dalam 60 s; selebihnya 502 (2.527 / 2.213) dan permintaan tanpa jawaban: Aggregator pada 0,05 inti tidak sanggup melayani dalam batas 5 s. \textbf{Tidak sah sebagai bukti}; \path{...-cpu50m.json}\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Analisis penyebab:
+\begin{itemize}
+  \item Satu Aggregator yang dibatasi 0,5 core tetap melayani kira-kira 1.030 jawaban 200 per detik. Sejak \en{cache} daftar dan \en{coalescing} (perbaikan 1 pada kriteria 6), satu permintaan daftar hampir tidak memakan CPU Aggregator; Aggregator bukan lagi \en{bottleneck} pada beban ini. Sebelum perbaikan itu satu instance hanya melayani 24--152 jawaban 200 per detik.
+  \item Yang membatasi adalah admisi Client API (4 pod $\times$ \code{MAX_INFLIGHT_REQUESTS} 64 = 256 permintaan serentak; kira-kira 5.300 permintaan per detik ditolak 429) dan CPU host yang dibagi k6 dengan empat VM. Jawaban 200 per detik bertahan di sekitar 1,2 ribu pada semua konfigurasi Aggregator.
+  \item Menambah instance menurunkan p95 (1.094 ke 699 ms tanpa batas CPU) tetapi tidak menambah \en{throughput}; p50 justru naik (88 ke 178 ms) karena \en{cache} per instance dingin dan koneksi terbagi ke tiga tujuan.
+  \item Membatasi CPU Aggregator supaya ia menjadi \en{bottleneck} adalah metode yang dicoba dan dilaporkan terus terang sebagai percobaan, bukan angka utama. Pada 500m rasionya 1,20$\times$. Pada 200m rasionya 1,44$\times$ tetapi hampir sepertiga permintaan tidak dijawab, sehingga run itu tidak memenuhi syarat sebagai pengukuran. Percobaan 500m pertama (18 November 00.33 WIB) batal karena insiden 8.
+\end{itemize}
+Kesimpulan: kriteria ini tidak terpenuhi di testbed satu host; rasio $2\times$ hanya dapat ditunjukkan bila biaya per permintaan di Aggregator dominan, dan setelah optimasi kriteria 6 biaya itu tidak lagi dominan. Percobaan terakhir (batas 50m dengan 256 VU tanpa jeda) membuat Aggregator terlalu lambat untuk menjawab dalam batas waktu, sehingga juga tidak sah. Kami berhenti di sini: memperkecil batas CPU sampai rasionya tampak baik bukan pengukuran skala, melainkan penyetelan angka. Berkas \code{throughput-{1,3}-instance.json} berisi run tanpa batas CPU (0,97$\times$), sama dengan \code{...-uncapped.json}.
+\bukti{\path{RUN/p2/throughput-1-instance-uncapped.json}, \path{RUN/p2/throughput-3-instance-uncapped.json}, \path{RUN/p2/throughput-1-instance-cpu500m.json}, \path{RUN/p2/throughput-3-instance-cpu500m.json}, \path{RUN/p2/throughput-1-instance-cpu200m.json}, \path{RUN/p2/throughput-3-instance-cpu200m.json}, \path{RUN/p2/throughput-1-instance-cpu50m.json}, \path{RUN/p2/throughput-3-instance-cpu50m.json}.}
+
+\krit{8}{Ganti versi Aggregator selama uji beban tanpa permintaan yang gagal.}\stpart\ Pada run kriteria 6, versi diganti dari \code{m2.22} ke \code{m2.23} pada 20.06.34 dan selesai 20.07.14 (40 detik) saat 10.000 VU masih berjalan. Berkas hasil hanya memuat status 200 dan 429 untuk seluruh 1.328.554 permintaan: tidak ada 5xx atau \en{timeout} selama \en{rollout}. Catatannya: 429 tetap terjadi sepanjang uji, termasuk saat \en{rollout}, karena beban melebihi kapasitas; itu penolakan terkendali, bukan kegagalan akibat pergantian versi. Pada run 15 November kriteria ini tidak terpenuhi (502 akibat \en{timeout} 5 s di semua fase; \path{A15/p2/load-status-by-phase.txt}). \en{Leader} berpindah saat \en{rollout} (\code{fence} 124 pada 20.07.35) tanpa pemanggil ganda.
+\bukti{\path{RUN/p2/load.json}, \path{RUN/p2/load-timeline.txt}, \path{RUN/p2/load-exactly-once.json}.}
+
+\subsection{Jawaban butir ``Di laporan''}
+
+\jawab{1 (persoalan pada kriteria 2, 4, 5)} Kriteria 2: \en{leader election} / \en{mutual exclusion} terdistribusi dan pemrosesan \en{effectively-once}. Kriteria 4: \en{clock skew} dan ketidakpercayaan pada jam fisik \citep{lamport-clocks}. Kriteria 5: \en{process pause} dan \en{zombie leader}, diatasi dengan \en{fencing token} \citep{kleppmann-locking}.
+
+\jawab{2 (mekanisme, sumber kebenaran waktu, dan keamanannya)} Mekanismenya adalah \en{lease} berbatas waktu di tabel basis data dengan \en{fencing token} yang diperiksa di dalam transaksi tulis. Sumber kebenaran waktu adalah \code{clock_timestamp()} CockroachDB, bukan jam pod. Aman pada kriteria 4 karena node yang jamnya salah tidak ikut menentukan kapan \en{lease} habis: ia hanya dapat bertanya ke basis data, dan basis data menolak node yang jamnya menyimpang. Aman pada kriteria 5 karena keamanan tidak bergantung pada \en{ex-leader} menyadari bahwa ia terlambat: transaksinya memuat syarat ``\code{fence} saya masih yang terbaru dan belum kedaluwarsa menurut jam basis data'', dan syarat itu salah begitu instance lain mengambil alih. Kebenaran ditegakkan penyimpanan, bukan niat baik klien.
+
+\jawab{3 (batas waktu dan \en{trade-off})} \code{LEADER_TTL} 15 detik, \code{LEADER_RENEW} 5 detik, interval polling 3 detik. Sebuah instance dianggap hilang bila tidak memperpanjang \en{lease} selama 15 detik; calon pengganti mencoba tiap 5 detik, sehingga pengambilalihan terukur 17--18 detik setelah \en{crash} dan 34 detik setelah \en{freeze}, di bawah batas 60 detik. TTL yang lebih kecil mempercepat \en{failover} dan memperpendek celah data, tetapi memperbesar peluang \en{false failover} saat basis data lambat: dua sampai tiga perpanjangan yang gagal berturut-turut sudah cukup untuk kehilangan \en{lease}, dan itu teramati saat CPU jenuh. TTL yang lebih besar menstabilkan kepemimpinan tetapi memperpanjang waktu tanpa ingest setelah \en{leader} mati. Nilai 15/5 memberi tiga kesempatan perpanjangan per TTL dan menyisakan lebih dari 40 detik dari anggaran 60 detik. Untuk coastal-ingestor, yang targetnya 5 detik, nilainya 6 s/2 s.
+
+\jawab{4 (konfigurasi dan perangkat uji beban)} Perangkat: k6 dijalankan dari host, skrip \path{tests/load/k6/m2-sustained.js} dengan eksekutor \code{ramping-vus}; setiap VU memanggil \code{GET /hazards?source=BMKG} lalu \code{sleep(1)}; titik masuk bergiliran ke NodePort 30080 keempat node. Skenario dijalankan \path{scripts/m2-load.sh} (lewat \code{m2-demo.sh p2-load}): naik 30 detik ke 10.000 VU, bertahan 150 detik, skala 3 $\rightarrow$ 5 $\rightarrow$ 2, lalu pergantian image. Kenaikan bertahap 30 detik diperlukan karena 10.000 koneksi TCP serentak dari satu host gagal di jaringan host ke VM (\code{dial: i/o timeout}). Konfigurasi khusus uji, dicatat dan dikembalikan: \code{ACCESS_TOKEN_TTL=10m} (token dari \code{setup()} k6 akan kedaluwarsa dalam 60 detik dan penyegaran per VU berarti 10.000 operasi bcrypt) dan Client API 4 replika. Uji kriteria 7 memakai skrip yang sama selama 60 detik terhadap 1 lalu 3 instance.
+
+% =============================================================================
+\section{Problem 3: Surat dari Tetangga}
+\label{sec:p3}
+
+\subsection{Identifikasi masalah}
+
+\begin{itemize}
+  \item \textbf{Kriteria 2: \en{poison message} dan \en{dead letter queue}.} Pesan yang tidak dapat diproses tidak boleh hilang dan tidak boleh menghalangi pesan lain; pola bakunya adalah \en{dead letter channel} \citep{eip}. Di dalamnya ada klasifikasi kegagalan: sementara (\en{transient}, layak dicoba lagi) dan permanen (tidak akan berhasil tanpa perubahan sistem).
+  \item \textbf{Kriteria 3: masukan tak tepercaya dan isolasi kegagalan.} JSON terpotong, bersarang sangat dalam, UTF-8 tidak valid, dan ukuran berlebih adalah masukan yang harus ditolak dengan batas eksplisit (\en{robust parsing}, validasi masukan), dan kegagalan satu record tidak boleh menjatuhkan proses atau record lain (\en{bulkhead} per record).
+  \item \textbf{Kriteria 4: evolusi skema dan pemrosesan ulang.} Perubahan skema yang tidak kompatibel (\en{schema evolution}; kompatibilitas mundur dan maju) memerlukan adaptasi eksplisit; \en{replay} setelah adaptasi harus idempoten dan menjaga urutan per kunci.
+  \item \textbf{Kriteria 6: penerimaan \en{durable} dan semantik pengiriman.} Membalas 202 sebelum pemrosesan selesai adalah pola \en{store-and-forward}; jaminannya adalah \en{at-least-once} dari sisi klien yang digabung kunci idempotensi menjadi \en{effectively-once}, dan beberapa pekerja yang bersaing (\en{competing consumers}) harus mengklaim pekerjaan secara eksklusif \citep{eip}.
+\end{itemize}
+
+\subsection{Rancangan solusi dan mekanisme}
+
+\textbf{Deklarasi kebijakan skema (kriteria 1).}
+\begin{itemize}
+  \item \textbf{Diterima otomatis:} field opsional baru (disimpan di \code{attributes}), perubahan urutan field, dan field yang tidak dikenal.
+  \item \textbf{Tidak diterima otomatis:} penggantian nama field, perubahan tipe, dan hilangnya field wajib. Pesan demikian disimpan (\en{parked}) dan tidak pernah ditebak.
+  \item \textbf{Penyesuaian oleh operator:} adapter bernama diaktifkan lewat ConfigMap (\code{PVMBG_SCHEMA_ADAPTERS=pvmbg-breaking-v3}), Aggregator di-\en{rollout}, lalu \code{POST /internal/ops/replay?source=PVMBG}. Bawaan: tanpa adapter.
+\end{itemize}
+Mock PVMBG memperoleh mode baru pada \code{POST /admin/schema-version}: \code{breaking} (skema tidak kompatibel sampai di-\en{reset}) serta \code{truncated}, \code{deep_nesting}, \code{invalid_utf8}, dan \code{oversized} untuk pesan rusak.
+
+\textbf{\en{Failure inbox} (kriteria 2).} Pesan yang tidak dapat menjadi HazardEvent disimpan utuh di tabel milik Aggregator beserta \code{reason}, \code{source}, \code{received_at}, \code{retryable}, \code{status}, \code{attempts}, dan \code{last_error}; \code{message_id} adalah SHA-1 dari isi pesan sehingga pesan yang sama tidak tersimpan dua kali. Tabel~\ref{tab:p3-classes} memuat klasifikasinya.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Klasifikasi pesan yang tidak dapat diproses dan perlakuannya.}}
+\label{tab:p3-classes}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{3.0cm}L{3.6cm}L{1.5cm}L{1.4cm}Y@{}}
+\toprule
+\textbf{Kasus} & \textbf{Contoh} & \textbf{retryable} & \textbf{status} & \textbf{Pemulihan}\\
+\midrule
+Pelanggaran skema & field diganti nama, tipe berubah, field wajib hilang & false & parked & Adapter diaktifkan operator, lalu \en{replay}.\\
+Record tak terbaca & satu elemen larik dengan UTF-8 tidak valid atau bukan objek & false & parked & Record lain di jawaban yang sama tetap diproses dan cursor maju.\\
+Jawaban tak terbaca & JSON terpotong, kedalaman $>$ 10.000, badan $>$ 8 MiB & false & parked & Cursor tidak maju; jendela yang sama diambil ulang pada polling berikutnya.\\
+Data rujukan belum ada & \code{volcano_id} tidak ada di tabel referensi & true & retrying & Dicoba ulang otomatis tiap 30 s oleh \en{leader}; setelah 5 percobaan menjadi \en{parked}.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\textbf{Pesan rusak (kriteria 3).} Badan jawaban dibatasi 8 MiB dan kedalaman JSON dibatasi sebelum di-\en{decode}; pelanggaran menghasilkan catatan \en{parked}, bukan \en{panic}. Jawaban yang tidak dapat dipecah menjadi record tidak pernah memajukan cursor polling, sehingga record valid di jendela yang sama terambil pada polling berikutnya. Record rusak di dalam larik yang valid di-\en{park} sendiri, sehingga satu record yang rusak permanen tidak menahan feed.
+
+\textbf{Adaptasi dan \en{replay} (kriteria 4).} Adapter \code{pvmbg-breaking-v3} menerima \code{level} sebagai \code{alert_level} dan angka bertipe teks untuk \code{eruption_count_24h}. Field \code{reported_at} yang hilang diisi waktu pesan diterima BNPB, dan event diberi penanda \code{reported_at_source=received_at} supaya pembaca tahu waktu itu bukan dari sumber; \en{replay} memakai \code{received_at} asli, bukan waktu \en{replay}. \en{Replay} memproses pesan menurut urutan kedatangan dan berhenti pada kegagalan pertama (selain badan tak terbaca, yang dilewati), sehingga urutan per \code{source_ref_id} terjaga. Duplikat dicegah oleh \code{hazard_id} deterministik dan \code{ON CONFLICT}; pesan yang pulih dihapus dari daftar \code{unprocessed}.
+
+\textbf{Pemeriksaan hanya oleh BNPB Internal Ops (kriteria 5).} Daftar dan isi mentah pesan gagal serta \en{replay} berada di \code{/internal/ops/*} dan memerlukan token Ops. \code{/internal/audit/unprocessed} (token Audit) hanya memuat metadata, tidak pernah isi pesan.
+
+\textbf{Laporan lapangan (kriteria 6).} \code{POST /field-reports} memvalidasi masukan (kesalahan klien dijawab 400 dengan alasannya), lalu Aggregator menyimpan laporan ke tabel inbox di CockroachDB secara idempoten per \code{report_id} dan baru setelah itu Client API membalas 202. Pemrosesan dilakukan pekerja asinkron di semua instance Aggregator; pekerja mengklaim laporan dengan \code{UPDATE ... WHERE status='accepted'}, dan hanya pemenang klaim yang menjalankan efeknya.
+
+\subsection{Alasan keputusan: alternatif dan \en{trade-off}}
+
+\begin{itemize}
+  \item \textbf{Menebak, membuang, atau menyimpan.} Menebak (misalnya menganggap \code{level} sama dengan \code{alert_level}) membuat data salah masuk tanpa jejak; membuang menghilangkan informasi yang mungkin kritis. Menyimpan dipilih, dengan adaptasi sebagai keputusan operator yang eksplisit dan tercatat pada event. Harganya: data dari mitra yang berubah tertunda sampai ada manusia yang bertindak.
+  \item \textbf{\en{Failure inbox} di basis data atau DLQ di broker.} Sumber data di-\en{polling} lewat HTTP, bukan diterima dari broker, sehingga DLQ RabbitMQ berarti menerbitkan pesan gagal ke broker hanya untuk menyimpannya. Tabel di basis data memberi penyimpanan dengan replikasi yang sama dengan data utama, kueri menurut alasan dan waktu, serta \en{replay} berurutan dalam transaksi. Harganya: badan pesan sampai 8 MiB tersimpan di basis data; daftar karena itu hanya mengembalikan \code{payload_bytes}.
+  \item \textbf{202 setelah tulis \en{durable} atau setelah masuk antrean memori.} Antrean memori menjawab lebih cepat tetapi laporan hilang bila pod mati setelah 202. Tulis ke basis data berkuorum sebelum 202 menambah latensi (p95 76 ms terukur) dan menjadikan jalur 202 bergantung pada basis data, tetapi tidak pada pekerja hilir.
+  \item \textbf{Klaim dulu, baru proses.} Rancangan awal tanpa klaim memungkinkan dua pekerja memproses laporan yang sama. Klaim dengan \code{UPDATE} bersyarat memberi tepat satu pemroses; uji konkuren tiga pekerja atas 50 laporan dijalankan dengan detektor \en{race}.
+\end{itemize}
+
+\subsection{Batasan yang disadari}
+
+\begin{itemize}
+  \item ``Pemrosesan hilir lambat atau mati'' tidak diuji sebagai skenario tersendiri; jalur 202 memang tidak menunggu pekerja. Yang diuji adalah kematian paksa pod penerima di tengah pengiriman.
+  \item Efek hilir laporan lapangan hanyalah perpindahan status, satu baris log, dan penghitung \code{field_reports_processed_total}. Bila proses mati tepat setelah klaim, baris log atau penghitung dapat hilang, tetapi laporannya tidak.
+  \item Laporan lapangan tidak diubah menjadi HazardEvent, karena kontrak HazardEvent tidak mempunyai nilai \code{source} untuk laporan lapangan.
+  \item Jalur \code{retrying} (data rujukan belum ada) dibuktikan dengan uji unit (\path{services/aggregator/internal/application/failures/retry_test.go}), tidak dengan skenario klaster.
+  \item Adapter harus ditulis dan dirilis sebagai kode; mengaktifkannya memerlukan \en{rollout} Aggregator.
+\end{itemize}
+
+\subsection{Bukti penyelesaian per kriteria}
+
+\krit{1}{Perilaku konsisten dengan deklarasi pada mock PVMBG.}\stok\ Mode \code{breaking} diaktifkan 60 detik (18 November, 12.52.28--12.53.28 UTC). Seluruh 6 record pada jendela itu di-\en{park}, tidak ada yang masuk sebagai HazardEvent hasil tebakan. Perubahan aditif M1 (\code{confidence_level}) tetap berada di sisi ``diterima otomatis''; skenario itu tidak diulang pada run ini.
+\bukti{\path{RUN/p3/schema-verification.json}, \path{RUN/p3/schema-timeline.txt}.}
+
+\krit{2}{Pesan tak terproses tersimpan utuh dengan alasan, sumber, dan waktu; yang layak dicoba ulang dibedakan.}\stpart\ (jalur \code{retrying} hanya diuji unit). 6 pesan: \code{status=parked}, \code{retryable=false}, alasan \code{missing or invalid alert_level: invalid source payload}, sumber PVMBG, \code{received_at} tercatat; detail Ops memuat \code{payload} utuh.
+\bukti{\path{RUN/p3/schema-verification.json}, \path{RUN/p3/ops-failures-parked.json}, \path{RUN/p3/ops-failure-detail.json}, \path{RUN/p3/audit-unprocessed.json}.}
+
+\krit{3}{Pesan rusak tidak menjatuhkan komponen; pesan lain tetap diproses.}\stok\ Keempat jenis (\code{truncated}, \code{deep_nesting}, \code{invalid_utf8}, \code{oversized}) dikirim berturut-turut (18 November, 12.54.29--12.55.06 UTC) dan masing-masing mempunyai catatan \en{parked} dengan alasannya (\code{invalid_json} terpotong, \code{exceeded max depth}, \code{invalid_utf8}, \code{payload_too_large}); tidak ada pod yang \en{restart} selama uji (jumlah \en{restart} ke-35 pod sama sebelum dan sesudah). Pada run ini hanya pesan terpotong yang menambah baris baru (12.54.30); untuk tiga jenis lainnya baris ber-alasan sama sudah ada sejak 15 November dan, karena \code{message_id} adalah \en{hash} isi pesan, pesan yang identik tidak tersimpan dua kali. Pada uji 15 November, selama pesan rusak dikirim PVMBG tetap menambah 8 event dan BMKG 7 event.
+\bukti{\path{RUN/p3/malformed-timeline.txt}, \path{RUN/p3/ops-failures-malformed.json}, \path{RUN/p3/restarts-before.txt}, \path{RUN/p3/restarts-after.txt}, \path{A15/p3/malformed-timeline.txt}.}
+
+\krit{4}{Setelah penyesuaian, pesan gagal diproses ulang: semua pulih, tanpa duplikat, urutan terjaga.}\stok\ Setelah adapter aktif, \en{replay} memulihkan 6 dari 6; \en{replay} kedua memulihkan 0. Keenam pesan hilang dari daftar \code{unprocessed}, keenam event bertanda \code{reported_at_source=received_at}, dan 0 \code{source_ref_id} ganda. Jumlah event PVMBG di Audit API naik dari 14.525 (12.53.39, saat pesan ter-\en{park}) menjadi 14.534 (12.54.29), yaitu +9: enam hasil \en{replay} ditambah laporan baru yang terus masuk selama 50 detik itu, karena mock sudah kembali ke skema normal. Selisih jumlah saja karena itu tidak menunjukkan ``tepat +6''; yang membuktikan tidak adanya duplikat adalah pemeriksaan \code{source_ref_id} ganda dan \en{replay} kedua yang memulihkan 0.
+\bukti{\path{RUN/p3/replay.json}, \path{RUN/p3/replay-again.json}, \path{RUN/p3/checksum-while-parked.json}, \path{RUN/p3/checksum-after.json}, \path{RUN/p3/schema-verification.json}.}
+
+\krit{5}{Pesan gagal hanya dapat diperiksa BNPB Internal Ops.}\stok\ Token Ops: daftar 200, detail 200. Token Audit: daftar 401, detail 401, \en{replay} 401. Tanpa token: 401. Daftar Ops dan daftar audit tidak memuat isi pesan.
+\bukti{\path{RUN/p3/ops-access.json}.}
+
+\krit{6}{\code{POST /field-reports} membalas 202 dengan cepat; tidak ada laporan berbalas 202 yang hilang atau diproses ganda.}\stok\ 400 laporan unik dikirim paralel lewat keempat NodePort; satu pod Client API dan satu pod Aggregator dihapus paksa kurang dari satu detik setelah pengiriman mulai (18 November, 12.55.19 UTC). 400 dari 400 akhirnya dijawab 202 (p50 30 ms, p95 76 ms, maks 143 ms untuk jawaban 202 pada percobaan pertama); 93 laporan tidak menerima jawaban apa pun pada percobaan pertama (koneksi ke pod yang dihapus terputus) dan dikirim ulang oleh klien dengan \code{report_id} yang sama. Pencarian Ops: 400 tersimpan, 400 berstatus \code{processed}, masing-masing tepat satu transisi status. 25 kiriman ulang laporan yang sudah diterima dijawab 202 tanpa baris baru. Baris log efek hilir: 356 laporan mempunyai tepat satu baris, 0 lebih dari satu, dan 44 tanpa baris karena log pod yang dihapus paksa tidak terkumpul; keadaan tersimpan adalah bukti yang berwenang.
+\bukti{\path{RUN/p3/field-reports.json}; skrip \path{scripts/m2-p3-field-reports.py}.}
+
+\subsection{Jawaban butir ``Di laporan''}
+
+\jawab{1 (persoalan pada kriteria 2, 3, 4, 6)} Kriteria 2: \en{poison message} dan \en{dead letter queue}, dengan klasifikasi \en{transient} lawan permanen. Kriteria 3: validasi masukan tak tepercaya dan isolasi kegagalan per record (\en{bulkhead}). Kriteria 4: \en{schema evolution} dan \en{replay} idempoten dengan urutan per kunci. Kriteria 6: penerimaan \en{durable} (\en{store-and-forward}), semantik pengiriman, dan \en{competing consumers}.
+
+\jawab{2 (kebijakan perubahan skema dan alasannya)} Yang diterima otomatis adalah perubahan yang tidak mengubah makna field yang sudah dipakai: field opsional baru, urutan, dan field tak dikenal. Yang tidak diterima adalah perubahan yang memaksa sistem menebak makna: nama, tipe, dan hilangnya field wajib. Alasannya, data ini dipakai untuk peringatan bencana; tingkat aktivitas gunung api yang salah tafsir lebih berbahaya daripada yang tertunda. Karena itu toleransi (prinsip ketahanan Postel) dibatasi pada hal yang tidak ambigu, dan sisanya diserahkan kepada operator lewat adapter yang meninggalkan jejak pada event.
+
+\jawab{3 (penyimpanan, pemeriksaan, pemrosesan ulang, pencegahan duplikat)} Penyimpanan: \en{failure inbox} di basis data Aggregator, pesan utuh dengan metadata (Tabel~\ref{tab:p3-classes}). Pemeriksaan: Ops API bertoken Ops untuk daftar dan isi mentah; Audit API untuk metadata. Pemrosesan ulang: otomatis untuk \code{retrying} (hanya oleh \en{leader}, yang divalidasi ke jam basis data sebelum tiap pesan), manual lewat \en{replay} untuk \code{parked} setelah sistem disesuaikan; berurutan menurut kedatangan dan berhenti pada kegagalan pertama. Pencegahan duplikat: \code{message_id} dari \en{hash} isi pesan pada sisi inbox, dan \code{hazard_id} deterministik dengan \code{ON CONFLICT} pada sisi Canonical Store, sehingga \en{replay} berulang tidak menambah event (\en{replay} kedua: 0).
+
+\jawab{4 (jaminan pengiriman jalur Tim Lapangan dan buktinya)} Jaminannya: (a) 202 berarti laporan sudah tersimpan dengan kuorum di CockroachDB; (b) dari sisi klien pengiriman bersifat \en{at-least-once}: klien yang tidak menerima jawaban mengirim ulang dengan \code{report_id} yang sama; (c) penyimpanan idempoten per \code{report_id}, dan pemrosesan tepat sekali per laporan lewat klaim eksklusif. Gabungannya adalah \en{effectively-once}. Bukti: kriteria 6 di atas (400 dijawab 202, 400 tersimpan, tepat satu transisi masing-masing, 25 kiriman ulang tanpa duplikat, dengan dua pod penerima dimatikan paksa di tengah uji).
+
+% =============================================================================
+\section{Problem 4: Atap Seng di Siang Bolong}
+\label{sec:p4}
+
+\subsection{Identifikasi masalah}
+
+\begin{itemize}
+  \item \textbf{Kriteria 2: waktu kejadian lawan waktu pemrosesan.} Deteksi harus dikelompokkan menurut waktu lintasan satelit (\en{event time}), bukan waktu tiba di BNPB (\en{processing time}); keduanya dapat berselisih jam. Pertanyaan pada \en{hint} soal, kapan sebuah jendela boleh ditutup bila data dapat datang terlambat, dijawab literatur dengan \en{watermark} (perkiraan sejauh mana \en{event time} sudah lengkap) dan \en{allowed lateness} (batas keterlambatan yang masih diterima), sebagaimana dirumuskan model Dataflow \citep{dataflow}. Data yang melewati batas adalah \en{late data} dan harus dihitung, tidak dibuang diam-diam.
+  \item \textbf{Kriteria 4: \en{backpressure} dan pengejaran ketertinggalan.} Feed yang dipercepat 60$\times$ menghasilkan lonjakan yang melebihi laju pemrosesan sesaat; sistem harus menyerapnya tanpa kehilangan data (\en{backpressure}, \en{batching}) dan kembali mutakhir, dengan ketertinggalan (\en{consumer lag}) yang terukur.
+  \item \textbf{Kriteria 5: pemrosesan aliran berkeadaan dan \en{exactly-once}.} Pembentukan kebakaran adalah komputasi berkeadaan atas aliran; bila pemroses mati di tengah jalan, hasil akhir harus sama dengan pemrosesan tanpa gangguan. Jaminan ini disebut \en{exactly-once processing}, atau lebih tepat \en{effectively-once}: posisi baca (offset) dan keadaan di-\en{checkpoint} bersama, pemutaran ulang dari offset terakhir bersifat idempoten.
+  \item \textbf{Persoalan pendukung.} Pengelompokan deteksi menjadi kebakaran adalah pencarian \en{connected components} pada graf kedekatan ruang dan waktu (jarak $\leq$ 1,0 km dan selisih $\leq$ 360 menit, bersifat berantai), termasuk resolusi entitas lintas satelit. Deteksi yang diperbarui atau ditarik feed menuntut \en{retraction}: hasil yang sudah diterbitkan harus dapat dikoreksi (\en{upsert}) atau ditandai batal (\en{tombstone}), bukan ditambah.
+\end{itemize}
+
+\subsection{Rancangan solusi dan mekanisme}
+Pemroses adalah layanan \code{satellite-ingestor}, dua replika aktif/siaga dengan \en{lease} basis data; hanya pemegang \en{lease} yang membuka koneksi ke feed, sehingga batas koneksi feed (429) tidak tersentuh. Alurnya:
+\begin{enumerate}
+  \item \textbf{Membaca aliran.} Koneksi SSE dibuka dengan \code{from=<offset>} dan \code{Last-Event-ID} sekaligus, memakai offset terakhir yang sudah di-\en{commit}. Kedua konvensi dikirim karena kontrak ringkas tidak menyebut apakah \code{from} inklusif; event dengan offset $\leq$ offset ter-\en{commit} dilewati, dan offset yang meloncat dihitung pada \code{satellite_feed_offset_gaps_total} (harus tetap 0). Koneksi yang diam lebih dari 45 s tanpa \en{heartbeat} diputus dan disambung ulang (\en{idle watchdog}), sebab koneksi yang mati tanpa FIN tampak hidup selamanya.
+  \item \textbf{Mendekode dengan toleran.} \code{acq_time} dibaca sebagai HHMM tanpa nol di depan (\code{"243"} = 02.43), berupa string maupun angka; lintang dan bujur disimpan sebagai teks aslinya karena Audit API menuntut \code{detection_keys} tanpa pembulatan. Frame yang tidak dapat dipahami tidak menghentikan aliran: offset tetap maju dan frame dihitung pada \code{satellite_events_skipped_total}. Tanpa ini satu frame rusak menjebak pemroses dalam \en{reconnect loop} di posisi yang sama.
+  \item \textbf{Menerapkan event satu per satu.} Mesin pengelompok (\path{internal/application/engine.go}) menyimpan deteksi yang masih dapat berubah dalam memori, diindeks \en{grid} 0{,}02\textdegree{}, dan memelihara \en{connected components} secara inkremental: deteksi baru menggabungkan komponen yang disentuhnya; \code{retract} memecah komponen dengan BFS lokal; \code{update} yang menurunkan \en{confidence} ke \code{l} berlaku sebagai penghapusan. Deteksi \code{l} tidak pernah masuk komponen. Komponen beranggota $\geq$ 2 adalah kebakaran; sisanya deteksi tunggal yang jumlahnya dilaporkan.
+  \item \textbf{Identitas kebakaran.} Kebakaran baru diberi \code{source_ref_id} dari \en{hash} kunci deteksi tertuanya. Identitas itu dipertahankan selama kebakaran tumbuh atau menyusut. Bila dua kebakaran menyatu, identitas kebakaran yang lebih besar bertahan dan yang lain ditarik; bila \code{retract} membelah kebakaran, bagian terbesar mempertahankan identitas. Kebakaran yang turun di bawah dua deteksi tidak dihapus, melainkan HazardEvent yang sama diperbarui dengan \code{status=retracted}.
+  \item \textbf{\en{Watermark} dan keterlambatan.} \en{Watermark} adalah waktu akuisisi terbaru yang sudah terlihat di aliran. Batas keterlambatan yang kami nyatakan adalah \textbf{12 jam waktu kejadian} (\code{SATELLITE_LATE_WINDOW}): deteksi yang waktu akuisisinya lebih dari 12 jam di belakang \en{watermark} tidak dikelompokkan, tetapi dicatat di tabel \code{satellite_late_detections} beserta kunci, offset, dan \en{watermark} saat itu, serta dihitung. Jam BNPB tidak pernah dipakai, karena feed berjalan pada waktu virtual yang dapat dipercepat.
+  \item \textbf{Menutup kebakaran.} Kebakaran yang seluruh deteksinya lebih tua dari \en{watermark} dikurangi (12 jam + 360 menit) tidak dapat lagi disentuh deteksi mana pun yang masih diterima. Kebakaran itu ditutup: deteksinya keluar dari memori dan dari tabel kerja, HazardEvent-nya tetap dengan isi terakhir.
+  \item \textbf{Mengirim lalu \en{commit}.} Per \en{batch} (maksimum 512 event) kebakaran yang berubah dikirim ke Aggregator lewat \code{SubmitHazard} (16 panggilan paralel, \en{upsert} per \code{source_ref_id}); setelah itu deteksi yang berubah, kebakaran, catatan terlambat, penghitung, \en{watermark}, dan offset ditulis dalam \textbf{satu transaksi} ke \code{satellite_db}. Bila pengiriman atau \en{commit} gagal, memori dibuang dan dibangun ulang dari basis data pada percobaan berikutnya.
+  \item \textbf{Sesi baru.} Bila \code{/v1/session} melaporkan profil lain atau \code{latest_offset} yang lebih kecil dari offset ter-\en{commit} (sesi ujian dimulai), pemroses mengosongkan keadaan kerjanya dan mulai dari offset 0 tanpa intervensi.
+\end{enumerate}
+Ketertinggalan terlihat di dashboard Grafana: \code{satellite_feed_lag_events}, offset terbaru lawan ter-\en{commit}, dan histogram \code{satellite_event_to_store_seconds}. \code{GET /status} pada pemroses melaporkan angka yang diminta soal: jumlah deteksi tunggal, terlambat, \en{confidence} rendah, kebakaran aktif dan tertutup.
+
+Karena token kelompok ditolak feed asisten (401) sampai sesi penilaian, seluruh jalur diuji terhadap \textbf{feed pengganti} milik kami (\path{services/satellite-feed}, peran \code{mock}) yang mengimplementasikan kontrak yang sama dengan skenario deterministik: tiga satelit, lintasan tiap $\pm$100 menit, 2.000 deteksi per jam virtual, duplikat, \code{update}, \code{retract}, keterlambatan sampai 20 jam, percepatan, dan pemutusan koneksi. Peralihan ke feed asisten hanya mengganti \code{FEED_URL}.
+
+\subsection{Alasan keputusan: alternatif dan \en{trade-off}}
+\begin{itemize}
+  \item \textbf{Pemroses aliran siap pakai (Flink, Kafka Streams) lawan pemroses sendiri.} Kerangka siap pakai menyediakan \en{watermark}, \en{state} dan \en{checkpoint}, tetapi menambah satu klaster berkeadaan (512Mi--1Gi per instance menurut Lampiran B) dan broker log di depan feed. Volume sumber ini ribuan event per jam dari satu aliran berurutan total, sehingga satu konsumen ber-\en{checkpoint} di basis data cukup. Harganya: logika \en{watermark} dan pemulihan kami tulis dan uji sendiri.
+  \item \textbf{Jendela waktu tetap lawan komponen terhubung.} Jendela tetap (misalnya per 6 jam) murah, tetapi memotong rantai yang menurut definisi soal harus menyatu melintasi batas jendela. Kami memakai komponen terhubung atas seluruh deteksi yang masih hidup, dan memakai \en{watermark} hanya untuk memutuskan apa yang masih diterima dan apa yang boleh ditutup.
+  \item \textbf{Pengelompokan ulang penuh lawan inkremental.} Versi pertama memuat semua deteksi, mengelompokkan ulang, dan menulis ulang seluruh tabel pada tiap \en{batch}; biayanya tumbuh dengan ukuran keadaan dan identitas kebakaran bergantung pada letak batas \en{batch}. Versi final menerapkan event satu per satu dan hanya menulis selisihnya, sehingga hasil tidak bergantung pada pemotongan \en{batch} (diuji: \code{TestResultDoesNotDependOnBatchingOrRestarts}).
+  \item \textbf{Identitas dari isi lawan identitas yang dipertahankan.} \en{Hash} atas himpunan deteksi berubah tiap kali kebakaran tumbuh, sehingga melanggar kriteria 3 (memperbarui event yang ada). Kami mempertahankan identitas sejak pembentukan. Harganya, identitas bergantung pada urutan event; urutan itu tetap karena offset feed total dan tanpa celah, sehingga pemrosesan ulang data yang sama memberi identitas yang sama.
+  \item \textbf{Batas keterlambatan 12 jam.} Batas kecil menutup kebakaran lebih cepat dan menghemat memori, tetapi membuang lintasan pagi yang baru tiba siang. Batas besar menahan lebih banyak deteksi di memori (pada skenario uji $\pm$37 ribu deteksi untuk 18 jam) dan menunda penutupan. 12 jam menampung keterlambatan 2--8 jam yang umum; yang lebih dari itu dihitung sebagai terlambat.
+\end{itemize}
+
+\subsection{Batasan yang disadari}
+\begin{itemize}
+  \item Bukti berasal dari feed pengganti milik kami. Bentuk \en{payload} \code{update}, \code{retract}, dan \code{heartbeat} pada feed asisten belum pernah kami lihat; dekoder dibuat menerima beberapa bentuk, tetapi kecocokan baru terbukti saat token berlaku.
+  \item Deteksi yang melewati batas 12 jam tidak mengubah kebakaran. Pada skenario uji ini menggeser 16 dari 1.216 kebakaran dibanding definisi tanpa batas (kriteria 6).
+  \item \code{retract} atas deteksi milik kebakaran yang sudah ditutup tidak diterapkan dan dihitung (\code{retract_unknown}).
+  \item Keadaan kerja ada di memori satu \en{leader}; pengambilalihan memuat ulang seluruh deteksi dari basis data. Pada 60$\times$ jeda pengambilalihan inilah yang mendominasi p95.
+  \item HazardEvent dari sesi feed sebelumnya tidak dihapus otomatis saat sesi berganti; pembersihan dilakukan operator lewat \code{POST /internal/ops/purge?source=SATELIT} (token Ops) sebelum sesi penilaian.
+  \item Titik pusat provinsi untuk \code{area_name} adalah tabel 38 titik milik kami, bukan batas wilayah.
+\end{itemize}
+
+\subsection{Bukti penyelesaian per kriteria}
+Semua angka berasal dari satu \en{run} \code{p4-sim} pada 18 November 2026 terhadap feed pengganti (46.565 event sampai offset pembanding), dibandingkan dengan \path{scripts/m2-p4-reference.py}, implementasi terpisah dari definisi kebakaran yang ditulis langsung dari dokumen soal. Status \stpart{} berarti terpenuhi pada feed pengganti dan belum diulang pada feed asisten.
+
+\krit{1}{Hotspot menjadi HazardEvent WILDFIRE; satu kebakaran lintas satelit menjadi satu event.}\stpart\ 1.216 kebakaran aktif di Audit API, sama persis dengan 1.216 kebakaran referensi (himpunan kunci deteksi, severity, jumlah, total FRP, satelit, waktu, titik pusat); 880 di antaranya terlihat lebih dari satu satelit; 0 \code{source_ref_id} ganda, 0 himpunan kunci ganda.
+\bukti{\path{RUN/p4/sim/compare.json}, \path{RUN/p4/sim/reference.json}.}
+
+\krit{2}{Pengelompokan menurut waktu satelit; batas keterlambatan dinyatakan; yang melewati batas dihitung.}\stpart\ Batas 12 jam waktu kejadian. 73 event melewati batas, dicatat dan dihitung; angka yang sama (73) dihasilkan referensi. 28.409 deteksi \en{confidence} rendah diabaikan; deteksi tunggal 5.229 dalam keadaan kerja ditambah 1.438 yang sudah ditutup.
+\bukti{\path{RUN/p4/sim/result.json}, \path{RUN/p4/sim/status-final.json}.}
+
+\krit{3}{\code{update} dan \code{retract} memperbarui event yang ada.}\stpart\ 252 \code{update} dan 171 \code{retract} diproses; 14 kebakaran yang hilang menjadi \code{status=retracted} pada HazardEvent yang sama, tidak ada event baru untuk kebakaran yang menyusut.
+\bukti{\path{RUN/p4/sim/compare.json}.}
+
+\krit{4}{Percepatan 60$\times$: tidak ada data hilang, mutakhir lagi $\leq$ 60 s, p95 dilaporkan, ketertinggalan terlihat.}\stpart\ 180 s pada 60$\times$ (5.259 event). Saat lonjakan berakhir sistem tertinggal 99 event dan mutakhir kembali setelah \textbf{12,3 s}. Ketertinggalan terbesar 856 event, terjadi saat \en{leader} dimatikan. Celah offset 0. Latensi dari event dibaca sampai tersimpan dan offset ter-\en{commit}, atas 5.174 event: rata-rata 1,98 s, p50 $\leq$ 1 s, \textbf{p95 $\leq$ 10 s} (batas atas \en{bucket} histogram; termasuk jeda pengambilalihan).
+\bukti{\path{RUN/p4/sim/result.json}, \path{RUN/p4/sim/watch.jsonl}, \path{RUN/p4/sim/timeline.txt}.}
+
+\krit{5}{Pemroses mati saat kebakaran sedang dikenali; hasil akhir sama persis.}\stpart\ Pod \en{leader} dihapus paksa di tengah lonjakan pada offset 2.007 dengan 54 kebakaran aktif; replika siaga mengambil alih. Hasil akhir sama persis dengan referensi: 0 kebakaran hilang, 0 ganda.
+\bukti{\path{RUN/p4/sim/timeline.txt}, \path{RUN/p4/sim/compare.json}.}
+
+\krit{6}{Selisih terhadap hasil referensi.}\stpart\ Terhadap referensi yang menerapkan batas keterlambatan yang sama: selisih 0. Terhadap definisi tanpa batas keterlambatan: 1.200 kebakaran sama, 16 berbeda; ke-16-nya adalah kebakaran yang di sistem kami merupakan himpunan bagian dari kebakaran referensi, karena 73 event terlambat tidak diikutkan. Itulah seluruh selisih, dan penyebabnya batas yang kami nyatakan. Pembandingan dengan referensi asisten memakai skrip yang sama (\code{--stream-url}).
+\bukti{\path{RUN/p4/sim/compare.json}, \path{RUN/p4/sim/compare.txt}.}
+
+\krit{7}{Aliran \en{live} diproses saat demo.}\sttodo\ Feed asisten menjawab 401 untuk token kelompok sampai sesi penilaian. Biner yang sama memproses feed pengganti secara \en{live}.
+\bukti{\path{RUN/p4/status.json}.}
+
+\krit{8}{Putus dan menyambung.}\stpart\ Feed memutus semua koneksi dua kali di tengah lonjakan; pemroses melanjutkan dari offset ter-\en{commit}. Celah offset 0, hasil sama persis dengan referensi.
+\bukti{\path{RUN/p4/sim/timeline.txt}, \path{RUN/p4/sim/result.json}.}
+
+\subsection{Jawaban butir ``Di laporan''}
+
+\jawab{1 (persoalan pada kriteria 2, 4, 5)} Lihat subbagian identifikasi masalah: \en{event time} lawan \en{processing time} dengan \en{watermark} dan \en{allowed lateness}; \en{backpressure} dan \en{consumer lag}; pemrosesan aliran berkeadaan dengan jaminan \en{effectively-once} lewat \en{checkpoint} offset dan keadaan.
+
+\jawab{2 (mengapa pola pengambilan data M1 ditinggalkan untuk sumber ini)} Pola M1, polling berkala dengan cursor, \textbf{ditinggalkan} untuk Feed Satelit, dan tetap dipakai untuk BMKG dan PVMBG. Alasannya ada pada sifat sumbernya, bukan pada selera:
+\begin{itemize}
+  \item Feed menyediakan aliran Server-Sent Events dengan offset yang naik monoton tanpa celah dan mengenali \code{Last-Event-ID}. Posisi baca sudah menjadi bagian protokol; polling harus menirunya sendiri dengan cursor dan \en{overlap}.
+  \item Data datang dalam ledakan per lintasan satelit lalu diam. Polling berinterval tetap selalu salah di salah satu sisi: interval pendek memboroskan permintaan saat diam (dan feed membatasi koneksi, 429 \code{too_many_connections}), interval panjang menambah latensi tepat saat ledakan tiba. Aliran mendorong data begitu tersedia.
+  \item Feed juga mengirim \code{update} dan \code{retract} atas deteksi lama serta \code{heartbeat}. Pada aliran ber-offset, ketiganya adalah kejadian biasa dalam satu urutan total; pada polling ``apa yang baru sejak \en{t}'', koreksi atas data lama mudah terlewat.
+  \item Setelah putus, penyambungan ulang dengan offset terakhir yang sudah di-\en{commit} melanjutkan tepat di posisi berikutnya, tanpa jendela \en{overlap} dan tanpa dedupe berbasis waktu.
+\end{itemize}
+
+\jawab{3 (kapan kebakaran ``selesai dikenali'', keterlambatan, tempat keadaan sementara)}
+Sebuah kebakaran \textbf{selesai dikenali} ketika seluruh deteksinya lebih tua dari \en{watermark} dikurangi batas keterlambatan (12 jam) dan jendela keterhubungan (360 menit). Setelah titik itu tidak ada deteksi yang masih diterima yang dapat terhubung dengannya, jadi isinya final dan ia ditutup. Sebelum titik itu kebakaran sudah terbit sebagai HazardEvent sejak deteksi keduanya dan diperbarui di tempat; penutupan bukan syarat terbit. Keterlambatan ditangani dalam waktu kejadian: deteksi dalam batas tetap bergabung ke kebakarannya, termasuk yang menjembatani dua kebakaran; yang melewati batas dicatat dan dihitung. Keadaan sementara (deteksi hidup, kebakaran aktif, \en{watermark}, penghitung, offset) disimpan di \code{satellite_db} pada CockroachDB yang tereplikasi tiga, dan ditulis dalam satu transaksi bersama offset. Memori \en{leader} hanyalah salinan yang dapat dibangun ulang.
+
+\jawab{4 (jaminan pemrosesan dan buktinya)}
+Jaminannya \en{effectively-once}: pengiriman \en{at-least-once} dengan efek idempoten. Offset hanya maju dalam transaksi yang sama dengan keadaan yang dihasilkannya, dan baru setelah Aggregator menerima kebakaran \en{batch} itu. Bila pemroses mati di antara pengiriman dan \en{commit}, \en{batch} diputar ulang dari offset dan keadaan sebelumnya; karena event diterapkan satu per satu dan identitas tidak bergantung pada batas \en{batch}, pemutaran ulang menghasilkan kebakaran dan \code{source_ref_id} yang sama, dan Aggregator meng-\en{upsert}-nya. Bukti: (a) uji unit yang memutus koneksi, menggagalkan pengiriman, dan menggagalkan \en{commit} secara acak lalu menuntut hasil identik dengan \en{run} tanpa gangguan (\code{TestInterruptedStreamEndsWithTheSameEventsAsAnUndisturbedOne}); (b) kriteria 5 dan 8 di atas: \en{leader} dimatikan dan koneksi diputus dua kali, hasil sama persis dengan referensi, 0 celah offset, 0 duplikat.
+
+% =============================================================================
+\section{Problem 5: Pelampung yang Berbohong}
+\label{sec:p5}
+
+\subsection{Identifikasi masalah}
+
+\begin{itemize}
+  \item \textbf{Kriteria 2: validasi data dan karantina.} Sumber yang ``mengaku sehat'' tetapi mengirim data kedaluwarsa atau melanggar kontrak adalah kegagalan semantik, bukan kegagalan koneksi; penangkalnya adalah validasi kontrak di sisi konsumen dan penyisihan data buruk beserta alasannya (\en{quarantine}).
+  \item \textbf{Kriteria 3: isolasi kegagalan (\en{bulkhead}).} Masalah satu sumber tidak boleh menghabiskan sumber daya yang dipakai sumber lain \citep{release-it}.
+  \item \textbf{Kriteria 4: \en{circuit breaker} dan degradasi anggun.} Terus memanggil layanan yang sedang gagal memperburuk keadaan dan menahan pemanggil sampai \en{timeout}; \en{circuit breaker} menghentikan panggilan setelah kegagalan beruntun (\en{fail fast}) dan mencoba lagi secara terukur \citep{release-it}. Selama itu klien dilayani dengan data terakhir yang diketahui (\en{graceful degradation}).
+  \item \textbf{Kriteria 5: \en{load shedding} berprioritas.} Saat beban melebihi kapasitas, sistem harus memilih siapa yang ditolak (\en{admission control} menurut kelas layanan), bukan menolak secara acak \citep{sre-book}.
+  \item \textbf{Kriteria 6--8: rekayasa keandalan.} Kombinasi kegagalan tak diumumkan adalah latihan \en{chaos engineering} atau \en{game day}; target keandalan dan pemakaiannya adalah \en{service level objective} (SLO) dan \en{error budget} \citep{sre-book}.
+\end{itemize}
+
+\subsection{Rancangan solusi dan mekanisme}
+
+\textbf{Ingestor terpisah.} coastal-ingestor adalah proses tersendiri dengan basis data sendiri (\code{coastal_db}: cursor, karantina, data baik terakhir). Ia membaca \code{/v1/stations} dan \code{/v1/observations} sesuai Lampiran C, memetakan koordinat dan \code{area_name} dari daftar stasiun, memetakan \code{critical: true} menjadi \en{severity} AWAS, dan menyerahkan HazardEvent COASTAL ke Aggregator lewat \code{SubmitHazard}. Dua replika berjalan aktif/siaga dengan \en{lease} basis data (6 s/2 s) supaya replika tidak menggandakan permintaan ke sensor.
+
+\textbf{Validator dan karantina (kriteria 2).} Pembacaan disisihkan ke tabel karantina beserta alasannya, tidak menjadi HazardEvent, bila: identitasnya rusak (item bukan objek JSON, \code{observation_id} atau \code{station_id} kosong atau bertipe salah, stasiun tidak terdaftar, \code{observed_at} hilang, tidak terbaca, atau lebih dari 5 menit di depan \code{generated_at} milik sensor sendiri); atau isinya tidak dapat dipakai (\code{quality} bukan \code{ok}, pengukuran hilang, bukan angka, atau di luar rentang wajar: gelombang 0--50 m, anomali muka laut $\pm$30 m). Jam BNPB tidak pernah dipakai sebagai pembanding, karena sensor berjalan pada jam virtual yang dimulai ulang setiap kali ia menyala; versi sebelumnya membandingkan dengan jam BNPB dan menyisihkan semua pembacaan setelah sensor \en{restart}, termasuk yang kritis. ``Mengaku sehat padahal datanya kedaluwarsa'' adalah keadaan \en{feed}, bukan pelanggaran per pembacaan: \code{coastal_feed_freshness_seconds} mengukur selisih \code{generated_at} dengan observasi terbaru, dan peringatan dicatat bila melewati 30 menit waktu sensor. Halaman dipecah per item sebelum divalidasi, sehingga satu item rusak tidak menggagalkan halaman dan tidak menahan cursor.
+
+\textbf{Jalur kritis (kriteria 1).} Pembacaan ber-\code{critical: true} yang identitasnya utuh selalu diteruskan, walau \code{quality}-nya bukan \code{ok} atau pengukurannya janggal (dicatat pada atribut \code{validation_note}); peringatan palsu lebih murah daripada tsunami yang terlewat. Hanya pembacaan kritis beridentitas rusak yang disisihkan, dan itu dihitung tersendiri (\code{coastal_critical_quarantined_total}). Dalam tiap siklus pembacaan kritis dikirim lebih dulu; pembacaan biasa dikirim 8 paralel dengan anggaran 1 s per siklus, sehingga saat mengejar ketertinggalan ribuan pembacaan, yang kritis tidak mengantre di belakangnya. Penghitung \code{coastal_readings_quarantined_total{reason}} melaporkan jumlah per alasan. Aturan tidak bergantung pada ID, \en{seed}, urutan, atau pola profil latihan.
+
+\textbf{\en{Circuit breaker} (kriteria 4).} Tabel~\ref{tab:p5-config} memuat konfigurasinya. Saat terbuka, ingestor tidak memanggil sensor sama sekali; setelah 30 detik satu permintaan percobaan diizinkan (\en{half-open}); bila berhasil, \en{breaker} menutup dan polling normal berlanjut tanpa campur tangan.
+
+\textbf{Jawaban cepat saat sensor tidak sehat.} \code{GET /coastal/latest} menyajikan event pesisir terakhir yang tersimpan beserta status feed dari Canonical Store, sehingga tidak pernah menunggu sensor.
+
+\textbf{Isolasi dari sumber lain (kriteria 3).} Sensor dibaca oleh proses, \en{lease}, dan basis data yang berbeda dari jalur BMKG/PVMBG di Aggregator; tidak ada \en{thread pool}, koneksi, atau cursor yang dipakai bersama.
+
+\textbf{Jalur kritis.} Event pesisir kritis dirutekan ke exchange terpisah \code{hazard.events.critical} dan dikonsumsi critical-notifier (dua replika). Histogram \code{critical_notification_latency_seconds} mempunyai batas \en{bucket} tepat di 5 detik, sehingga ``berapa bagian $\leq$ 5 s'' terbaca tanpa interpolasi. Interval polling sensor di klaster 1 detik.
+
+\textbf{\en{Load shedding} (kriteria 5).} Client API mempunyai kapasitas bersama \code{MAX_INFLIGHT_REQUESTS} 64 permintaan serentak per pod. Permintaan Media juga harus memperoleh salah satu dari slot Media, paling banyak seperlima kapasitas; Tim Lapangan (dan klien bercakupan data mentah) boleh memakai seluruh kapasitas. Penolakan dijawab 429 dengan \code{Retry-After: 1}. Di depannya, sebelum jejak, log, dan autentikasi, ada gerbang \en{overload} murah (\path{services/client-api/internal/transport/http/overload.go}): bila permintaan yang sedang berjalan di pod itu melewati batas gerbang ($4\times$ kapasitas, yaitu 256), permintaan baru langsung dijawab 429 dengan \code{Retry-After: 1}. Gerbang tidak dapat mengautentikasi, tetapi dapat mengenali: setiap kali pembatas kelas melihat permintaan yang tokennya sudah tervalidasi dan bercakupan Tim Lapangan atau Ops (\code{field-reports:write} atau data mentah), nilai \code{Authorization}-nya dicatat di himpunan dalam memori pod selama 60 detik (paling banyak 20.000 entri). Permintaan yang membawa kredensial tercatat dilewatkan gerbang sampai dua kali batasnya (512 in-flight); kredensial yang tidak dikenal atau dipalsukan tidak memperoleh apa-apa karena tidak ada di himpunan, dan permintaan yang lolos gerbang tetap divalidasi seperti biasa. \code{/health} dan \code{/metrics} tidak pernah ditolak gerbang. Pengenalan kelas ini ditambahkan pada 18 November setelah run ulang menunjukkan gerbang yang buta kelas menolak 2,8\% permintaan Tim Lapangan saat Media membanjir (kriteria 5).
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Konfigurasi mekanisme ketahanan Problem 5 dan alasan nilainya.}}
+\label{tab:p5-config}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{4.3cm}L{2.5cm}Y@{}}
+\toprule
+\textbf{Parameter} & \textbf{Nilai} & \textbf{Alasan}\\
+\midrule
+Interval polling sensor & 1 s & Target notifikasi kritis 5 s; polling 30 s (bawaan lokal) tidak mungkin memenuhinya.\\
+\en{Lease} coastal-ingestor & TTL 6 s, \en{renew} 2 s & Lebih pendek dari \en{lease} Aggregator (15 s) karena target jalur ini 5 s. Pergantian \en{leader} tetap dapat melampaui 5 s; itu dihitung sebagai pemakaian \en{error budget} (Bagian~\ref{sec:p5-slo}).\\
+Ambang buka \en{breaker} & 5 kegagalan beruntun (jendela 30 s) & Dengan polling 1 s, lima kegagalan berarti kira-kira 5 s gangguan bila sensor menolak dengan cepat; bila tiap permintaan menunggu batas waktu 10 s (sensor tanpa endpoint, seperti pada uji kriteria 4), \en{breaker} baru membuka setelah kira-kira 50 s. Satu-dua kegagalan sesaat tidak membuka \en{breaker}.\\
+Lama terbuka sebelum \en{probe} & 30 s & Sensor yang mati hanya menerima satu permintaan per 30 s (bukan satu per detik); pemulihan terdeteksi paling lambat 30 s.\\
+\en{Half-open} & 1 permintaan percobaan & Sensor yang baru pulih tidak langsung dibanjiri.\\
+Ambang \en{feed} kedaluwarsa & 30 menit waktu sensor & Selisih \code{generated_at} dengan observasi terbaru; di atasnya sensor ``sehat'' tetapi datanya basi, dicatat sebagai peringatan dan metrik.\\
+Toleransi waktu depan & 5 menit dari \code{generated_at} & Dibandingkan dengan jam sensor sendiri, bukan jam BNPB, karena jam virtual sensor tidak sama dengan jam nyata.\\
+Kapasitas Client API & 64 in-flight per pod & Nilai bawaan konfigurasi (\code{MAX_INFLIGHT_REQUESTS}); dipakai pada semua pengukuran P2 dan P5. Pengaruh nilai lain belum diukur.\\
+Bagian Media & $\leq$ 1/5 kapasitas & Media tetap dilayani saat normal tetapi tidak dapat mengambil lebih dari seperlima saat banjir; sisanya selalu tersedia bagi Tim Lapangan.\\
+\code{Retry-After} & 1 s & Jeda terpendek yang bermakna bagi klien; klien patuh mencoba lagi setelah satu detik alih-alih segera.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Alasan keputusan: alternatif dan \en{trade-off}}
+
+\begin{itemize}
+  \item \textbf{Menyimpan data buruk dengan tanda atau menyisihkannya.} Menyimpan semuanya sebagai HazardEvent bertanda ``meragukan'' memindahkan beban penyaringan ke setiap pembaca dan ke jalur notifikasi. Karantina terpisah menjaga Canonical Store hanya berisi data yang lolos kontrak dan tetap mempertahankan data buruk untuk diperiksa. Harganya: bila validator terlalu ketat, data yang benar ikut tersisih; penghitung per alasan dipasang supaya hal itu terlihat.
+  \item \textbf{\en{Circuit breaker} atau sekadar \en{retry} dengan \en{backoff}.} \en{Backoff} mengurangi laju tetapi setiap percobaan tetap menunggu \en{timeout}; \en{breaker} memberi keadaan eksplisit yang dapat diekspor sebagai metrik (\code{coastal_circuit_state}) dan dijelaskan saat insiden.
+  \item \textbf{Mendeteksi sensor yang ``lupa'' cursor.} Heuristik pertama (``halaman terakhir kosong untuk cursor tidak kosong berarti cursor tidak dikenal'') ternyata salah: itu juga jawaban normal saat ingestor sudah mutakhir. Akibatnya hampir setiap siklus membaca ulang seluruh aliran dan menjenuhkan basis data (insiden 6). Penggantinya mendeteksi \en{restart} sensor dari \code{generated_at} yang mundur, dengan cadangan cursor yang tetap kosong selama 60 detik atau lebih. Pelajarannya: heuristik kesehatan yang dibangun dari satu kejadian harus diuji terhadap perilaku normal.
+  \item \textbf{Pembatas global atau per kelas.} Pembatas global M1 berada di depan semua rute, sebelum kelas klien diketahui; banjir Media memenuhinya dan 29\% permintaan Tim Lapangan ikut ditolak. Pembatas per kelas dengan kapasitas bersama menggantikannya. Reservasi keras (misalnya 80/20 tetap) ditolak karena membuang kapasitas saat salah satu kelas sepi.
+  \item \textbf{Antrean kritis terpisah atau prioritas dalam satu antrean.} Exchange terpisah memberi konsumen, metrik, dan penumpukan yang terpisah; event kritis tidak menunggu di belakang ribuan event biasa.
+\end{itemize}
+
+\subsection{Batasan yang disadari}
+
+\begin{itemize}
+  \item Latensi notifikasi kritis hanya terukur pada tiga observasi kritis yang dikeluarkan profil latihan tiap kali sensor menyala (24 sampel lewat \en{restart} sensor berulang), bukan pada aliran kritis yang panjang.
+  \item Gerbang \en{overload} mengenali Tim Lapangan hanya lewat kredensial yang baru saja tervalidasi di pod yang sama: permintaan pertama sebuah token di sebuah pod, dan permintaan di atas dua kali batas gerbang, tetap dapat ditolak saat Media membanjir. Pada run akhir 8 dari 6.418 permintaan Tim Lapangan menerima 429.
+  \item Saat sensor tidak mempunyai endpoint, tiap permintaan menunggu batas waktu 10 s, sehingga \en{breaker} baru membuka setelah kira-kira 50 s (kriteria 4).
+  \item Bila kedua kelas sama-sama membanjir, Tim Lapangan tidak dilayani penuh; yang dijamin adalah pembagian (78,7\% dari yang dilayani pada uji 1.500 VU per kelas), bukan pelayanan seluruh permintaan.
+  \item Data karantina lama dari insiden 6 (jutaan baris duplikat) masih berada di \code{coastal_quarantine}; penghitung karantina kumulatif karena itu jauh lebih besar daripada jumlah pembacaan buruk yang unik.
+  \item RabbitMQ instance tunggal berada di jalur notifikasi kritis; kehilangan nodenya menunda notifikasi sampai node itu hidup kembali, karena PVC-nya terikat pada disk node (teramati pada \en{game day}, kriteria 8).
+  \item \en{Game day} baru dijalankan dengan keenam skenario latihan Tester Agent; skenario ujian memerlukan kunci asisten.
+\end{itemize}
+
+\subsection{Bukti penyelesaian per kriteria}
+
+\krit{1}{Semua event kritis sampai ke penerima notifikasi Tim Lapangan: 0 hilang, p95 $\leq$ 5 detik.}\stok\ Profil latihan sensor mengeluarkan tepat tiga observasi kritis tiap kali sensor menyala (ditemukan dengan memindai seluruh aliran, 320.282 observasi). Uji: pod sensor dihapus tujuh kali; pada tiap ronde ingestor meneruskan 3 pembacaan kritis dan penerima notifikasi mencatat 3. Total \textbf{21 dari 21} ternotifikasi, 0 disisihkan, 0 hilang. Latensi dari jawaban sensor dibaca ingestor sampai notifikasi diterima (24 sampel, termasuk 3 dari \en{restart} sebelum ronde): 24 dari 24 $\leq$ 5 s, \textbf{p95 $\leq$ 1 s} (batas atas \en{bucket} histogram). Sensor memperlihatkan observasi paling lama satu interval \en{polling} (1 s) sebelum dibaca, jadi dari tersedia di sensor sampai notifikasi p95 $\leq$ 2 s. Acuan \code{observed_at} tidak dipakai sebagai latensi karena itu jam virtual sensor.
+\bukti{\path{RUN/p5/critical-latency.json}, \path{RUN/p5/critical-rounds.json}; tahap \code{p5-critical}.}
+
+\krit{2}{Data yang melanggar kontrak tidak tersimpan sebagai HazardEvent, disisihkan beserta alasannya.}\stok\ Pada profil latihan satu-satunya pelanggaran yang muncul adalah \code{quality: suspect} (3.153 dari 320.282 observasi, 1\,\%, pada pemindaian seluruh aliran); semuanya disisihkan sebagai \code{quality_rejected} dan terhitung pada \code{coastal_readings_quarantined_total}. Cuplikan penghitung ingestor versi baru pada 18 November 12.56 UTC: pod \en{leader} menerima 2.715 pembacaan, menyisihkan 28 dengan alasan \code{quality_rejected} (1,0\,\%), meneruskan 4 pembacaan kritis, dan tidak mencatat alasan lain; replika siaga tidak memproses apa pun. Alasan lain (item rusak, tipe salah, pengukuran di luar rentang, waktu dari masa depan) diuji dengan uji unit dan \en{fuzzing} dekoder (5,4 juta masukan tanpa \en{panic}), karena profil latihan tidak menghasilkannya. Alasan \code{occurred_at_stale} milik validator lama tidak ada lagi di berkas ini.
+\bukti{\path{RUN/p5/quarantine.json}.}
+
+\krit{3}{Selama Sensor Pantai bermasalah, sumber lain tetap memenuhi kriteria latensi M1.}\stok\ Selama sensor dimatikan dan dipulihkan, \code{GET /hazards?source=BMKG} diukur 24 kali (3 sebelum, 9 selama gangguan, 12 saat pemulihan; 18 November 13.01--13.05 UTC): semuanya 200, paling lambat 66 ms, jauh di bawah ambang M1 (p95 $<$ 300 ms). Uji 15 November: 23--108 ms.
+\bukti{\path{RUN/p5/sensor-outage.jsonl}, \path{A15/p5/sensor-outage.jsonl}.}
+
+\krit{4}{Permintaan ke sensor tidak melonjak saat sensor tidak sehat; klien dijawab cepat; pulih tanpa intervensi.}\stok\ Sensor di-\en{scale} ke 0 pada 13.02.07 UTC selama 94 detik. \en{Breaker} membuka (\code{coastal_circuit_state} = 2) setelah kegagalan kelima, terlihat pada sampel 13.03.00; karena tiap permintaan ke sensor tanpa endpoint menunggu batas waktu 10 s, lima kegagalan itu memakan kira-kira 50 detik. Selama gangguan hanya 5 permintaan gagal yang dikirim ke sensor (ditambah satu percobaan \en{half-open} yang juga gagal), padahal saat normal ingestor mengirim kira-kira 2 permintaan per detik. \code{GET /coastal/latest} tetap 200 pada seluruh 24 sampel, paling lambat 158 ms (98 ms selama gangguan). Setelah sensor kembali (13.03.41), \en{breaker} menutup sendiri dan pembacaan diterima lagi pada sampel 13.04.13; tidak ada tindakan operator. Satu hal yang tercatat apa adanya: pada fase pemulihan \en{breaker} membuka sekali lagi (sampel 13.04.45--13.05.06, setelah lima kegagalan baru) lalu menutup sendiri sebelum 13.05.16; berkas bukti tidak merekam penyebabnya. Keadaan akhir: \en{breaker} tertutup dan pembacaan terus bertambah. Uji 15 November (sensor mati 95 detik): 6 permintaan gagal seluruhnya, \en{breaker} menutup kira-kira 30 detik setelah sensor hidup.
+\bukti{\path{RUN/p5/sensor-outage.jsonl}; skrip \path{scripts/m2-p5-sensor-outage.sh}.}
+
+\krit{5}{Saat beban melebihi kapasitas, Tim Lapangan tetap dilayani dan Media ditolak terkendali.}\stpart\ (99,9\%, bukan 100\%). 100 VU Tim Lapangan melawan 2.000 VU Media selama 35 detik (Tabel~\ref{tab:p5-shedding}). Run akhir (18 November 13.09 UTC): Tim Lapangan 6.410 dari 6.418 dilayani (99,9\%, p95 382 ms); Media 112.455 dari 140.707 ditolak 429 (79,9\%), semuanya dengan \code{Retry-After}, dan 28.252 permintaan Media (20,1\%) tetap dilayani. Delapan permintaan Tim Lapangan menerima 429; berkas k6 tidak membedakan apakah penolakan itu dari gerbang atau dari kapasitas bersama yang penuh. Riwayatnya menjelaskan rancangan gerbang: run ulang beberapa menit sebelumnya (13.06 UTC), dengan gerbang \en{overload} yang belum dapat membedakan kelas, hanya melayani 97,2\% (191 dari 6.860 permintaan Tim Lapangan ditolak) karena banjir Media sendiri sudah melewati batas gerbang dan semua permintaan di atasnya ditolak tanpa melihat siapa pengirimnya. Perbaikannya adalah pengenalan kredensial berprioritas pada gerbang (subbagian rancangan); run akhir diambil setelah perbaikan itu. Harganya terlihat pada p95 Tim Lapangan (382 ms, lawan 88 ms pada run 16 November): permintaan yang dulu ditolak cepat kini diterima dan menunggu giliran.
+\bukti{\path{RUN/p5/shedding.json}, \path{RUN/timeline.txt} (ringkasan tiap run \code{p5-shedding}, termasuk yang berkasnya tertimpa), \path{RUN/p5/shedding-before-gate/shedding.json}, \path{A15/p5/shedding.json}, \path{A15/p5/shedding-before-fix.json}, \path{A15/p5/shedding-both-overloaded.json}; skrip \path{tests/load/k6/m2-shedding.js}.}
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Pelepasan beban berprioritas: Tim Lapangan dilayani, Media ditolak dengan 429.} Dua run gerbang buta kelas hanya tersisa sebagai ringkasan di \protect\path{RUN/timeline.txt}; berkas rincinya tertimpa run akhir, dan p95 run 13.06 UTC tidak tercatat.}
+\label{tab:p5-shedding}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{4.8cm}R{2.3cm}R{1.6cm}R{2.4cm}Y@{}}
+\toprule
+\textbf{Run} & \textbf{Tim Lapangan dilayani} & \textbf{p95} & \textbf{Media ditolak 429} & \textbf{Catatan}\\
+\midrule
+Pembatas global M1 (\code{A15}, sebelum perbaikan) & 3.811 / 5.375 (70,9\%) & 795 ms & 139.156 / 144.030 & 29\% Tim Lapangan ikut ditolak.\\
+Pembatas per kelas (\code{A15}) & 4.834 / 4.834 (100\%) & 709 ms & 141.566 / 146.107 (96,9\%) & --\\
+Per kelas, sebelum gerbang \en{overload} (\code{RUN}) & 5.037 / 5.037 (100\%) & 631 ms & 139.974 / 144.808 (96,7\%) & --\\
+Per kelas + gerbang \en{overload} buta kelas (\code{RUN}, 16 Nov) & 7.471 / 7.487 (99,8\%) & 88 ms & 105.415 / 153.138 (68,8\%) & Latensi turun tajam; 16 penolakan Tim Lapangan.\\
+Sama, run ulang 18 Nov 13.06 UTC & 6.669 / 6.860 (97,2\%) & -- & 112.770 / 144.592 (78,0\%) & 191 penolakan Tim Lapangan; alasan perbaikan gerbang.\\
+\textbf{Per kelas + gerbang yang mengenali kredensial prioritas (\code{RUN}, akhir, 18 Nov 13.09 UTC)} & \textbf{6.410 / 6.418 (99,9\%)} & \textbf{382 ms} & 112.455 / 140.707 (79,9\%) & 8 penolakan Tim Lapangan.\\
+Kedua kelas membanjir, 1.500 VU masing-masing (\code{A15}) & 7.727 / 102.503 & 1.245 ms & 106.160 / 108.253 & Dari yang dilayani: 78,7\% Tim Lapangan, 21,3\% Media.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\krit{6}{Kombinasi kegagalan tak diumumkan; sistem pulih sendiri tanpa intervensi.}\stpart\\
+\en{Game day} dijalankan dengan keenam skenario latihan Tester Agent secara berurutan (\code{clock-skew}, \code{kill-leader}, \code{kill-store}, \code{partition}, \code{schema}, \code{wipe-node}), masing-masing diikuti jendela 300 s tanpa intervensi. Selama itu \en{probe} di dalam klaster memanggil \code{/hazards}, \code{/analytics}, \code{checksum} dan \code{distribution} Audit API tiap detik (7.228 permintaan), dan sensor di-\en{restart} pada awal tiap skenario supaya mengeluarkan observasi kritisnya (stimulus, bukan perbaikan). Hasil per skenario ada pada Tabel~\ref{tab:gameday}. Dua skenario memakai jatah kesalahan; empat lainnya tidak terasa oleh klien. Hasil ini adalah run keempat: tiga run sebelumnya menemukan hal yang diperbaiki di antaranya (lihat post-mortem). Skenario ujian memerlukan kunci asisten dan belum dijalankan; karena itu status kriteria 6 \stpart.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{\en{Game day} latihan, 18 November 2026 12.19--12.50 UTC.} Jawaban \en{probe} per jendela skenario; ``200 parsial'' berarti dijawab dengan \code{partial: true}.}
+\label{tab:gameday}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{1.9cm}L{3.6cm}R{1.0cm}R{1.2cm}R{1.3cm}Y@{}}
+\toprule
+\textbf{Skenario} & \textbf{Aksi agen} & \textbf{200} & \textbf{200 parsial} & \textbf{503 / 502} & \textbf{Yang terjadi}\\
+\midrule
+clock-skew & jam satu node +300 s selama 30 s & 15 & 801 & 396 / 0 & Store menolak semua pernyataan $\pm$5 menit. Jawaban lama bertanda parsial; kunci yang belum pernah dibaca instance itu dijawab 503 \code{unavailable}.\\
+kill-leader & pod Aggregator dihentikan & 1.100 & 96 & 0 / 0 & Instance lain mengambil alih \en{lease}; tidak ada kesalahan.\\
+kill-store & pod CockroachDB dihentikan & 1.216 & 4 & 0 / 0 & Kuorum tetap ada; pod kembali sendiri.\\
+partition & lalu lintas antar-node diblokir 30 s & 1.216 & 0 & 0 / 0 & Tidak terlihat oleh klien.\\
+schema & \code{POST /admin/schema-version} \code{{"version":2}} & 1.220 & 0 & 0 / 0 & Perubahan aditif diterima otomatis.\\
+wipe-node & node-c dihapus datanya dan dimatikan & 40 & 1.120 & 1 / 3 & Dijawab parsial dengan \code{unavailable_units: [node-c]}; pod Deployment pindah ke node lain dalam $\pm$70 s; RabbitMQ (instance tunggal di node-c) tidak kembali sampai VM dihidupkan.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+\bukti{\path{RUN/p5/gameday/gameday.json}, \path{RUN/p5/gameday/probe.json}, \path{RUN/p5/gameday/metrics.jsonl}, \path{RUN/p5/gameday/agent-log.txt}.}
+
+\krit{7}{Kegagalan yang sedang berlangsung dapat dijelaskan dari dashboard, metrik, dan jejak.}\stpart\ Sarana penjelasnya: dashboard, \code{coastal_circuit_state}, penanda \code{partial}, log ber-\code{fence} (Bagian~\ref{sec:observability}).
+Tiap gangguan dapat dijelaskan dari sinyal yang terekam, bukan dugaan. \code{clock-skew}: log Aggregator memuat \code{remote wall time is too far ahead (4m59s)} dari CockroachDB, penghitung \code{aggregator_degraded_answers_total} naik, dan jawaban membawa \code{stale_since}. \code{kill-leader}: log \code{leader lease lost} pada pod lama dan \code{leader acquired} dengan \en{fence} baru pada pod lain. \code{wipe-node}: \code{kubectl get nodes} menunjukkan node-c NotReady, Audit API mengisi \code{unavailable_units}, dan dashboard analitik menampilkan \en{banner} data belum lengkap (Gambar~\ref{fig:shot-analytics}). Aksi agen yang bersesuaian ada pada Gambar~\ref{fig:shot-tester}; cuplikan keadaan klaster tiap 15 s ada di \path{RUN/p5/gameday/metrics.jsonl}. Kriteria ini dinilai saat demo; di sini status \stpart.
+
+\krit{8}{Target keandalan jalur peringatan Tim Lapangan dan pemakaiannya selama \en{game day}.}\stpart\ Definisi SLO ada pada Bagian~\ref{sec:p5-slo}.
+\textbf{Jalur peringatan.} Penerima notifikasi yang bertahan sampai akhir mencatat 7 notifikasi kritis: 6 dalam 1 s dan 1 lebih dari 30 s. Yang terlambat adalah event yang terbit saat node-c mati: RabbitMQ berada di node itu, sehingga event menunggu di \en{outbox} dan baru terkirim setelah VM dihidupkan. Sensor mengeluarkan 18 observasi kritis selama \en{game day} (3 per skenario); sisanya diterima replika penerima di node-c yang penghitungnya hilang bersama node itu, sehingga jumlah pastinya tidak dapat kami buktikan. Terhadap target 99\,\% dalam 5 s, satu keterlambatan dari tujuh yang terukur berarti jatah 28 hari terlampaui oleh \en{game day} ini saja. \textbf{Jalur API.} 6.828 dari 7.228 permintaan dijawab 200 (94,5\,\%), 400 dijawab 503 atau 502; target 99,5\,\% tidak tercapai, hampir seluruhnya karena skenario \code{clock-skew}. Tidak ada jawaban 500 dan tidak ada permintaan yang menggantung melewati batas 5 s.
+\bukti{\path{RUN/p5/gameday/gameday.json}; histogram \code{critical_notification_latency_seconds}.}
+
+\begin{figure}[htbp]
+\centering
+% TODO-MAIN: tangkapan layar log Tester Agent saat skenario dijalankan
+\textshot{evidence/m2/tester-agent.txt}
+\caption[Log Tester Agent saat \en{game day}]{\textbf{Setiap aksi Tester Agent tercatat dan dapat dicocokkan dengan gejala pada dashboard.} Log \code{kubectl logs} keempat pod agen selama \en{game day} (\protect\path{docs/evidence/m2/tester-agent.txt}).}
+\label{fig:shot-tester}
+\end{figure}
+
+\subsection{Usulan target keandalan (SLO) jalur peringatan Tim Lapangan}
+\label{sec:p5-slo}
+
+\begin{itemize}
+  \item \textbf{Indikator (SLI).} Bagian event yang ditandai kritis oleh Sensor Pantai yang sampai ke critical-notifier dalam $\leq$ 5 detik, diukur dari saat jawaban sensor dibaca ingestor sampai notifikasi diterima (histogram \code{critical_notification_latency_seconds}, acuan \code{received_at}; \code{occurred_at} tidak dipakai karena itu jam virtual sensor); event kritis yang tidak pernah sampai dihitung gagal.
+  \item \textbf{Target (SLO).} 99\% event kritis ternotifikasi $\leq$ 5 detik dalam jendela 28 hari.
+  \item \textbf{\en{Error budget}.} 1\% event kritis dalam jendela itu boleh terlambat. Event kritis yang hilang tidak termasuk anggaran: targetnya tetap 0 hilang (kriteria 1), dan satu kehilangan diperlakukan sebagai insiden.
+  \item \textbf{Alasan angka.} Rantai jalur ini adalah polling 1 s, validasi, \code{SubmitHazard}, outbox (interval 500 ms), RabbitMQ, lalu konsumen; pada keadaan normal jumlahnya jauh di bawah 5 s, tetapi pergantian \en{leader} ingestor (TTL 6 s) atau \en{breaker} yang terbuka (\en{probe} tiap 30 s) dapat melampauinya. Target 99\% mengakui bahwa kegagalan seperti itu memakan anggaran, dan membuat pemakaian anggaran menjadi ukuran seberapa sering hal itu terjadi.
+\end{itemize}
+Pengukurannya: pada keadaan normal 24 dari 24 sampel $\leq$ 5 s (kriteria 1); pemakaian anggaran selama \en{game day} latihan dilaporkan pada kriteria 8.
+
+\subsection{Jawaban butir ``Di laporan''}
+
+\jawab{1 (persoalan pada kriteria 2--5)} Kriteria 2: validasi kontrak di sisi konsumen dan \en{quarantine}. Kriteria 3: isolasi kegagalan (\en{bulkhead}). Kriteria 4: \en{circuit breaker}, \en{fail fast}, dan \en{graceful degradation} dengan data terakhir. Kriteria 5: \en{load shedding} dan \en{admission control} berprioritas.
+
+\jawab{2 (mekanisme ketahanan, konfigurasi, alasan nilai)} Tabel~\ref{tab:p5-config} dan subbagian rancangan: validator dan karantina; \en{circuit breaker}; \code{/coastal/latest} dari data tersimpan; ingestor aktif/siaga ber-\en{lease}; antrean kritis terpisah; pembatas per kelas dengan gerbang \en{overload}.
+
+\jawab{3 (perilaku menyimpang Sensor Pantai)} Tabel~\ref{tab:p5-anomalies}.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Perilaku menyimpang Sensor Pantai yang ditemukan, cara menemukannya, dan penanganannya.}}
+\label{tab:p5-anomalies}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{0.4cm}L{4.2cm}YY@{}}
+\toprule
+\textbf{\#} & \textbf{Perilaku} & \textbf{Cara menemukan} & \textbf{Penanganan}\\
+\midrule
+1 & Setelah \en{restart}, sensor memulai penomoran dari \code{obs-000000}, tetap menjawab \code{/healthz} 200, dan menjawab cursor lama dengan \code{items: []}, \code{next_cursor: null}: ``sehat'' tetapi tidak pernah mengirim data lagi. & Penghitung \code{coastal_readings_accepted_total} diam; sensor lalu ditanya langsung dengan dan tanpa cursor. & \en{Restart} dideteksi dari \code{generated_at} yang mundur (cadangan: cursor tetap kosong $\geq$ 60 s); aliran dibaca ulang dari awal (\code{coastal_sensor_cursor_resets_total}); \en{upsert} idempoten di Aggregator mencegah event ganda. Tidak bergantung pada ID atau pola profil.\\
+2 & Sensor memutar ulang data berhari-hari lalu (waktu virtual mulai 12 November saat jam nyata 16 November). & Validator lama menyisihkan semuanya sebagai kedaluwarsa (lebih dari 19.199 record), termasuk tiga observasi kritis: 0 notifikasi kritis. & Jam BNPB tidak lagi dipakai; waktu dinilai terhadap \code{generated_at} sensor. Kesegaran \en{feed} diukur terpisah.\\
+3 & Jam virtual sensor berjalan lebih cepat dari jam nyata (\code{generated_at} 20 November saat 16 November). & Terbaca pada jawaban sensor: \code{generated_at} bertanggal 20 November saat jam nyata 16 November. & Validasi ``dari masa depan'' memakai \code{generated_at} sensor sebagai acuan, bukan jam BNPB.\\
+4 & Jawaban ``mutakhir'' berbentuk sama dengan jawaban ``cursor tidak dikenal'' (halaman kosong, \code{next_cursor: null}). & Uji beban P2 gagal; ingestor ternyata me-\en{reset} 21 kali dalam 20 detik (insiden 6). & Keadaan mutakhir tidak lagi dianggap \en{reset}; karantina ditulis per 500 baris.\\
+5 & Pembacaan dengan \code{quality} selain \code{ok}. & Penghitung karantina \code{quality_rejected}. & Disisihkan beserta nilai \code{quality}-nya.\\
+6 & Image hanya tersedia untuk amd64. & Platform image tidak cocok dengan node arm64. & Dijalankan lewat emulasi qemu tanpa mengubah image.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\jawab{4 (post-mortem \en{game day})} Bagian~\ref{sec:incidents} memuat post-mortem \en{game day} latihan 18 November (deteksi, dampak, mitigasi, perbaikan, dan yang belum diperbaiki) serta, terpisah, insiden nyata selama pengembangan dalam format yang sama.
+
+\subsection{Post-mortem}
+\label{sec:incidents}
+
+\subsubsection*{Game day dengan Tester Agent}
+\textbf{Post-mortem \en{game day} (18 November 2026).}
+
+\textbf{Deteksi.} (1) \code{clock-skew}: \en{probe} melaporkan 100\,\% pembacaan gagal selama 300 s pada run kedua; log Aggregator menunjukkan \code{remote wall time is too far ahead}. (2) \code{partition} dan \code{schema}: log Tester Agent sendiri mencatat ``langkah gagal'' (iptables tidak ditemukan; tidak ada Service \code{role=mock}; mock menjawab 403 lalu 400), jadi agen tidak dapat bekerja padahal sistem tampak sehat. (3) \code{wipe-node}: node NotReady, \code{rabbitmq} tidak tersedia, notifikasi kritis berhenti.
+
+\textbf{Dampak.} Run kedua: 1.136 dari 7.296 permintaan (15,6\,\%) dijawab 5xx, semuanya dalam jendela \code{clock-skew}. Run keempat (final): 400 dari 7.228 (5,5\,\%), semuanya 503 atau 502 eksplisit; 801 jawaban dalam jendela itu dilayani dari jawaban terakhir dengan penanda parsial. Satu notifikasi kritis terlambat lebih dari 30 s saat node pemegang RabbitMQ mati. Tidak ada HazardEvent hilang: \code{checksum} dan \code{distribution} kembali \code{partial: false} setelah node-c bergabung lagi.
+
+\textbf{Mitigasi (selama jendela, tanpa intervensi).} \en{Lease} dan \en{fencing} mencegah penulis ganda; RF=3 menjaga kuorum saat satu node store hilang; pembacaan turun ke jawaban terakhir bertanda parsial; pod Deployment pindah node setelah toleransi 30 s.
+
+\textbf{Perbaikan yang sudah dilakukan.} (a) Degradasi baca: \en{cache} daftar, analitik, \code{checksum}, dan \code{distribution} mengembalikan jawaban terakhir dengan \code{partial: true} dan \code{stale_since} saat store gagal; kegagalan store dipetakan ke 503 \code{unavailable}, bukan 500/502. (b) Empat penyesuaian supaya Tester Agent dapat bekerja (paragraf Tester Agent pada ketentuan platform). (c) Toleransi NotReady 30 s pada semua Deployment. (d) Dashboard analitik di peramban ternyata memanggil jalur tanpa awalan \code{/api} dan gagal di klaster; diperbaiki. (e) Jam BNPB dikeluarkan dari validasi sensor.
+
+\textbf{Perbaikan yang dicoba lalu dibatalkan.} \code{server.clock.forward_jump_check.enabled} pada CockroachDB, supaya node yang jamnya melompat berhenti sendiri. Di \en{testbed} ini jeda vCPU beberapa ratus milidetik sudah terhitung lompatan: tiga dari empat node \en{panic} bersamaan. Pengaturan dikembalikan.
+
+\textbf{Belum diperbaiki.} Lompatan jam maju pada satu node store tetap membuat store menolak pernyataan selama kira-kira besar lompatan itu; penulisan menunggu. RabbitMQ dan PostgreSQL Auth tetap instance tunggal ber-disk lokal: bila node-nya di-\en{wipe}, notifikasi tertunda sampai node kembali dan antrean yang belum dikonsumsi hilang. \en{Cache} degradasi bersifat per instance dan per kunci, sehingga instance yang baru menyala menjawab 503 sampai store kembali.
+
+\subsubsection*{Insiden operasional selama pengembangan (bukan game day)}
+
+Insiden berikut terjadi pada 15--18 November 2026 saat sistem dibangun dan diuji di klaster. Semuanya nyata dan disusun dalam format yang sama dengan post-mortem yang diminta, karena dari sinilah sebagian besar keputusan ketahanan pada laporan ini berasal. Penomoran mengikuti catatan kerja kelompok.
+
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}L{0.45cm}L{3.3cm}L{3.9cm}L{3.9cm}L{3.9cm}@{}}
+\caption{\textbf{Insiden selama pengembangan: deteksi, dampak, mitigasi, dan perbaikan.}}\label{tab:incidents}\\
+\toprule
+\textbf{\#} & \textbf{Insiden dan penyebab} & \textbf{Deteksi dan dampak} & \textbf{Mitigasi} & \textbf{Perbaikan dan pelajaran}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{\#} & \textbf{Insiden dan penyebab} & \textbf{Deteksi dan dampak} & \textbf{Mitigasi} & \textbf{Perbaikan dan pelajaran}\\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+1 & \textbf{Ingest berhenti diam-diam} setelah \en{rolling restart} CockroachDB (15 Nov). Galat validasi sesaat mencabut tanda \en{leader}, sementara \en{loop} perpanjangan tetap memperpanjang \en{lease}. & Jumlah event di Audit API tidak bertambah. Satu instance memegang \en{lease} tanpa bekerja; tidak ada \en{failover}. & -- (tidak tercatat) & Galat sesaat hanya menolak satu tulisan; perpanjangan yang sukses memulihkan tanda. Uji regresi gagal pada kode lama. Pelajaran: ``aman'' tanpa ``hidup'' tetap insiden.\\
+2 & \textbf{Jam VM bergeser} setelah host berhenti (16 Nov): node-b tertinggal 204 s. & \code{replica unavailable}, \code{remote wall time is too far ahead}; penyimpanan lumpuh. & Sinkronisasi NTP dipaksa. & Selisih jam harus menjadi \en{alert}; saat itu belum ada (lihat insiden 9).\\
+3 & \textbf{VM node-c macet saat \en{boot}} setelah beberapa kali dimatikan paksa. & Login gagal: PostgreSQL Auth dan RabbitMQ (tunggal, disk di node-c) mati. Data Auth dan isi antrean hilang. & VM dibuat ulang dan digabungkan; Job \code{auth-db-bootstrap}; klien Auth di-\en{seed} ulang saat \en{start}. & Keadaan tunggal di \en{local-path} adalah titik kegagalan tunggal. Belum diperbaiki untuk PostgreSQL dan RabbitMQ.\\
+4 & Setelah node-c baru, \code{cockroachdb-1} terjadwal ke node-b (anti-afinitas hanya \en{preferred}). & Dua pod CockroachDB di satu VM. & PVC dan pod dihapus supaya pindah ke node-c. & Urutan pembuatan PVC terhadap kesiapan node perlu diperhatikan.\\
+5 & \textbf{\en{Zombie leader} lolos \en{fencing}} setelah VM \en{freeze} (17 Nov): \en{fencing} \en{fail-open} karena \en{race}. & Ditemukan penganalisis otomatis \code{p2-freeze}: tulisan dengan \code{fence: 0}. & -- (ditemukan saat uji) & \en{Fail-closed}; validasi \en{lease} sebelum \en{fetch} (Problem 2). Pelajaran: uji gangguan yang diotomasi menemukan \en{race} yang tidak muncul di uji manual.\\
+6 & \textbf{Badai baca-ulang sensor} menjenuhkan CockroachDB (17 Nov): heuristik ``sensor lupa cursor'' salah. & Uji 10.000 VU turun dari 0,64\% ke 62\% kesalahan; CockroachDB 0,35--0,85 core per node saat diam; 6.200 baris dikarantina ulang tiap siklus. & -- & INSERT karantina per 500 baris; deteksi \en{restart} dari \code{generated_at}. Hasil: 0 \en{reset}, CPU 0,10--0,15 core. Pelajaran: beban latar satu fitur dapat merusak kriteria fitur lain; uji beban diulang setelah perubahan besar.\\
+7 & \textbf{PostgreSQL Auth ter-\en{initdb} ulang} (17 Nov): direktori PV kosong saat pod \en{start}; penyebab kosongnya belum dipastikan. & Auth \en{CrashLoopBackOff} 108 kali; login mati; tahap \en{runner} gagal. & Job \en{bootstrap} dijalankan ulang; Auth Ready $<$ 1 menit. & Sama dengan insiden 3. Usulan: \en{bootstrap} idempoten sebagai \en{init container}; pemeriksaan Auth Ready sebelum tiap tahap.\\
+8 & \textbf{\en{Liveness probe} mematikan dua node CockroachDB} dalam 7 detik saat uji beban (18 Nov): host jenuh, \code{/health} $>$ 5 s. & 502 = 2.958; run \en{throughput} runtuh (64 lawan 428 jawaban 200/s). Dua dari empat node \en{restart} bersamaan: sebagian range kehilangan kuorum. & -- & \en{Liveness} 10 s $\times$ 12, \en{readiness} 3 s $\times$ 3; dua run berikutnya 0 \en{restart}. Pelajaran: \en{liveness} untuk proses yang macet, bukan yang lambat; \en{probe} agresif mengubah kelambatan menjadi kehilangan kuorum.\\
+9 & \textbf{Jam bergeser lagi}: node-b/c/d tertinggal 9 menit (18 Nov), padahal \code{timedatectl} melaporkan tersinkron. & CockroachDB 0/4 Ready. & \en{Restart} \code{systemd-timesyncd}; 4/4 Ready dalam 30 s. & \en{Runner} memeriksa jam sebelum tiap tahap (batal bila selisih $>$ 3 s).\\
+10 & \textbf{Auth tunggal di node korban + gRPC tanpa \en{keepalive}} (18 Nov). & 146 dari 476 permintaan \en{probe} gagal; satu pod Client API menjawab 502 selama 13 menit. & -- & \en{Keepalive} di semua koneksi gRPC; Auth dua replika (Tabel~\ref{tab:p1-probe-history}).\\
+11 & \textbf{Dua pod CockroachDB \en{OOMKilled}} (18 Nov) karena klien SQL dijalankan di dalam pod penyimpanan saat investigasi yang dibantu asisten LLM. & Tiap node \en{restart} $<$ 1 menit; RF=3, tidak ada data hilang; tidak ada run bukti terdampak. & -- & Aturan kerja: tidak menjalankan CLI berat di pod penyimpanan.\\
+12 & \textbf{Listing Audit API kehabisan memori} (18 Nov): tidak ada indeks pada \code{ingested_at}; tiap halaman memindai 540 ribu baris. & \code{memory budget exceeded} (53200); tahap berhenti dan bukti \en{probe} 41 menit hilang. & -- & Indeks \en{hash-sharded} (migrasi 007): halaman 40--70 ms. \en{Runner} menulis bukti secara atomik dan tidak lagi berhenti pada kegagalan \en{snapshot}.\\
+\end{longtable}
+\normalsize
+\setlength{\tabcolsep}{6pt}
+
+Pola yang berulang: (a) keadaan tunggal pada disk lokal (insiden 3, 7); (b) jam VM pada satu host yang sibuk (2, 9); (c) \en{probe} dan heuristik kesehatan yang terlalu agresif atau keliru mengubah kelambatan menjadi \en{outage} (6, 8); (d) dependensi kecil tanpa deteksi \en{peer} mati (10). Dua yang pertama adalah sifat testbed yang belum dihilangkan dan menjadi risiko saat \en{game day}.
+
+% =============================================================================
+\section{Bonus}
+\label{sec:bonus}
+
+Tidak ada bonus yang diklaim. Seluruh node berada pada satu host fisik; tidak ada komponen berbasis LLM/ML di dalam sistem; jumlah instance diubah secara manual (\code{kubectl scale}), tidak mengikuti beban.
+
+\clearpage
+% =============================================================================
+\section{Sintesis Hasil}
+
+Tabel~\ref{tab:synthesis} merangkum status setiap kriteria. Dari 37 kriteria: 20 terpenuhi, 15 terpenuhi dengan catatan (7 di antaranya Problem 4 pada feed pengganti dan 3 kriteria \en{game day} yang baru diuji dengan skenario latihan), 1 tidak terpenuhi (P2.7), dan 1 belum diuji (P4.7). Sebagai pembanding, ringkasan \en{runner} (\path{RUN/SUMMARY.md}) mencatat 27 PASS, 1 PARTIAL (P5.6), 1 FAIL (P2.7), dan 0 NOT RUN atas 31 barisnya, dengan P4.7 dan P5.2 sebagai INFO; label di tabel ini lebih ketat (Bagian~\ref{sec:evidence-convention}).
+
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}L{0.9cm}L{4.6cm}L{2.3cm}L{7.6cm}@{}}
+\caption{\textbf{Status seluruh kriteria M2.}}\label{tab:synthesis}\\
+\toprule
+\textbf{Krit.} & \textbf{Ringkas} & \textbf{Status} & \textbf{Hasil terukur utama}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Krit.} & \textbf{Ringkas} & \textbf{Status} & \textbf{Hasil terukur utama}\\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+P1.1 & Dataset tersebar & Dengan catatan & 100.000 baris, 65 range, tiap node 71--79\%; katalog asisten belum dipakai.\\
+P1.2 & Beban merata & Terpenuhi & maks/rata-rata 1,047 (impor) dan 1,021 (lonjakan satu wilayah).\\
+P1.3 & Baca lintas lokasi & Terpenuhi & 45.000 event, 0 duplikat, 0 hilang, halaman $\leq$ 113 ms.\\
+P1.4 & Node hilang, data utuh & Dengan catatan & 0 dari 636.184 hilang; 3.944/3.944 dijawab; klien ber-\en{balancing}; \en{checksum} sendiri.\\
+P1.5 & Node baru bergabung & Terpenuhi & 26 dari 32 range di node baru; impor 20.000 baris 16 s saat penyeimbangan.\\
+P1.6 & Tahan kehilangan berikutnya & Terpenuhi & 32 range $\times$ 3 replika di 4 node; skenario diulang berturut-turut.\\
+P1.7 & Dashboard analitik & Terpenuhi & 219.955 = 219.955; 633.647 = 633.647; \en{banner} parsial menyebut node yang mati (halaman peramban diperbaiki 18 Nov).\\
+\addlinespace[2pt]
+P2.1 & 3 instance, satu titik masuk & Terpenuhi & 21/20/19 dari 60 permintaan ke 3 pod di 3 node.\\
+P2.2 & Tepat sekali & Terpenuhi & 0 permintaan hulu dari dua pod; \code{fence} tidak pernah mundur.\\
+P2.3 & \en{Failover} $\leq$ 60 s & Terpenuhi & 18,13 s; 13/13 event tepat sekali.\\
+P2.4 & Geser jam & Terpenuhi & +44 s / $-$32 s; tiga masa jabatan tanpa tumpang-tindih.\\
+P2.5 & \en{Freeze} & Terpenuhi & 73 s beku; ambil alih 33,82 s; \en{ex-leader} tidak menulis.\\
+P2.6 & 10.000 VU, 3--5--2 & Terpenuhi & 1.328.554 permintaan; 0\% kesalahan di luar 429.\\
+P2.7 & \en{Throughput} $\geq 2\times$ & \textbf{Tidak terpenuhi} & 0,97$\times$ (1,20$\times$ dengan batas CPU 500m); percobaan dengan batas CPU lebih kecil tidak sah sebagai bukti.\\
+P2.8 & Ganti versi tanpa gagal & Dengan catatan & 0 jawaban 5xx/\en{timeout} saat \en{rollout} 40 s; 429 terkendali tetap ada.\\
+\addlinespace[2pt]
+P3.1 & Deklarasi skema & Terpenuhi & 6 record tak kompatibel di-\en{park}, tidak ditebak.\\
+P3.2 & Tersimpan utuh, dibedakan & Dengan catatan & alasan, sumber, waktu tercatat; jalur \code{retrying} hanya diuji unit.\\
+P3.3 & Pesan rusak & Terpenuhi & 4 jenis di-\en{park}; 0 \en{restart}.\\
+P3.4 & \en{Replay} & Terpenuhi & 6 pulih, \en{replay} kedua 0, 0 duplikat.\\
+P3.5 & Hanya Ops & Terpenuhi & Ops 200; Audit dan tanpa token 401.\\
+P3.6 & Laporan lapangan & Terpenuhi & 400/400 dijawab 202 (p95 76 ms; 93 dikirim ulang setelah pod dihapus), 400 tersimpan, 1 transisi masing-masing.\\
+\addlinespace[2pt]
+P4.1--6, 8 & Feed satelit & Terpenuhi dengan catatan & pada feed pengganti: 1.216 kebakaran sama dengan referensi, 0 celah offset, mutakhir 12,3 s setelah 60$\times$, p95 $\leq$ 10 s; feed asisten menunggu token.\\
+P4.7 & Aliran \en{live} feed asisten & Belum diuji & token ditolak (401) sampai sesi penilaian; ingestor terhubung ke feed pengganti di klaster (\en{runner}: INFO).\\
+\addlinespace[2pt]
+P5.1 & Notifikasi kritis $\leq$ 5 s & Terpenuhi & 21/21 ternotifikasi, p95 $\leq$ 1 s (+1 s interval \en{polling}).\\
+P5.2 & Karantina & Terpenuhi & 2.715 diterima, 28 disisihkan (\code{quality_rejected}); alasan lain diuji unit.\\
+P5.3 & Sumber lain tak terganggu & Terpenuhi & BMKG $\leq$ 66 ms pada 24 sampel selama sensor mati dan pulih.\\
+P5.4 & \en{Circuit breaker} & Terpenuhi & buka setelah 5 kegagalan ($\pm$50 s); 5 permintaan gagal; pulih sendiri; \code{/coastal/latest} $\leq$ 158 ms.\\
+P5.5 & \en{Load shedding} & Dengan catatan & Tim Lapangan 6.410/6.418 dilayani (99,9\%, p95 382 ms); Media 112.455/140.707 ditolak 429.\\
+P5.6--8 & \en{Game day}, SLO & Terpenuhi dengan catatan & 6 skenario latihan; 94,5\,\% permintaan dijawab 200, sisanya 503/502 eksplisit; target SLO tidak tercapai saat \code{clock-skew}; skenario ujian menunggu kunci.\\
+\end{longtable}
+\normalsize
+\setlength{\tabcolsep}{6pt}
+
+Pekerjaan yang masih terbuka di luar kriteria: PostgreSQL Auth dan RabbitMQ masih instance tunggal; node CockroachDB yang mati belum di-\en{decommission}; data karantina duplikat belum dibersihkan; verifikasi sistematis penolakan lintas pemilik penyimpanan belum dijalankan.
+
+% =============================================================================
+\section{Form Penggunaan AI}
+
+Sesuai ketentuan penulisan M1 yang berlaku juga untuk M2 \citep{spec-m1,spec-m2}, penggunaan LLM dinyatakan secara eksplisit pada Tabel~\ref{tab:ai-form}.
+
+\begin{table}[htbp]
+\centering
+\caption{\textbf{Form penggunaan AI pada Milestone 2.}}
+\label{tab:ai-form}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}L{3.6cm}Y@{}}
+\toprule
+\textbf{Butir} & \textbf{Pernyataan}\\
+\midrule
+Alat yang dipakai & Asisten LLM untuk pemrograman: Claude Code (Anthropic).\\
+Implementasi & Dipakai untuk menulis dan mengubah kode layanan (Aggregator, Client API, ingestor, \path{pkg/lease}), migrasi basis data, dan manifest Kustomize, berdasarkan rancangan dan keputusan kelompok.\\
+Otomasi pengujian & Dipakai untuk menulis uji unit dan integrasi, skrip skenario dan penganalisis bukti (\path{scripts/m2-*.sh}, \path{scripts/m2-*.py}), serta skenario k6.\\
+\en{Debugging} dan operasi & Dipakai untuk menyelidiki kegagalan di klaster (membaca log, metrik, dan statistik kueri) dan mengusulkan perbaikan. Satu insiden (nomor 11, Tabel~\ref{tab:incidents}) terjadi akibat perintah yang dijalankan dalam sesi berbantuan AI dan dilaporkan apa adanya.\\
+Penyusunan laporan & Dipakai untuk menyusun draf laporan ini dari catatan kerja kelompok dan berkas bukti, termasuk diagram TikZ.\\
+Yang tidak dilakukan AI & Menentukan angka: semua angka berasal dari berkas bukti keluaran skrip pada klaster. Bagian tanpa bukti ditandai ``BELUM''.\\
+Peninjauan & Setiap perubahan kode dan konfigurasi ditinjau oleh anggota kelompok sebelum dipakai, dan kode yang dihasilkan dipahami oleh kelompok. Setiap anggota menjelaskan bagiannya pada video demonstrasi.\\
+Tanggung jawab & Kelompok bertanggung jawab penuh atas rancangan, kode, bukti, dan isi laporan. Klaim yang tidak dapat ditelusuri ke kode atau berkas bukti dihapus.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% =============================================================================
+\section{Kesimpulan}
+
+Persoalan yang paling banyak menyita pekerjaan pada M2 bukanlah mekanisme utamanya. Replikasi tidak pernah kehilangan satu event pun sejak uji pertama, dan \en{lease} dengan \en{fencing} bekerja sesuai rancangan setelah satu \en{race} diperbaiki. Yang berkali-kali menggagalkan kriteria adalah hal di sekelilingnya: dependensi instance tunggal, koneksi tanpa deteksi \en{peer} mati, \en{probe} yang terlalu agresif, heuristik kesehatan yang keliru, dan biaya menolak permintaan. Hampir semuanya ditemukan oleh uji gangguan yang diotomasi dan diulang, bukan oleh uji manual pertama.
+
+Hasil yang dapat dipertanggungjawabkan dengan bukti: tidak ada HazardEvent yang hilang saat satu node beserta disknya hilang (0 dari 636.184) dan semua permintaan tetap dijawab oleh klien yang menyeimbangkan per permintaan; satu pengambil data pada \en{crash}, geser jam, dan \en{freeze}; \en{failover} 18 detik; 0\% kesalahan di luar penolakan terkendali pada 10.000 VU dengan perubahan skala dan versi; pesan tak kompatibel dan rusak tersimpan dan dapat dipulihkan tanpa duplikat; laporan lapangan tidak hilang walau pod penerima dimatikan; sensor yang mati tidak dibanjiri permintaan dan tidak mengganggu sumber lain. Yang tidak terpenuhi: rasio \en{throughput} tiga banding satu instance (0,97$\times$), karena setelah optimasi Aggregator bukan lagi \en{bottleneck} pada testbed satu host. Yang masih bercatatan: Problem 4 terbukti pada feed pengganti dan belum pada feed asisten (aliran \en{live} belum diuji); katalog dan \en{checksum} asisten belum dipakai; dan \en{game day} baru dijalankan dengan skenario latihan, dengan target keandalan yang tidak tercapai pada run itu (94,5\,\% permintaan dijawab 200 dan satu notifikasi kritis terlambat).
+
+\begin{thebibliography}{99}
+\bibitem[Tim Pengajar IF4031(2026a)]{spec-m1}
+Tim Pengajar IF4031. 2026a.
+\textit{Tugas Besar IF4031, Milestone 1: Sistem Terdistribusi Dasar}.
+Dokumen spesifikasi tugas mata kuliah.
+
+\bibitem[Tim Pengajar IF4031(2026b)]{spec-m2}
+Tim Pengajar IF4031. 2026b.
+\textit{Tugas Besar IF4031, Milestone 2: Sistem Terdistribusi Skalabel}.
+Dokumen spesifikasi tugas mata kuliah.
+
+\bibitem[Akidau et~al.(2015)]{dataflow}
+Akidau, T., Bradshaw, R., Chambers, C., Chernyak, S., Fern\'andez-Moctezuma, R.~J., Lax, R., McVeety, S., Mills, D., Perry, F., Schmidt, E., dan Whittle, S. 2015.
+The Dataflow Model: A Practical Approach to Balancing Correctness, Latency, and Cost in Massive-Scale, Unbounded, Out-of-Order Data Processing.
+\textit{Proceedings of the VLDB Endowment} 8(12): 1792--1803.
+
+\bibitem[Beyer et~al.(2016)]{sre-book}
+Beyer, B., Jones, C., Petoff, J., dan Murphy, N.~R. (ed.). 2016.
+\textit{Site Reliability Engineering: How Google Runs Production Systems}.
+O'Reilly Media.
+
+\bibitem[Gray dan Cheriton(1989)]{gray-leases}
+Gray, C. dan Cheriton, D. 1989.
+Leases: An Efficient Fault-Tolerant Mechanism for Distributed File Cache Consistency.
+\textit{Proceedings of the 12th ACM Symposium on Operating Systems Principles (SOSP)}: 202--210.
+
+\bibitem[Hohpe dan Woolf(2003)]{eip}
+Hohpe, G. dan Woolf, B. 2003.
+\textit{Enterprise Integration Patterns: Designing, Building, and Deploying Messaging Solutions}.
+Addison-Wesley.
+
+\bibitem[Kleppmann(2016)]{kleppmann-locking}
+Kleppmann, M. 2016.
+\textit{How to do distributed locking}.
+\url{https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html}.
+
+\bibitem[Kleppmann(2017)]{kleppmann-ddia}
+Kleppmann, M. 2017.
+\textit{Designing Data-Intensive Applications}.
+O'Reilly Media.
+
+\bibitem[Lamport(1978)]{lamport-clocks}
+Lamport, L. 1978.
+Time, Clocks, and the Ordering of Events in a Distributed System.
+\textit{Communications of the ACM} 21(7): 558--565.
+
+\bibitem[Nygard(2018)]{release-it}
+Nygard, M.~T. 2018.
+\textit{Release It! Design and Deploy Production-Ready Software}, edisi ke-2.
+Pragmatic Bookshelf.
+
+\bibitem[Ongaro dan Ousterhout(2014)]{raft}
+Ongaro, D. dan Ousterhout, J. 2014.
+In Search of an Understandable Consensus Algorithm.
+\textit{Proceedings of the 2014 USENIX Annual Technical Conference}: 305--319.
+
+\bibitem[Taft et~al.(2020)]{cockroach-sigmod}
+Taft, R., Sharif, I., Matei, A., VanBenschoten, N., Lewis, J., Grieger, T., Niemi, K., Woods, A., Birzin, A., Poss, R., Bardea, P., Ranade, A., Darnell, B., Gruneir, B., Jaffray, J., Zhang, L., dan Mattis, P. 2020.
+CockroachDB: The Resilient Geo-Distributed SQL Database.
+\textit{Proceedings of the 2020 ACM SIGMOD International Conference on Management of Data}: 1493--1509.
+\end{thebibliography}
+
+\end{document}

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/analytics"
@@ -20,13 +22,52 @@ import (
 
 const defaultWait = 60 * time.Second
 
-type Repository struct{ pool *pgxpool.Pool }
+type Repository struct {
+	pool *pgxpool.Pool
+	// health caches UnavailableUnits: every listing, analytics and audit
+	// answer reports completeness, and the cluster metadata behind it is far
+	// more expensive than the answer itself.
+	health unitsCache
+	// AnalyticsStaleness is how far behind now the analytics scan reads (see
+	// Aggregate). Zero reads at present time; tests that write then read at
+	// once need that.
+	AnalyticsStaleness time.Duration
+}
+
+// defaultAnalyticsStaleness matches the analytics cache ttl: a dashboard that
+// already accepts 5 s old counts loses nothing by reading a snapshot 5 s old,
+// and the snapshot is older than every in-flight ingest transaction.
+const defaultAnalyticsStaleness = 5 * time.Second
+
+// unitsCacheTTL bounds how stale a completeness marker can be. A node that
+// dies is reported within this time (plus one refresh) after CockroachDB
+// marks it not live.
+const unitsCacheTTL = 2 * time.Second
+
+// unitsRefreshTimeout bounds one background refresh of the marker.
+const unitsRefreshTimeout = 10 * time.Second
+
+type unitsCache struct {
+	mu         sync.Mutex
+	at         time.Time
+	units      []string
+	known      bool
+	refreshing bool
+	// first is closed when the first answer (or failure) is in, for callers
+	// that arrive before any value exists.
+	first chan struct{}
+	err   error
+	// load replaces the store lookup in tests.
+	load func(context.Context) ([]string, error)
+}
 
 func NewRepository(ctx context.Context, databaseURL string) (*Repository, error) {
 	return NewRepositoryWithWait(ctx, databaseURL, defaultWait)
 }
 
-func NewRepositoryFromPool(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
+func NewRepositoryFromPool(pool *pgxpool.Pool) *Repository {
+	return &Repository{pool: pool, AnalyticsStaleness: defaultAnalyticsStaleness}
+}
 
 func NewRepositoryWithWait(ctx context.Context, databaseURL string, wait time.Duration) (*Repository, error) {
 	if err := Up(ctx, databaseURL, wait); err != nil {
@@ -40,7 +81,7 @@ func NewRepositoryWithWait(ctx context.Context, databaseURL string, wait time.Du
 		pool.Close()
 		return nil, fmt.Errorf("seed canonical reference data: %w", err)
 	}
-	return &Repository{pool: pool}, nil
+	return &Repository{pool: pool, AnalyticsStaleness: defaultAnalyticsStaleness}, nil
 }
 func (s *Repository) Close() { s.pool.Close() }
 
@@ -51,6 +92,10 @@ func (s *Repository) PersistHazardAndEnqueue(ctx context.Context, event domain.H
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
+		return err
+	}
+	if err := checkWriteFence(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
 		return err
 	}
 	defer tx.Rollback(ctx)
@@ -71,14 +116,26 @@ func (s *Repository) PersistHazardAndEnqueue(ctx context.Context, event domain.H
 
 func (s *Repository) GetHazard(ctx context.Context, id string) (domain.HazardEvent, error) {
 	row := s.pool.QueryRow(ctx, `SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes FROM hazard_events WHERE hazard_id=$1`, id)
-	return scan(row)
+	item, err := scan(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Told apart from a store failure so the transport can answer 404
+		// for the one and "unavailable" for the other.
+		return domain.HazardEvent{}, domain.ErrNotFound
+	}
+	return item, err
 }
 
 // ListAuditEvents returns events ordered by ingested_at and hazard_id. The
 // cursor is the last hazard_id on the previous page.
 func (s *Repository) ListAuditEvents(ctx context.Context, filter audit.Filter) ([]domain.HazardEvent, error) {
+	// AS OF SYSTEM TIME takes no placeholder; the literal is a formatted
+	// time, never caller text.
+	asOf := ""
+	if !filter.AsOf.IsZero() {
+		asOf = fmt.Sprintf(" AS OF SYSTEM TIME '%s'", filter.AsOf.UTC().Format(time.RFC3339Nano))
+	}
 	rows, err := s.pool.Query(ctx, `SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes
-FROM hazard_events
+FROM hazard_events`+asOf+`
 WHERE ($1 = '' OR source = $1)
   AND ingested_at >= $2
   AND ($3 = '' OR ingested_at > $2 OR (ingested_at = $2 AND hazard_id > $3))
@@ -101,20 +158,44 @@ LIMIT $4`, string(filter.Source), filter.Since, filter.Cursor, filter.Limit)
 
 // SourceRefIDs returns the source_ref_id values for checksum computation.
 func (s *Repository) SourceRefIDs(ctx context.Context, source domain.Source) ([]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT source_ref_id FROM hazard_events WHERE ($1 = '' OR source = $1) ORDER BY source_ref_id`, string(source))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	ids := make([]string, 0)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+	// The scan covers every event of the source; under concurrent writes it
+	// can be asked to restart (SQLSTATE 40001), see retryRead.
+	return retryRead(ctx, func(ctx context.Context) ([]string, error) {
+		rows, err := s.pool.Query(ctx, `SELECT source_ref_id FROM hazard_events WHERE ($1 = '' OR source = $1) ORDER BY source_ref_id`, string(source))
+		if err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		defer rows.Close()
+		ids := make([]string, 0)
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			ids = append(ids, id)
+		}
+		return ids, rows.Err()
+	})
+}
+
+// PurgeSource deletes the events of one source in bounded chunks, so the
+// delete never becomes one transaction large enough to be refused or to hold
+// write intents across the whole table.
+func (s *Repository) PurgeSource(ctx context.Context, source domain.Source, refPrefix string) (int64, error) {
+	const chunk = 2000
+	var total int64
+	for {
+		tag, err := s.pool.Exec(ctx,
+			`DELETE FROM hazard_events WHERE source = $1 AND ($2 = '' OR source_ref_id LIKE $2 || '%') LIMIT $3`,
+			string(source), refPrefix, chunk)
+		if err != nil {
+			return total, err
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < chunk {
+			return total, nil
+		}
 	}
-	return ids, rows.Err()
 }
 
 // SaveIngestFailure stores a raw rejected payload idempotently.
@@ -125,20 +206,24 @@ ON CONFLICT (message_id) DO NOTHING`, failure.MessageID, failure.Source, failure
 	return err
 }
 
-// ListIngestFailures returns parked/retrying payloads for audit.
-func (s *Repository) ListIngestFailures(ctx context.Context, source domain.Source, limit int, after time.Time, afterID string) ([]domain.IngestFailure, error) {
-	rows, err := s.pool.Query(ctx, `SELECT message_id, source, received_at, reason, retryable, attempts, status, payload
-FROM ingest_failures WHERE ($1 = '' OR source = $1) AND status IN ('parked','retrying')
+// ListIngestFailures returns failure metadata, oldest first. Payloads can be
+// up to the 8 MiB response limit, so listings report only their size; use
+// GetIngestFailure to read one message's bytes.
+func (s *Repository) ListIngestFailures(ctx context.Context, filter domain.FailureFilter) ([]domain.IngestFailure, error) {
+	rows, err := s.pool.Query(ctx, `SELECT message_id, source, received_at, reason, last_error, retryable, attempts, status, octet_length(payload)
+FROM ingest_failures
+WHERE ($1 = '' OR source = $1)
+  AND (($5 = '' AND status IN ('parked','retrying')) OR status = $5)
   AND ($3 = '' OR received_at > $4 OR (received_at = $4 AND message_id > $3))
-ORDER BY received_at ASC, message_id ASC LIMIT $2`, string(source), limit, afterID, after)
+ORDER BY received_at ASC, message_id ASC LIMIT $2`, string(filter.Source), filter.Limit, filter.AfterID, filter.After, string(filter.Status))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := make([]domain.IngestFailure, 0, limit)
+	items := make([]domain.IngestFailure, 0, filter.Limit)
 	for rows.Next() {
 		var item domain.IngestFailure
-		if err := rows.Scan(&item.MessageID, &item.Source, &item.ReceivedAt, &item.Reason, &item.Retryable, &item.Attempts, &item.Status, &item.Payload); err != nil {
+		if err := rows.Scan(&item.MessageID, &item.Source, &item.ReceivedAt, &item.Reason, &item.LastError, &item.Retryable, &item.Attempts, &item.Status, &item.PayloadBytes); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -152,6 +237,30 @@ func (s *Repository) MarkIngestFailureRecovered(ctx context.Context, messageID s
 	return err
 }
 
+// RecordIngestFailureAttempt counts one failed automatic retry. The original
+// reason is kept; lastError records this attempt. Only rows still in the
+// retry queue change, so a concurrent replay that already recovered the
+// message wins.
+func (s *Repository) RecordIngestFailureAttempt(ctx context.Context, messageID, lastError string, retryable, park bool) error {
+	_, err := s.pool.Exec(ctx, `UPDATE ingest_failures
+SET attempts = attempts + 1, last_error = $2, retryable = $3,
+    status = CASE WHEN $4 THEN 'parked' ELSE status END
+WHERE message_id = $1 AND status = 'retrying'`, messageID, lastError, retryable, park)
+	return err
+}
+
+// GetIngestFailure returns one stored failure, including recovered ones.
+func (s *Repository) GetIngestFailure(ctx context.Context, messageID string) (domain.IngestFailure, error) {
+	var item domain.IngestFailure
+	err := s.pool.QueryRow(ctx, `SELECT message_id, source, received_at, reason, last_error, retryable, attempts, status, payload
+FROM ingest_failures WHERE message_id = $1`, messageID).Scan(&item.MessageID, &item.Source, &item.ReceivedAt, &item.Reason, &item.LastError, &item.Retryable, &item.Attempts, &item.Status, &item.Payload)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.IngestFailure{}, domain.ErrNotFound
+	}
+	item.PayloadBytes = len(item.Payload)
+	return item, err
+}
+
 // HazardExists reports whether the canonical store contains hazard_id.
 func (s *Repository) HazardExists(ctx context.Context, hazardID string) (bool, error) {
 	var exists bool
@@ -159,62 +268,16 @@ func (s *Repository) HazardExists(ctx context.Context, hazardID string) (bool, e
 	return exists, err
 }
 
-// CountByHazardType aggregates events in the requested window.
-func (s *Repository) CountByHazardType(ctx context.Context, filter analytics.Filter) ([]analytics.TypeCount, error) {
-	rows, err := s.pool.Query(ctx, `SELECT hazard_type, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY hazard_type ORDER BY hazard_type`, filter.Since, filter.Until)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	result := make([]analytics.TypeCount, 0)
-	for rows.Next() {
-		var item analytics.TypeCount
-		if err := rows.Scan(&item.HazardType, &item.Count); err != nil {
-			return nil, err
-		}
-		result = append(result, item)
-	}
-	return result, rows.Err()
-}
-
-// CountBySeverity aggregates events in the requested window.
-func (s *Repository) CountBySeverity(ctx context.Context, filter analytics.Filter) ([]analytics.SeverityCount, error) {
-	rows, err := s.pool.Query(ctx, `SELECT severity, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY severity ORDER BY severity`, filter.Since, filter.Until)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	result := make([]analytics.SeverityCount, 0)
-	for rows.Next() {
-		var item analytics.SeverityCount
-		if err := rows.Scan(&item.Severity, &item.Count); err != nil {
-			return nil, err
-		}
-		result = append(result, item)
-	}
-	return result, rows.Err()
-}
-
-// CountByArea aggregates events in the requested window.
-func (s *Repository) CountByArea(ctx context.Context, filter analytics.Filter) ([]analytics.AreaCount, error) {
-	rows, err := s.pool.Query(ctx, `SELECT area_name, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY area_name ORDER BY count(*) DESC, area_name`, filter.Since, filter.Until)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	result := make([]analytics.AreaCount, 0)
-	for rows.Next() {
-		var item analytics.AreaCount
-		if err := rows.Scan(&item.AreaName, &item.Count); err != nil {
-			return nil, err
-		}
-		result = append(result, item)
-	}
-	return result, rows.Err()
-}
-
-// CountByTimeBucket aggregates events per bucket and hazard type.
-func (s *Repository) CountByTimeBucket(ctx context.Context, filter analytics.Filter) ([]analytics.TimeBucket, error) {
+// Aggregate counts one window per (bucket, category, severity, area) in one
+// scan, inside a read-only transaction fixed AnalyticsStaleness behind now.
+//
+// A read at a timestamp older than every in-flight ingest transaction meets
+// no write intents, so it never waits in the lock table. At present time the
+// analytics scans spent up to 0.5 s there and 2-4 s in total under steady
+// ingest (statement statistics, 18 Nov); a historical read costs the scan
+// alone. The snapshot timestamp is the transaction's own and is returned as
+// Snapshot.AsOf, so the answer states how old it is.
+func (s *Repository) Aggregate(ctx context.Context, filter analytics.Filter) (analytics.Snapshot, error) {
 	bucket := "day"
 	switch filter.Bucket {
 	case analytics.BucketHour:
@@ -222,20 +285,55 @@ func (s *Repository) CountByTimeBucket(ctx context.Context, filter analytics.Fil
 	case analytics.BucketWeek:
 		bucket = "week"
 	}
-	rows, err := s.pool.Query(ctx, `SELECT date_trunc($3, occurred_at) AS bucket, hazard_type, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY bucket, hazard_type ORDER BY bucket, hazard_type`, filter.Since, filter.Until, bucket)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	result := make([]analytics.TimeBucket, 0)
-	for rows.Next() {
-		var item analytics.TimeBucket
-		if err := rows.Scan(&item.Start, &item.HazardType, &item.Count); err != nil {
-			return nil, err
+	return retryRead(ctx, func(ctx context.Context) (analytics.Snapshot, error) {
+		tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+		if err != nil {
+			return analytics.Snapshot{}, err
 		}
-		result = append(result, item)
+		defer tx.Rollback(ctx) //nolint:errcheck // a failed rollback after commit is expected
+		if s.AnalyticsStaleness > 0 {
+			if _, err := tx.Exec(ctx, fmt.Sprintf("SET TRANSACTION AS OF SYSTEM TIME '-%dms'", s.AnalyticsStaleness.Milliseconds())); err != nil {
+				return analytics.Snapshot{}, fmt.Errorf("historical read: %w", err)
+			}
+		}
+		var hlc string
+		if err := tx.QueryRow(ctx, `SELECT cluster_logical_timestamp()::STRING`).Scan(&hlc); err != nil {
+			return analytics.Snapshot{}, fmt.Errorf("snapshot timestamp: %w", err)
+		}
+		asOf, err := hlcTime(hlc)
+		if err != nil {
+			return analytics.Snapshot{}, err
+		}
+		rows, err := tx.Query(ctx, `SELECT date_trunc($3, occurred_at) AS bucket, `+analytics.CategorySQL+` AS category, severity, area_name, count(*) FROM hazard_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY bucket, category, severity, area_name ORDER BY bucket, category, severity, area_name`, filter.Since, filter.Until, bucket)
+		if err != nil {
+			return analytics.Snapshot{}, err
+		}
+		defer rows.Close()
+		snapshot := analytics.Snapshot{Rows: make([]analytics.Row, 0), AsOf: asOf}
+		for rows.Next() {
+			var row analytics.Row
+			if err := rows.Scan(&row.Bucket, &row.Category, &row.Severity, &row.AreaName, &row.Count); err != nil {
+				return analytics.Snapshot{}, err
+			}
+			snapshot.Rows = append(snapshot.Rows, row)
+		}
+		if err := rows.Err(); err != nil {
+			return analytics.Snapshot{}, err
+		}
+		return snapshot, tx.Commit(ctx)
+	})
+}
+
+// hlcTime converts a CockroachDB hybrid logical clock timestamp, as
+// cluster_logical_timestamp() prints it ("<wall nanoseconds>.<logical>"),
+// to a wall-clock time.
+func hlcTime(value string) (time.Time, error) {
+	wall, _, _ := strings.Cut(value, ".")
+	nanos, err := strconv.ParseInt(wall, 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse hlc timestamp %q: %w", value, err)
 	}
-	return result, rows.Err()
+	return time.Unix(0, nanos).UTC(), nil
 }
 
 // SaveFieldReport inserts a field report once. The bool reports whether this
@@ -248,6 +346,25 @@ ON CONFLICT (report_id) DO NOTHING`, report.ReportID, report.HazardType, report.
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// FieldReportsByID returns the stored rows for ids, in any order.
+func (s *Repository) FieldReportsByID(ctx context.Context, ids []string) ([]domain.FieldReport, error) {
+	rows, err := s.pool.Query(ctx, `SELECT report_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, received_at, description, status, attempts, processed_at
+FROM field_reports WHERE report_id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	reports := make([]domain.FieldReport, 0, len(ids))
+	for rows.Next() {
+		report, scanErr := scanFieldReport(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		reports = append(reports, report)
+	}
+	return reports, rows.Err()
 }
 
 // ListAcceptedFieldReports returns accepted reports in arrival order.
@@ -269,10 +386,15 @@ FROM field_reports WHERE status = 'accepted' ORDER BY received_at ASC LIMIT $1`,
 	return reports, rows.Err()
 }
 
-// MarkFieldReport records the terminal state of one accepted report.
-func (s *Repository) MarkFieldReport(ctx context.Context, reportID string, status domain.FieldReportStatus, processedAt time.Time) error {
-	_, err := s.pool.Exec(ctx, `UPDATE field_reports SET status = $2, attempts = attempts + 1, processed_at = $3 WHERE report_id = $1 AND status = 'accepted'`, reportID, status, processedAt)
-	return err
+// MarkFieldReport moves one accepted report to its terminal state and reports
+// whether this call made the transition. Every Aggregator instance runs the
+// worker; the conditional UPDATE lets exactly one of them win each report.
+func (s *Repository) MarkFieldReport(ctx context.Context, reportID string, status domain.FieldReportStatus, processedAt time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE field_reports SET status = $2, attempts = attempts + 1, processed_at = $3 WHERE report_id = $1 AND status = 'accepted'`, reportID, status, processedAt)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 func scanFieldReport(row scanner) (domain.FieldReport, error) {
@@ -301,7 +423,16 @@ func (s *Repository) ListHazards(ctx context.Context, filter hazards.ListFilter)
 		args = append(args, filter.Severity)
 		query += fmt.Sprintf(" AND severity=$%d", len(args))
 	}
-	query += " ORDER BY occurred_at DESC LIMIT $" + fmt.Sprint(len(args)+1)
+	cursor, after, err := hazards.DecodePageToken(filter.PageToken)
+	if err != nil {
+		return nil, err
+	}
+	if after {
+		args = append(args, cursor.OccurredAt, cursor.HazardID)
+		query += fmt.Sprintf(" AND (occurred_at, hazard_id) < ($%d, $%d)", len(args)-1, len(args))
+	}
+	// hazard_id breaks occurred_at ties so keyset pages form a total order.
+	query += " ORDER BY occurred_at DESC, hazard_id DESC LIMIT $" + fmt.Sprint(len(args)+1)
 	args = append(args, limit(filter.PageSize))
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -460,7 +591,7 @@ func limit(value int) int {
 func (s *Repository) HazardLocations(ctx context.Context, hazardID string) ([]audit.Location, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT range_id, replicas, lease_holder
-		 FROM [SHOW RANGE FROM TABLE hazard_events FOR ROW ($1)]`, hazardID)
+		 FROM [SHOW RANGE FROM TABLE hazard_events FOR ROW ($1::STRING)]`, hazardID)
 	if err != nil {
 		return nil, fmt.Errorf("show range: %w", err)
 	}
@@ -533,14 +664,18 @@ func nodeName(locality, address string) string {
 	return address
 }
 
-// UnavailableUnits returns the store nodes currently marked not live.
-func (s *Repository) UnavailableUnits(ctx context.Context) ([]string, error) {
+type storeNode struct {
+	name string
+	live bool
+}
+
+func (s *Repository) storeNodes(ctx context.Context) (map[int64]storeNode, error) {
 	rows, err := s.pool.Query(ctx, `SELECT node_id, locality, address, is_live FROM crdb_internal.gossip_nodes`)
 	if err != nil {
 		return nil, fmt.Errorf("list store nodes: %w", err)
 	}
 	defer rows.Close()
-	var units []string
+	nodes := make(map[int64]storeNode)
 	for rows.Next() {
 		var (
 			nodeID   int64
@@ -551,12 +686,215 @@ func (s *Repository) UnavailableUnits(ctx context.Context) ([]string, error) {
 		if err := rows.Scan(&nodeID, &locality, &address, &live); err != nil {
 			return nil, err
 		}
-		if !live {
-			units = append(units, nodeName(locality, address))
+		nodes[nodeID] = storeNode{name: nodeName(locality, address), live: live}
+	}
+	return nodes, rows.Err()
+}
+
+// UnavailableUnits returns the store nodes that are not live and still hold
+// a replica of this database. A dead node whose replicas have all been
+// re-created elsewhere no longer affects completeness, so answers stop being
+// marked partial once the cluster has healed, even though CockroachDB keeps
+// reporting the dead node ID until it is decommissioned. When the range
+// metadata cannot be read, every dead node counts (fail towards partial).
+// UnavailableUnits answers from a cache refreshed in the background
+// (stale-while-revalidate). With dead store nodes the lookup reads range
+// placement, which takes seconds under load; computing it inline under a
+// lock stalled every listing behind it each time the cache expired. Now at
+// most one refresh runs, callers get the last known answer immediately, and
+// only callers that arrive before any answer exists wait for the first one.
+func (s *Repository) UnavailableUnits(ctx context.Context) ([]string, error) {
+	h := &s.health
+	h.mu.Lock()
+	if h.known {
+		units := append([]string(nil), h.units...)
+		if time.Since(h.at) >= unitsCacheTTL && !h.refreshing {
+			h.refreshing = true
+			go s.refreshUnits()
+		}
+		h.mu.Unlock()
+		return units, nil
+	}
+	if h.first == nil {
+		h.first = make(chan struct{})
+		h.refreshing = true
+		go s.refreshUnits()
+	}
+	first := h.first
+	h.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-first:
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.known {
+		return nil, h.err
+	}
+	return append([]string(nil), h.units...), nil
+}
+
+func (s *Repository) refreshUnits() {
+	ctx, cancel := context.WithTimeout(context.Background(), unitsRefreshTimeout)
+	defer cancel()
+	load := s.health.load
+	if load == nil {
+		load = s.unavailableUnits
+	}
+	units, err := load(ctx)
+	h := &s.health
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.refreshing = false
+	if err == nil {
+		h.units, h.at, h.known = units, time.Now(), true
+	}
+	h.err = err
+	if h.first != nil && (h.known || err != nil) {
+		select {
+		case <-h.first:
+		default:
+			close(h.first)
+		}
+		if !h.known {
+			// Let the next caller start a fresh first attempt.
+			h.first = nil
 		}
 	}
+}
+
+func (s *Repository) unavailableUnits(ctx context.Context) ([]string, error) {
+	nodes, err := s.storeNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dead := make(map[int64]string)
+	for id, node := range nodes {
+		if !node.live {
+			dead[id] = node.name
+		}
+	}
+	if len(dead) == 0 {
+		return nil, nil
+	}
+	holding, err := s.replicaHolders(ctx)
+	names := make(map[string]bool)
+	for id, name := range dead {
+		if err != nil || holding[id] {
+			names[name] = true
+		}
+	}
+	units := make([]string, 0, len(names))
+	for name := range names {
+		units = append(units, name)
+	}
 	sort.Strings(units)
-	return units, rows.Err()
+	return units, nil
+}
+
+// replicaHolders returns the node IDs holding any replica of the current
+// database's ranges.
+func (s *Repository) replicaHolders(ctx context.Context) (map[int64]bool, error) {
+	var database string
+	if err := s.pool.QueryRow(ctx, `SELECT current_database()`).Scan(&database); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT unnest(replicas) FROM [SHOW RANGES FROM DATABASE `+pgx.Identifier{database}.Sanitize()+`]`)
+	if err != nil {
+		return nil, fmt.Errorf("show ranges: %w", err)
+	}
+	defer rows.Close()
+	holders := make(map[int64]bool)
+	for rows.Next() {
+		var nodeID int64
+		if err := rows.Scan(&nodeID); err != nil {
+			return nil, err
+		}
+		holders[nodeID] = true
+	}
+	return holders, rows.Err()
+}
+
+// HazardDistribution counts, per store node, the hazard_events range
+// replicas and leases it holds and the bytes of those replicas.
+func (s *Repository) HazardDistribution(ctx context.Context) (audit.Distribution, error) {
+	nodes, err := s.storeNodes(ctx)
+	if err != nil {
+		return audit.Distribution{}, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT lease_holder, replicas, range_size FROM [SHOW RANGES FROM TABLE hazard_events WITH DETAILS]`)
+	if err != nil {
+		return audit.Distribution{}, fmt.Errorf("show ranges: %w", err)
+	}
+	defer rows.Close()
+	shares := make(map[int64]*audit.NodeShare)
+	share := func(id int64) *audit.NodeShare {
+		if existing, ok := shares[id]; ok {
+			return existing
+		}
+		node := nodes[id]
+		name := node.name
+		if name == "" {
+			name = fmt.Sprintf("node-%d", id)
+		}
+		created := &audit.NodeShare{Node: name, NodeID: id, Live: node.live}
+		shares[id] = created
+		return created
+	}
+	for id := range nodes {
+		share(id)
+	}
+	var result audit.Distribution
+	for rows.Next() {
+		var (
+			lease    int64
+			replicas []int64
+			size     int64
+		)
+		if err := rows.Scan(&lease, &replicas, &size); err != nil {
+			return audit.Distribution{}, err
+		}
+		result.Ranges++
+		result.LogicalBytes += size
+		for _, id := range replicas {
+			holder := share(id)
+			holder.Replicas++
+			holder.ReplicaBytes += size
+		}
+		if lease != 0 {
+			share(lease).Leaseholders++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return audit.Distribution{}, err
+	}
+	for _, item := range shares {
+		result.Nodes = append(result.Nodes, *item)
+	}
+	sort.Slice(result.Nodes, func(i, j int) bool { return result.Nodes[i].NodeID < result.Nodes[j].NodeID })
+	return result, nil
+}
+
+// checkWriteFence verifies, inside the write transaction, that the lease term
+// attached to ctx is still current by the database clock. Under SERIALIZABLE
+// a concurrent takeover that rewrites the lease row conflicts with this read,
+// so the write either commits under a current term or not at all.
+func checkWriteFence(ctx context.Context, tx pgx.Tx) error {
+	fence, ok := domain.WriteFenceFrom(ctx)
+	if !ok {
+		return nil
+	}
+	var held bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM leader_lease WHERE name = $1 AND holder = $2 AND fence = $3 AND expires_at > clock_timestamp())`,
+		fence.Lease, fence.Holder, fence.Fence).Scan(&held)
+	if err != nil {
+		return fmt.Errorf("check write fence: %w", err)
+	}
+	if !held {
+		return domain.ErrFenced
+	}
+	return nil
 }
 
 // BulkPersistHazards inserts a historical catalog without emitting outbox
@@ -565,39 +903,56 @@ func (s *Repository) BulkPersistHazards(ctx context.Context, events []domain.Haz
 	if len(events) == 0 {
 		return 0, nil
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return 0, err
+	// One multi-row INSERT per chunk, each committed on its own. A single
+	// transaction over the whole catalog holds write intents on every row
+	// until commit, so concurrent reads of those keys block and a 100k-row
+	// import takes minutes. Chunks keep each transaction small; ON CONFLICT
+	// DO NOTHING makes a re-run after a partial failure safe.
+	inserted := 0
+	for start := 0; start < len(events); start += bulkInsertChunk {
+		end := min(start+bulkInsertChunk, len(events))
+		count, err := s.insertHazardChunk(ctx, events[start:end])
+		if err != nil {
+			return inserted, fmt.Errorf("insert rows %d-%d: %w", start+1, end, err)
+		}
+		inserted += count
 	}
-	defer tx.Rollback(ctx)
+	return inserted, nil
+}
 
-	batch := &pgx.Batch{}
-	for _, event := range events {
+// bulkInsertChunk is the row count per catalog INSERT. 11 parameters per row
+// keeps a chunk well under the 65535 placeholder limit.
+const bulkInsertChunk = 500
+
+func (s *Repository) insertHazardChunk(ctx context.Context, events []domain.HazardEvent) (int, error) {
+	const columns = 11
+	var query strings.Builder
+	query.WriteString(`INSERT INTO hazard_events (hazard_id, source, source_ref_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes) VALUES `)
+	args := make([]any, 0, len(events)*columns)
+	for index, event := range events {
 		attributes, err := json.Marshal(event.Attributes)
 		if err != nil {
 			return 0, err
 		}
-		batch.Queue(`INSERT INTO hazard_events (hazard_id, source, source_ref_id, hazard_type, severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-ON CONFLICT (source, source_ref_id) DO NOTHING`,
-			event.HazardID, event.Source, event.SourceRefID, event.HazardType, event.Severity,
+		if index > 0 {
+			query.WriteByte(',')
+		}
+		base := index * columns
+		query.WriteByte('(')
+		for column := 1; column <= columns; column++ {
+			if column > 1 {
+				query.WriteByte(',')
+			}
+			fmt.Fprintf(&query, "$%d", base+column)
+		}
+		query.WriteByte(')')
+		args = append(args, event.HazardID, event.Source, event.SourceRefID, event.HazardType, event.Severity,
 			event.AreaName, event.Latitude, event.Longitude, event.OccurredAt, event.IngestedAt, attributes)
 	}
-	results := tx.SendBatch(ctx, batch)
-	inserted := 0
-	for range events {
-		tag, err := results.Exec()
-		if err != nil {
-			_ = results.Close()
-			return 0, err
-		}
-		inserted += int(tag.RowsAffected())
-	}
-	if err := results.Close(); err != nil {
+	query.WriteString(` ON CONFLICT (source, source_ref_id) DO NOTHING`)
+	tag, err := s.pool.Exec(ctx, query.String(), args...)
+	if err != nil {
 		return 0, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
-	return inserted, nil
+	return int(tag.RowsAffected()), nil
 }

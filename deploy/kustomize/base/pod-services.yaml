@@ -1,0 +1,29 @@
+# Headless Services that expose the pod addresses of the two HTTP entry points.
+#
+# A ClusterIP Service keeps a share of new connections going to the pods of a
+# node that just lost power until Kubernetes marks the node NotReady
+# (node-monitor-grace-period, 40 s by default); those connections hang. A
+# client that resolves these headless names gets the pod addresses and can
+# balance per request itself: connect timeout, skip the silent pod, next one.
+# The Client API already does this for its gRPC calls to the Aggregator
+# (aggregator-grpc); these do the same for HTTP clients such as the P1 probe
+# and Audit API consumers.
+apiVersion: v1
+kind: Service
+metadata:
+  name: client-api-pods
+  labels: { app: client-api, role: api }
+spec:
+  clusterIP: None
+  selector: { app: client-api }
+  ports: [{ name: http, port: 8080, targetPort: 8080 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aggregator-pods
+  labels: { app: aggregator, role: aggregator }
+spec:
+  clusterIP: None
+  selector: { app: aggregator }
+  ports: [{ name: http, port: 8090, targetPort: 8090 }]

@@ -30,6 +30,7 @@ import (
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/config"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/importer"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/mapping"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/ports"
 	grpctransport "github.com/fathurwithyou/microservices/services/aggregator/internal/transport/grpc"
 	httptransport "github.com/fathurwithyou/microservices/services/aggregator/internal/transport/http"
@@ -73,6 +74,13 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("configuration failed", "service", "aggregator", "error", err)
 		return 1
 	}
+	adapters, unknown := mapping.ParseSchemaAdapters(cfg.SchemaAdapters)
+	if len(unknown) > 0 {
+		logger.Error("unknown schema adapters", "service", "aggregator", "adapters", unknown)
+		return 1
+	}
+	mapping.SetSchemaAdapters(adapters)
+	logger.Info("schema adapters", "service", "aggregator", "pvmbg_breaking_v3", adapters.PVMBGBreakingV3)
 	shutdownTracing, err := observability.Setup(ctx, "aggregator")
 	if err != nil {
 		logger.Error("tracing initialization failed", "service", "aggregator", "error", err)
@@ -123,16 +131,22 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("pvmbg source initialization failed", "service", "aggregator", "error", err)
 		return 1
 	}
-	var leadership applicationingest.Leadership
+	var (
+		leadership applicationingest.Leadership
+		leader     *applicationingest.Leader
+		leaseName  string
+	)
 	if repository, ok := persistence.(*postgres.Repository); ok {
-		coordinator := lease.New(repository.LeaseStore("ingestion"))
-		leader := applicationingest.NewLeader(coordinator)
+		leaseName = "ingestion"
+		coordinator := lease.New(repository.LeaseStore(leaseName))
+		leader = applicationingest.NewLeader(coordinator)
 		go leader.Run(ctx, coordinator, leaderHolder(), cfg.LeaderTTL, cfg.LeaderRenew, logger)
 		leadership = leader
 	}
 	poller, err := applicationingest.NewPoller(applicationingest.PollerConfig{
 		Repository: persistence,
 		Sources:    []applicationingest.Source{bmkgSource, pvmbgSource},
+		LeaseName:  leaseName,
 		Interval:   cfg.PollInterval,
 		Timeout:    cfg.RequestTimeout,
 		Leadership: leadership,
@@ -147,17 +161,43 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("outbox worker initialization failed", "service", "aggregator", "error", err)
 		return 1
 	}
-	queries := hazards.NewQueries(persistence)
+	queries := hazards.NewQueries(persistence).WithListCache(cfg.ListCacheTTL)
 	auditQueries := audit.NewQueries(persistence)
-	analyticsQueries := analytics.NewQueries(persistence)
+	analyticsQueries := analytics.NewQueries(persistence).WithCache(cfg.AnalyticsCacheTTL)
 	submitter, err := applicationingest.NewSubmitter(persistence, logger)
 	if err != nil {
 		logger.Error("hazard submitter initialization failed", "service", "aggregator", "error", err)
 		return 1
 	}
-	replayer, err := failures.New(failures.Config{Repository: persistence, Submitter: submitter, Volcanoes: volcanoes, Logger: logger})
+	replayer, err := failures.New(failures.Config{Repository: persistence, Submitter: submitter, Volcanoes: volcanoes, References: persistence.LoadVolcanoReferences, Logger: logger})
 	if err != nil {
 		logger.Error("failure replayer initialization failed", "service", "aggregator", "error", err)
+		return 1
+	}
+	// Transient failures (for example a missing reference row) are retried
+	// automatically; schema violations stay parked until an Ops replay.
+	// Fence on the database clock, like the poller: a replica frozen past the
+	// lease TTL must not keep retrying once another replica took over.
+	retryAllowed := func(ctx context.Context) bool {
+		if leader == nil {
+			return true
+		}
+		valid, err := leader.StillLeader(ctx)
+		if err != nil {
+			logger.Warn("retry leadership check failed", "service", "aggregator", "error", err)
+		}
+		return valid
+	}
+	retryWorker, err := failures.NewRetryWorker(failures.RetryWorkerConfig{
+		Replayer:    replayer,
+		Recorder:    persistence,
+		Interval:    cfg.FailureRetryInterval,
+		MaxAttempts: cfg.FailureRetryMaxAttempts,
+		Allowed:     retryAllowed,
+		Logger:      logger,
+	})
+	if err != nil {
+		logger.Error("failure retry worker initialization failed", "service", "aggregator", "error", err)
 		return 1
 	}
 	fieldReportService, err := fieldreports.New(fieldreports.Config{Repository: persistence, Logger: logger})
@@ -165,7 +205,7 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		logger.Error("field report service initialization failed", "service", "aggregator", "error", err)
 		return 1
 	}
-	fieldReportWorker, err := fieldreports.NewWorker(fieldreports.WorkerConfig{Repository: persistence, Logger: logger})
+	fieldReportWorker, err := fieldreports.NewWorker(fieldreports.WorkerConfig{Repository: persistence, Processor: fieldreports.NewInboxProcessor(logger), Logger: logger})
 	if err != nil {
 		logger.Error("field report worker initialization failed", "service", "aggregator", "error", err)
 		return 1
@@ -177,11 +217,13 @@ func runServe(ctx context.Context, args []string, logger *slog.Logger) int {
 		return 1
 	}
 	grpcServer := grpctransport.NewServer(grpctransport.ServerConfig{Queries: queries, FieldReports: fieldReportService, Analytics: analyticsQueries, Submitter: submitter, Health: persistence, ServiceToken: cfg.InternalServiceToken, Logger: logger})
-	httpServer := httptransport.NewServer(cfg.HTTPPort, auditQueries, cfg.AuditToken, replayer)
+	httpServer := httptransport.NewServer(cfg.HTTPPort, auditQueries, cfg.AuditToken, cfg.OpsToken, replayer)
 
 	go poller.Run(ctx)
 	go outboxWorker.Run(ctx)
 	go fieldReportWorker.Run(ctx)
+	go retryWorker.Run(ctx)
+	go analyticsQueries.KeepWarm(ctx, analytics.Filter{})
 	go func() {
 		logger.Info("gRPC server started", "service", "aggregator", "port", cfg.GRPCPort)
 		if err := grpcServer.Serve(grpcListener); err != nil {
@@ -376,6 +418,7 @@ type persistence interface {
 	outbox.Repository
 	fieldreports.Repository
 	failures.Repository
+	failures.AttemptRecorder
 	LoadVolcanoReferences(context.Context) (map[string]domain.VolcanoReference, error)
 }
 

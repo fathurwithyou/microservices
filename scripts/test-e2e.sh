@@ -135,6 +135,7 @@ PVMBG_TOKEN=$(secret)
 PVMBG_ADMIN_KEY=$(secret)
 INTERNAL_SERVICE_TOKEN=$(secret)
 AUDIT_TOKEN=$(secret)
+OPS_TOKEN=$(secret)
 MEDIA_CLIENT_SECRET=$(secret)
 FIELD_TEAM_CLIENT_SECRET=$(secret)
 BNPB_OPS_CLIENT_SECRET=$(secret)
@@ -149,7 +150,7 @@ ACCESS_TOKEN_TTL=${E2E_ACCESS_TOKEN_TTL:-5s}
 MAX_INFLIGHT_REQUESTS=64
 REQUEST_TIMEOUT=2s
 STORE_DRIVER=cockroach
-AGGREGATOR_DATABASE_URL=postgresql://root@cockroach:26257/defaultdb?sslmode=disable
+AGGREGATOR_DATABASE_URL=postgresql://aggregator@cockroach:26257/aggregator_db?sslmode=disable
 AUTH_DATABASE_URL=postgres://auth:$auth_db_password@postgres:5432/auth_db?sslmode=disable
 RABBITMQ_URL=amqp://$rabbitmq_user:$rabbitmq_password@rabbitmq:5672/
 POSTGRES_ADMIN_PASSWORD=$postgres_admin_password
@@ -163,7 +164,7 @@ compose() {
 }
 
 aggregator_sql() {
-  compose exec -T cockroach /cockroach/cockroach sql --insecure --format=csv --execute "$1" | tail -n1 | tr -d '\r"'
+  compose exec -T cockroach /cockroach/cockroach sql --insecure --database=aggregator_db --format=csv --execute "$1" | tail -n1 | tr -d '\r"'
 }
 
 cleanup() {

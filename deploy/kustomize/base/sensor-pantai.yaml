@@ -22,7 +22,16 @@ spec:
             - { name: PANTAI_AUTH_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: SENSOR_TOKEN } } }
             - { name: PANTAI_PROFILE, valueFrom: { configMapKeyRef: { name: bnpb-config, key: PANTAI_PROFILE } } }
             - { name: PANTAI_STATE_DIR, value: /data }
-          volumeMounts: [{ name: state, mountPath: /data }]
+          # The exam profile needs the demo key (PANTAI_KEY_FILE). The Secret is
+          # optional, so the practice profile runs without it. PANTAI_KEY_FILE is
+          # deliberately NOT set here: how the vendor binary treats a key path
+          # that does not exist under the practice profile is untested, so
+          # `scripts/m2-demo.sh` (sensor_profile exam) adds
+          # PANTAI_KEY_FILE=/var/run/pantai/key when it switches to exam and
+          # removes it again for practice.
+          volumeMounts:
+            - { name: state, mountPath: /data }
+            - { name: pantai-key, mountPath: /var/run/pantai, readOnly: true }
           readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 2 }
           livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10 }
           resources:
@@ -32,6 +41,10 @@ spec:
       volumes:
         - name: state
           emptyDir: {}
+        - name: pantai-key
+          secret:
+            secretName: sensor-pantai-key
+            optional: true
 ---
 apiVersion: v1
 kind: Service

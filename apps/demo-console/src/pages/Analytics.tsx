@@ -5,6 +5,7 @@ import type { AnalyticsBucket, AnalyticsResponse } from "../types";
 
 const COLORS: Record<string, string> = {
   SEISMIC: "var(--orange)",
+  TSUNAMI: "#2f6fd6",
   VOLCANIC: "var(--fail)",
   WILDFIRE: "#e0a23a",
   COASTAL: "#4aa3df",
@@ -24,11 +25,18 @@ export default function Analytics() {
     }
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     const response = await analytics(session.accessToken, { since, bucket });
-    if (!response.ok || !response.data) {
-      setMessage(response.error || `HTTP ${response.status}`);
+    if (!response.ok || !response.data || !Array.isArray(response.data.hazard_types)) {
+      setMessage(response.error || `HTTP ${response.status}: jawaban bukan data analitik`);
       return;
     }
-    setData(response.data);
+    // The API sends null for an empty list; the page always works on arrays.
+    setData({
+      ...response.data,
+      severities: response.data.severities ?? [],
+      areas: response.data.areas ?? [],
+      time_buckets: response.data.time_buckets ?? [],
+      unavailable_units: response.data.unavailable_units ?? [],
+    });
     setMessage(`correlation ${response.correlationId} · ${response.durationMs} ms`);
   };
 
@@ -62,6 +70,11 @@ export default function Analytics() {
           <strong>Data belum lengkap.</strong> Unit yang tidak terjangkau:{" "}
           {data.unavailable_units.length > 0 ? data.unavailable_units.join(", ") : "tidak diketahui"}.
         </div>
+      ) : null}
+      {data?.as_of ? (
+        <p className="kicker" style={{ marginBottom: "0.8rem" }}>
+          Snapshot store {new Date(data.as_of).toLocaleTimeString("id-ID")} WIB; angka bisa tertinggal beberapa detik dari kejadian terbaru.
+        </p>
       ) : null}
 
       <div className="grid cols-3" style={{ marginBottom: "0.8rem" }}>

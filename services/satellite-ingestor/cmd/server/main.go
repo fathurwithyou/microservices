@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -69,15 +70,6 @@ func runServe(ctx context.Context, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	healthServer := healthsrv.New(healthsrv.Config{Port: cfg.HealthPort, Service: serviceName})
-	go func() {
-		logger.Info("health server started", "service", serviceName, "port", cfg.HealthPort)
-		if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("health server stopped", "service", serviceName, "error", err)
-			stop()
-		}
-	}()
-
 	grpcSink, err := sink.NewGRPC(cfg.AggregatorAddr, cfg.InternalToken)
 	if err != nil {
 		return err
@@ -102,19 +94,38 @@ func runServe(ctx context.Context, logger *slog.Logger) error {
 
 	stream := application.NewStream(application.StreamConfig{
 		Feed: feed.New(feed.Config{
-			URL:     cfg.FeedURL,
-			Token:   cfg.FeedToken,
-			Timeout: cfg.HTTPTimeout,
+			URL:         cfg.FeedURL,
+			Token:       cfg.FeedToken,
+			IdleTimeout: cfg.IdleTimeout,
 		}),
 		State:      state,
 		Sink:       grpcSink,
 		Logger:     logger,
 		LateWindow: cfg.LateWindow,
-		MaxAge:     cfg.MaxAge,
 		Leadership: leadership,
 		MinBackoff: cfg.MinBackoff,
 		MaxBackoff: cfg.MaxBackoff,
 	})
+
+	// GET /status reports what P4 asks to be reported: lag, watermark,
+	// accepted lateness, lone detections, late and low-confidence counts.
+	healthServer := healthsrv.New(healthsrv.Config{Port: cfg.HealthPort, Service: serviceName})
+	base := healthServer.Handler
+	healthServer.Handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && request.URL.Path == "/status" {
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(stream.Snapshot())
+			return
+		}
+		base.ServeHTTP(response, request)
+	})
+	go func() {
+		logger.Info("health server started", "service", serviceName, "port", cfg.HealthPort)
+		if err := healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("health server stopped", "service", serviceName, "error", err)
+			stop()
+		}
+	}()
 
 	streamErr := make(chan error, 1)
 	go func() { streamErr <- stream.Run(ctx) }()

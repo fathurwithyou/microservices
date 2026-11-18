@@ -1,0 +1,49 @@
+$ kubectl get nodes -o wide
+NAME     STATUS   ROLES           AGE     VERSION        INTERNAL-IP     EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION              CONTAINER-RUNT
+node-a   Ready    control-plane   2d21h   v1.37.2+k3s1   192.168.252.2   <none>        Ubuntu 24.04.5 LTS   6.8.0-149-generic (arm64)   containerd://2
+node-b   Ready    <none>          2d21h   v1.37.2+k3s1   192.168.252.3   <none>        Ubuntu 24.04.5 LTS   6.8.0-149-generic (arm64)   containerd://2
+node-c   Ready    <none>          2d2h    v1.37.2+k3s1   192.168.252.6   <none>        Ubuntu 24.04.5 LTS   6.8.0-149-generic (arm64)   containerd://2
+node-d   Ready    <none>          2d18h   v1.37.2+k3s1   192.168.252.5   <none>        Ubuntu 24.04.5 LTS   6.8.0-149-generic (arm64)   containerd://2
+
+$ kubectl -n sistem-informasi-kebencanaan-bnpb get pods -L role -o wide
+aggregator-577b756ccd-hxt54            1/1   Running  node-b  aggregator
+aggregator-577b756ccd-js5k5            1/1   Running  node-a  aggregator
+aggregator-577b756ccd-n54q4            1/1   Running  node-c  aggregator
+auth-55cd9477f6-7s7nm                  1/1   Running  node-a  api       
+auth-55cd9477f6-vqkw6                  1/1   Running  node-b  api       
+bmkg-c4d666dd-mb2rb                    1/1   Running  2d3h    <none>    
+client-api-64b57c4b98-p7wg6            1/1   Running  node-a  api       
+client-api-64b57c4b98-qptts            1/1   Running  node-b  api       
+coastal-ingestor-6df677bcbb-598cp      1/1   Running  5h22m   <none>    
+coastal-ingestor-6df677bcbb-nl4ss      1/1   Running  5h22m   <none>    
+cockroachdb-0                          1/1   Running  node-a  store     
+cockroachdb-1                          1/1   Running  node-c  store     
+cockroachdb-2                          1/1   Running  node-b  store     
+cockroachdb-3                          1/1   Running  node-d  store     
+critical-notifier-855c5d67b5-bt747     1/1   Running  node-b  consumer  
+critical-notifier-855c5d67b5-drv8h     1/1   Running  node-d  consumer  
+dashboard-consumer-77bcff9d76-6lct8    1/1   Running  2d3h    <none>    
+dashboard-consumer-77bcff9d76-tdm4k    1/1   Running  2d21h   <none>    
+demo-api-69dfb57f64-hl85w              1/1   Running  41h     <none>    
+demo-console-7ff94d874b-7h2kw          1/1   Running  node-d  other     
+grafana-595c764b86-8qbtn               1/1   Running  node-d  other     
+notifier-consumer-5f5dbbd9d9-257h9     1/1   Running  node-d  consumer  
+notifier-consumer-5f5dbbd9d9-v7vsd     1/1   Running  node-a  consumer  
+otel-collector-54dd4cd5d8-d2lx6        1/1   Running  41h     <none>    
+portal-consumer-57d449455d-dgpzj       1/1   Running  2d21h   <none>    
+portal-consumer-57d449455d-v2nxm       1/1   Running  node-d  consumer  
+postgres-0                             1/1   Running  2d3h    <none>    
+prometheus-bb8c8c494-n6hr4             1/1   Running  2d3h    <none>    
+pvmbg-584c8d865c-h5thf                 1/1   Running  node-c  mock      
+rabbitmq-6b7978945d-qblhw              1/1   Running  4h15m   <none>    
+satellite-feed-69f94fddcb-krtnk        1/1   Running  node-d  mock      
+satellite-ingestor-5dccbbc99-582sg     1/1   Running  5h28m   <none>    
+satellite-ingestor-5dccbbc99-cdpxf     1/1   Running  5h31m   <none>    
+sensor-pantai-69889df87-jj7tc          1/1   Running  node-d  sensor    
+tempo-7d7b545ff5-zcc2d                 1/1   Running  2d21h   <none>    
+
+$ kubectl -n tester-agent get pods -o wide
+tester-agent-bdlhv     1/1   Running  5h52m
+tester-agent-jg2cd     1/1   Running  node-d
+tester-agent-sd5r5     1/1   Running  node-a
+tester-agent-vcj4x     1/1   Running  node-b

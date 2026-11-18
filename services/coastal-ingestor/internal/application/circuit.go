@@ -80,7 +80,7 @@ func (b *CircuitBreaker) Allow() bool {
 		if b.now().Sub(b.openedAt) < b.cfg.OpenTimeout {
 			return false
 		}
-		b.state = CircuitHalfOpen
+		b.setState(CircuitHalfOpen)
 		b.probeInFlight = true
 		return true
 	default: // CircuitHalfOpen
@@ -96,7 +96,7 @@ func (b *CircuitBreaker) Allow() bool {
 func (b *CircuitBreaker) RecordSuccess() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.state = CircuitClosed
+	b.setState(CircuitClosed)
 	b.failures = 0
 	b.lastFailureAt = time.Time{}
 	b.openedAt = time.Time{}
@@ -134,9 +134,23 @@ func (b *CircuitBreaker) State() CircuitState {
 }
 
 func (b *CircuitBreaker) trip(now time.Time) {
-	b.state = CircuitOpen
+	b.setState(CircuitOpen)
 	b.openedAt = now
 	b.failures = 0
 	b.lastFailureAt = time.Time{}
 	b.probeInFlight = false
+}
+
+// setState records the transition in coastal_circuit_state (0 closed,
+// 1 half-open, 2 open) so dashboards show when the sensor is cut off.
+func (b *CircuitBreaker) setState(state CircuitState) {
+	b.state = state
+	switch state {
+	case CircuitOpen:
+		circuitState.Set(2)
+	case CircuitHalfOpen:
+		circuitState.Set(1)
+	default:
+		circuitState.Set(0)
+	}
 }

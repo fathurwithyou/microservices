@@ -47,23 +47,23 @@ func (s *BMKGSource) Name() domain.Source { return domain.SourceBMKG }
 // Fetch implements Source.
 func (s *BMKGSource) Fetch(ctx context.Context, since time.Time, correlationID string) ([]domain.HazardEvent, error) {
 	query := "?since=" + url.QueryEscape(since.Format(time.RFC3339))
-	rawEvents, err := s.client.Get(ctx, "/seismic-events"+query, correlationID)
+	rawEvents, rejected, err := fetchRecords(ctx, s.client, domain.SourceBMKG, "/seismic-events"+query, correlationID)
 	if err != nil {
-		if malformed, ok := malformedPayload(domain.SourceBMKG, err); ok {
-			return nil, malformed
-		}
 		return nil, err
 	}
-	rawWarnings, err := s.client.Get(ctx, "/tsunami-warnings"+query, correlationID)
+	rawWarnings, rejectedWarnings, err := fetchRecords(ctx, s.client, domain.SourceBMKG, "/tsunami-warnings"+query, correlationID)
 	if err != nil {
 		return nil, err
+	}
+	rejected = append(rejected, rejectedWarnings...)
+	for _, item := range rejected {
+		s.logger.Error("source payload rejected", "component", "mapping", "source", domain.SourceBMKG, "correlation_id", correlationID, "error", item.Err)
 	}
 
 	warningsByEvent := warningsByEventID(rawWarnings)
 	now := time.Now().UTC()
 	events := make([]domain.HazardEvent, 0, len(rawEvents))
-	var mappingErrs []error
-	var rejected []RejectedPayload
+	mappingErrs := rejectionErrors(rejected)
 	for _, raw := range rawEvents {
 		event, err := mapping.Seismic(raw, warningsByEvent[rawString(raw, "event_id")], now)
 		if err != nil {

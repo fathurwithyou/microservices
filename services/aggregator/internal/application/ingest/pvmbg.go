@@ -53,17 +53,16 @@ func (s *PVMBGSource) Name() domain.Source { return domain.SourcePVMBG }
 
 // Fetch implements Source.
 func (s *PVMBGSource) Fetch(ctx context.Context, since time.Time, correlationID string) ([]domain.HazardEvent, error) {
-	reports, err := s.client.Get(ctx, "/volcanic-reports?since="+url.QueryEscape(since.Format(time.RFC3339)), correlationID)
+	reports, rejected, err := fetchRecords(ctx, s.client, domain.SourcePVMBG, "/volcanic-reports?since="+url.QueryEscape(since.Format(time.RFC3339)), correlationID)
 	if err != nil {
-		if malformed, ok := malformedPayload(domain.SourcePVMBG, err); ok {
-			return nil, malformed
-		}
 		return nil, err
+	}
+	for _, item := range rejected {
+		s.logger.Error("source payload rejected", "component", "mapping", "source", domain.SourcePVMBG, "correlation_id", correlationID, "error", item.Err)
 	}
 	now := time.Now().UTC()
 	events := make([]domain.HazardEvent, 0, len(reports))
-	var mappingErrs []error
-	var rejected []RejectedPayload
+	mappingErrs := rejectionErrors(rejected)
 	for _, raw := range reports {
 		event, err := mapping.Volcanic(raw, s.volcanoes, now)
 		if err != nil {

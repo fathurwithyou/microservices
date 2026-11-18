@@ -57,5 +57,5 @@ export function analytics(accessToken: string, query: AnalyticsQuery = {}): Prom
   if (query.until) params.set("until", query.until);
   if (query.bucket) params.set("bucket", query.bucket);
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  return requestJson(`/analytics${suffix}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  return requestJson(`/api/analytics${suffix}`, { headers: { Authorization: `Bearer ${accessToken}` } });
 }

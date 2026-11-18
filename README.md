@@ -170,17 +170,47 @@ make m2-load       # 10k VUs with 3->5->2 scaling
 
 M2 local services are behind the Compose profile `m2` and require `FEED_TOKEN`.
 
+### M2 evidence runs
+
+`scripts/m2-demo.sh` runs every P1–P5 scenario against the cluster and writes
+one folder per run, `artifacts/m2/runs/m2-<UTC time>/`, with `run.json`
+(commit, images, nodes, stage exit codes), `timeline.txt`, one subfolder per
+problem, and `SUMMARY.md` / `summary.json` (PASS / FAIL / NOT RUN per
+criterion with the evidence file behind each number).
+
+```bash
+./scripts/m2-demo.sh all                                  # every non-destructive scenario
+./scripts/m2-demo.sh prep dataset <catalog-file> p1 summary   # assistants' catalog (CSV/JSON/NDJSON/GeoJSON, .gz)
+CONFIRM=yes ./scripts/m2-demo.sh p1-node-loss             # power off a worker, wipe its store disk, rejoin
+CONFIRM=yes ./scripts/m2-demo.sh p2-skew p2-freeze        # leader clock skew, leader VM freeze
+CONFIRM=yes NEW_IMAGE=<aggregator image> ./scripts/m2-demo.sh p2-load
+CONFIRM=yes ./scripts/m2-demo.sh p2-throughput            # 1 vs 3 Aggregator instances
+CONFIRM=yes ./scripts/m2-demo.sh p4-sim                   # P4 rehearsal against the in-cluster stand-in feed
+CONFIRM=yes ./scripts/m2-demo.sh p4-feed-real             # point the ingestor back at the assistants' feed
+CONFIRM=yes ./scripts/m2-demo.sh p5-critical              # critical-notification latency rounds (restarts the sensor)
+CONFIRM=yes ./scripts/m2-demo.sh p5-gameday               # Tester Agent practice scenarios, hands-off
+./scripts/m2-demo.sh summary
+./scripts/m2-demo.sh restore                              # undo test-only changes
+```
+
+`python3 scripts/m2-catalog-normalize.py <file> --inspect` shows how a catalog
+of unknown shape maps onto the import fields before anything is written.
+
 ### M2 topology declaration
 
-Fill this table before the demo. The spec requires node count, node type, host,
-and host CPU/RAM. Do not claim a physical host split unless the nodes actually
-run on separate hosts.
+Four nodes, all virtual machines on one physical host (so the "nodes on
+different physical hosts" bonus is not claimed). Each VM runs its own kernel.
 
-| Node | Role | Type | Physical host | CPU | RAM | Notes |
+| Node | Role | Type | Physical host | CPU | RAM | Disk |
 |---|---|---|---|---|---|---|
-| node-a | control plane + worker | [VM/native] | [host] | [n] vCPU | [n] GiB | |
-| node-b | worker | [VM/native] | [host] | [n] vCPU | [n] GiB | |
-| node-c | worker | [VM/native] | [host] | [n] vCPU | [n] GiB | optional |
+| node-a | control plane + worker | VM (Multipass, QEMU/HVF), Ubuntu 24.04 | Mac mini M4 Pro | 2 vCPU | 4.8 GiB | 20 GiB |
+| node-b | worker | VM (Multipass, QEMU/HVF), Ubuntu 24.04 | Mac mini M4 Pro | 2 vCPU | 4.8 GiB | 20 GiB |
+| node-c | worker | VM (Multipass, QEMU/HVF), Ubuntu 24.04 | Mac mini M4 Pro | 2 vCPU | 3.8 GiB | 20 GiB |
+| node-d | worker | VM (Multipass, QEMU/HVF), Ubuntu 24.04 | Mac mini M4 Pro | 2 vCPU | 3.8 GiB | 20 GiB |
+
+Physical host: Mac mini (Mac16,11), Apple M4 Pro, 12 cores, 24 GB RAM,
+macOS 15.6.1. Kubernetes: k3s v1.37.2+k3s1. Node-kill scenarios target a
+non-control-plane worker only.
 
 Cluster requirements used by the manifests: namespace
 `sistem-informasi-kebencanaan-bnpb`, a `local-path` StorageClass, and nodes
@@ -192,6 +222,15 @@ kubectl apply -f https://raw.githubusercontent.com/susTuna/if4031-tester-agent/e
 kubectl -n tester-agent exec daemonset/tester-agent -- /app list
 ```
 
+The agent runs the host's `iptables` through `/host`. On Ubuntu the binary is
+an absolute symlink through `/etc/alternatives`, which does not resolve under
+that prefix, so the agent's `block_internode` step fails with "biner iptables
+tidak ditemukan". Make the link relative once per node:
+
+```sh
+sudo sh -c 'cd /usr/sbin && for b in iptables ip6tables; do ln -sfn "$(basename "$(readlink -f $b)")" $b; done'
+```
+
 ### M2 scenario triggers
 
 | Scenario | Command |
@@ -200,9 +239,14 @@ kubectl -n tester-agent exec daemonset/tester-agent -- /app list
 | Health and Audit API | `make m2-smoke` |
 | Evidence files | `make m2-evidence` |
 | 10k VU, 3 to 5 to 2, rolling update | `make m2-load` |
+| PVMBG schema by version (form the Tester Agent sends) | `curl -X POST -d '{"version":3}' http://pvmbg:8082/admin/schema-version` (1 original, 2 additive, 3 incompatible) |
 | PVMBG incompatible schema | `curl -X POST -H "X-PVMBG-Admin-Key: $PVMBG_ADMIN_KEY" -d '{"mode":"breaking"}' http://pvmbg:8082/admin/schema-version` |
 | PVMBG outage | `curl -X POST -H "X-PVMBG-Admin-Key: $PVMBG_ADMIN_KEY" -d '{"enabled":true}' http://pvmbg:8082/admin/outage` |
-| Replay parked PVMBG payloads | `curl -X POST -H "Authorization: Bearer $AUDIT_TOKEN" "http://aggregator:8090/internal/ops/replay?source=PVMBG"` |
+| Satellite feed rehearsal (burst, cut, leader kill, reference) | `CONFIRM=yes ./scripts/m2-demo.sh p4-sim` |
+| Result vs reference on the assistants' feed | `python3 scripts/m2-p4-reference.py --stream-url https://satellite.naufarrel.dev --token $FEED_TOKEN --until-offset N --audit-url http://localhost:18090 --audit-token $AUDIT_TOKEN --lateness-minutes 720` |
+| Remove rehearsal events of one source | `curl -X POST -H "Authorization: Bearer $OPS_TOKEN" "http://aggregator:8090/internal/ops/purge?source=SATELIT"` |
+| Tester Agent practice scenario | `kubectl exec -n tester-agent daemonset/tester-agent -- /app run practice <name>` |
+| Replay parked PVMBG payloads | `curl -X POST -H "Authorization: Bearer $OPS_TOKEN" "http://aggregator:8090/internal/ops/replay?source=PVMBG"` |
 | Import historical earthquake catalog | `go run ./services/aggregator/cmd/server import-catalog -file catalog.ndjson` |
 | Coastal sensor (Compose) | `docker compose --env-file .env --profile m2 up -d sensor-pantai coastal-ingestor` |
 

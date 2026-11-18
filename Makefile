@@ -1,12 +1,12 @@
-.PHONY: help tools generate test lint build compose-up compose-down k3d-up k3d-deploy k3d-scale k3d-down test-contract test-integration test-e2e test-load test-load-isolation frontend-test demo-up test-demo-e2e migrate-up migrate-down migrate-status seed m2-verify m2-deploy m2-smoke m2-evidence m2-load
+.PHONY: help tools generate test lint build compose-up compose-down k3d-up k3d-deploy k3d-scale k3d-down test-contract test-integration test-e2e test-load test-load-isolation frontend-test demo-up test-demo-e2e migrate-up migrate-down migrate-status seed m2-verify m2-deploy m2-smoke m2-evidence m2-load m2-critical m2-demo m2-dataset
 
 K3D_CLUSTER ?= bnpb-m1
 K3D_HOST_PORT ?= 8080
 K3D_IMAGE_PREFIX ?= bnpb-m1
 K3S_NAMESPACE ?= bnpb-m1
 K3S_ENV_FILE ?= .env
-K3D_SERVICES := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer satellite-ingestor coastal-ingestor demo-api
-K3D_DEPLOYMENTS := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer satellite-ingestor coastal-ingestor critical-notifier rabbitmq demo-api demo-console
+K3D_SERVICES := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer satellite-ingestor satellite-feed coastal-ingestor demo-api
+K3D_DEPLOYMENTS := bmkg pvmbg aggregator auth client-api dashboard-consumer notifier-consumer portal-consumer satellite-ingestor satellite-feed coastal-ingestor critical-notifier rabbitmq demo-api demo-console
 K3D_SCALABLE_DEPLOYMENTS := client-api auth dashboard-consumer notifier-consumer portal-consumer
 
 help:
@@ -23,12 +23,12 @@ generate: tools ## Generate protobuf Go code; requires protoc and Go protobuf pl
 
 test: ## Run all Go unit tests
 	@go test ./contracts/...
-	@for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/satellite-ingestor services/coastal-ingestor services/demo-api; do (cd $$module && go test ./...); done
+	@for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/satellite-ingestor services/satellite-feed services/coastal-ingestor services/demo-api; do (cd $$module && go test ./...); done
 
 lint: ## Run gofmt, vet, and optional staticcheck
 	@gofmt -w $$(find contracts services -name '*.go')
-	@set -e; go vet ./contracts/...; for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/satellite-ingestor services/coastal-ingestor services/demo-api; do (cd $$module && go vet ./...); done
-	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./contracts/...; for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/satellite-ingestor services/coastal-ingestor services/demo-api; do (cd $$module && staticcheck ./...); done; fi
+	@set -e; go vet ./contracts/...; for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/satellite-ingestor services/satellite-feed services/coastal-ingestor services/demo-api; do (cd $$module && go vet ./...); done
+	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./contracts/...; for module in services/bmkg services/pvmbg services/aggregator services/auth services/client-api services/dashboard-consumer services/notifier-consumer services/portal-consumer services/satellite-ingestor services/satellite-feed services/coastal-ingestor services/demo-api; do (cd $$module && staticcheck ./...); done; fi
 
 build: generate ## Build every service binary
 	@mkdir -p bin
@@ -136,3 +136,13 @@ m2-evidence: ## Generate M2 evidence artifacts
 
 m2-load: ## Run M2 10k-VU load scenario with 3->5->2 scaling and rolling update
 	@./scripts/m2-load.sh
+
+m2-critical: ## Check critical-notification p95 <= 5s from notifier /metrics
+	@bash ./scripts/m2-critical-latency.sh
+
+m2-demo: ## Run M2 evidence stages into artifacts/m2/runs/<id> (STAGES="all" by default; see scripts/m2-demo.sh)
+	@./scripts/m2-demo.sh $${STAGES:-all}
+
+m2-dataset: ## Normalise and import the assistants' catalog: make m2-dataset FILE=<path> [EXPECTED_CHECKSUM=<sha256>]
+	@test -n "$(FILE)" || (echo "usage: make m2-dataset FILE=<catalog file>"; exit 2)
+	@./scripts/m2-demo.sh prep dataset "$(FILE)" p1 summary

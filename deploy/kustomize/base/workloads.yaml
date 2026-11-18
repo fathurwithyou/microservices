@@ -52,7 +52,10 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: pvmbg }
+# The Tester Agent calls mock admin endpoints (POST /admin/schema-version,
+# /admin/outage) on the Service labelled role=mock. Only PVMBG has them; BMKG's
+# Service is left unlabelled so the agent does not hit a 404 there.
+metadata: { name: pvmbg, labels: { role: mock } }
 spec: { selector: { app: pvmbg }, ports: [{ name: http, port: 8082, targetPort: http }] }
 ---
 apiVersion: apps/v1
@@ -61,10 +64,20 @@ metadata: { name: aggregator }
 spec:
   replicas: 1
   selector: { matchLabels: { app: aggregator } }
+  # Never drop below the desired count during a version change (M2 P2.8).
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
   template:
     metadata: { labels: { app: aggregator, role: aggregator } }
     spec:
       serviceAccountName: aggregator
+      # One instance per node where possible (M2 P2.1); extra replicas still
+      # schedule when there are more replicas than nodes.
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: ScheduleAnyway, labelSelector: { matchLabels: { app: aggregator } } }
+      terminationGracePeriodSeconds: 30
+      # Secret files are root-owned; fsGroup lets the non-root process read
+      # its client key (mode 0440).
+      securityContext: { fsGroup: 10001 }
       initContainers:
         - name: migrate
           image: bnpb-m1/aggregator:local
@@ -72,51 +85,65 @@ spec:
           args: ["migrate", "up"]
           env:
             - { name: STORE_DRIVER, value: cockroach }
-            - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_COCKROACH_URL } } }
+            - { name: AGGREGATOR_DATABASE_URL, value: "postgresql://aggregator@cockroachdb-public:26257/aggregator_db?sslmode=verify-full&sslrootcert=/cockroach/certs/ca.crt&sslcert=/cockroach/certs/client.aggregator.crt&sslkey=/cockroach/certs/client.aggregator.key" }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+          volumeMounts:
+            - { name: cockroach-client-certs, mountPath: /cockroach/certs, readOnly: true }
         - name: seed
           image: bnpb-m1/aggregator:local
           resources: { requests: { memory: 256Mi }, limits: { memory: 512Mi } }
           args: ["seed"]
           env:
             - { name: STORE_DRIVER, value: cockroach }
-            - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_COCKROACH_URL } } }
+            - { name: AGGREGATOR_DATABASE_URL, value: "postgresql://aggregator@cockroachdb-public:26257/aggregator_db?sslmode=verify-full&sslrootcert=/cockroach/certs/ca.crt&sslcert=/cockroach/certs/client.aggregator.crt&sslkey=/cockroach/certs/client.aggregator.key" }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+          volumeMounts:
+            - { name: cockroach-client-certs, mountPath: /cockroach/certs, readOnly: true }
       containers:
         - name: aggregator
           image: bnpb-m1/aggregator:local
           resources: { requests: { memory: 256Mi }, limits: { memory: 512Mi } }
           ports: [{ name: grpc, containerPort: 9090 }, { name: http, containerPort: 8090 }]
+          # Endpoint and DNS removal propagate before SIGTERM starts the drain.
+          lifecycle: { preStop: { exec: { command: ["sleep", "5"] } } }
           envFrom: [{ configMapRef: { name: bnpb-config } }]
           env:
             - { name: AGGREGATOR_GRPC_PORT, value: "9090" }
             - { name: AGGREGATOR_HTTP_PORT, value: "8090" }
             - { name: INTERNAL_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: INTERNAL_SERVICE_TOKEN } } }
             - { name: AUDIT_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AUDIT_TOKEN } } }
+            - { name: OPS_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: OPS_TOKEN, optional: true } } }
             - { name: BMKG_API_KEY, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: BMKG_API_KEY } } }
             - { name: PVMBG_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: PVMBG_TOKEN } } }
-            - { name: AGGREGATOR_DATABASE_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: AGGREGATOR_COCKROACH_URL } } }
+            - { name: AGGREGATOR_DATABASE_URL, value: "postgresql://aggregator@cockroachdb-public:26257/aggregator_db?sslmode=verify-full&sslrootcert=/cockroach/certs/ca.crt&sslcert=/cockroach/certs/client.aggregator.crt&sslkey=/cockroach/certs/client.aggregator.key" }
             - { name: RABBITMQ_URL, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: RABBITMQ_URL } } }
             - { name: STORE_DRIVER, value: cockroach }
-          readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 5 }
-          livenessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 10 }
+          readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 5, timeoutSeconds: 3 }
+          # Liveness restarts a stuck process, not a busy one: under CPU
+          # saturation /health is slow, and restarting healthy instances in the
+          # middle of a load spike turns overload into 502s. ~60 s of failures.
+          livenessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 10, timeoutSeconds: 3, failureThreshold: 6 }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
           volumeMounts:
             - { name: cockroach-client-certs, mountPath: /cockroach/certs, readOnly: true }
       volumes:
+        # Only the aggregator's own SQL identity; never client.root.
         - name: cockroach-client-certs
           secret:
-            secretName: bnpb-secrets
-            defaultMode: 0400
-            items:
-              - { key: ca.crt, path: ca.crt }
-              - { key: client.root.crt, path: client.root.crt }
-              - { key: client.root.key, path: client.root.key }
+            secretName: cockroach-client-aggregator
+            defaultMode: 0440
 ---
 apiVersion: v1
 kind: Service
 metadata: { name: aggregator }
 spec: { selector: { app: aggregator }, ports: [{ name: grpc, port: 9090, targetPort: grpc }, { name: http, port: 8090, targetPort: http }] }
+---
+# Headless: DNS returns every ready Aggregator pod, so Client API balances per
+# call (round_robin) instead of pinning one HTTP/2 connection to one pod.
+apiVersion: v1
+kind: Service
+metadata: { name: aggregator-grpc }
+spec: { clusterIP: None, selector: { app: aggregator }, ports: [{ name: grpc, port: 9090, targetPort: grpc }] }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -128,12 +155,18 @@ spec:
     metadata: { labels: { app: auth, role: api } }
     spec:
       serviceAccountName: auth
+      # Two stateless replicas on different nodes: with one replica on the node
+      # that was powered off (P1.4, 17 Nov) every token validation failed for
+      # the 5 min eviction window and the gateway answered 502 throughout.
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: ScheduleAnyway, labelSelector: { matchLabels: { app: auth } } }
       initContainers:
         - name: wait-for-auth-db
           image: postgres:17-alpine
           command: ["/bin/sh", "-c", "until pg_isready -h postgres -U auth -d auth_db; do sleep 2; done"]
           resources: { requests: { memory: 64Mi }, limits: { memory: 128Mi } }
-          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+          # postgres:17-alpine defaults to root; uid 70 is its postgres user.
+          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true, runAsUser: 70, runAsGroup: 70 }
       containers:
         - name: auth
           image: bnpb-m1/auth:local
@@ -169,13 +202,19 @@ spec:
       containers:
         - name: client-api
           image: bnpb-m1/client-api:local
-          resources: { requests: { memory: 128Mi }, limits: { memory: 256Mi } }
+          # 10k VUs keep thousands of connections per pod open; 256Mi was
+          # OOM-killed under the P2.6 load, refusing connections mid-test.
+          resources: { requests: { memory: 192Mi }, limits: { memory: 512Mi } }
           ports: [{ name: http, containerPort: 8080 }]
           envFrom: [{ configMapRef: { name: bnpb-config } }]
           env:
             - { name: CLIENT_API_PORT, value: "8080" }
+            # Per-call balancing over the headless Service (see aggregator-grpc).
+            - { name: AGGREGATOR_GRPC_ADDR, value: "dns:///aggregator-grpc:9090" }
             - { name: INTERNAL_SERVICE_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: INTERNAL_SERVICE_TOKEN } } }
-          readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 2 }
+          # A saturated but working pod answers /health slowly; a 1 s timeout
+          # took every pod out of the Service at once (connection refused).
+          readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 2, timeoutSeconds: 3 }
           securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
 ---
 apiVersion: v1
@@ -213,11 +252,14 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 6
+          # rabbitmq-diagnostics spawns an Erlang node; under a saturated host
+          # it took > 5 s and the old probe (3 x 15 s) restarted the broker
+          # mid load test (18 Nov). A slow ping is not a dead broker.
           livenessProbe:
             exec: { command: [rabbitmq-diagnostics, -q, ping] }
             periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 3
+            timeoutSeconds: 10
+            failureThreshold: 6
       volumes:
         - name: rabbitmq-data
           persistentVolumeClaim: { claimName: rabbitmq-data }
@@ -273,7 +315,7 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: consumer, consumer: dashboard } }
   template:
-    metadata: { labels: { app: consumer, consumer: dashboard } }
+    metadata: { labels: { app: consumer, consumer: dashboard, role: consumer } }
     spec:
       serviceAccountName: consumer
       containers:
@@ -294,7 +336,7 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: consumer, consumer: portal } }
   template:
-    metadata: { labels: { app: consumer, consumer: portal } }
+    metadata: { labels: { app: consumer, consumer: portal, role: consumer } }
     spec:
       serviceAccountName: consumer
       containers:
@@ -315,7 +357,7 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: consumer, consumer: notifier } }
   template:
-    metadata: { labels: { app: consumer, consumer: notifier } }
+    metadata: { labels: { app: consumer, consumer: notifier, role: consumer } }
     spec:
       serviceAccountName: consumer
       containers:

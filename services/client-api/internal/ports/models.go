@@ -37,6 +37,10 @@ type HazardPage struct {
 	NextPageToken    string
 	Partial          bool
 	UnavailableUnits []string
+	// StaleSince is set (RFC3339) when the Aggregator answered from memory
+	// because its store did not answer: the page is then the last one it
+	// had, read at that time, and Partial is true.
+	StaleSince string
 }
 
 // Hazard is the client-api-owned representation of an aggregator event.
@@ -94,8 +98,11 @@ type Analytics struct {
 	Severities       []AnalyticsSeverity  `json:"severities"`
 	Areas            []AnalyticsArea      `json:"areas"`
 	Buckets          []AnalyticsBucket    `json:"time_buckets"`
+	AsOf             string               `json:"as_of,omitempty"`
 	Partial          bool                 `json:"partial"`
 	UnavailableUnits []string             `json:"unavailable_units"`
+	// StaleSince: see HazardPage.StaleSince. Absent on a live answer.
+	StaleSince string `json:"stale_since,omitempty"`
 }
 
 type AnalyticsTypeCount struct {

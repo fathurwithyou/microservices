@@ -1,0 +1,50 @@
+% Arsitektur logis M2: layanan, protokol, kepemilikan penyimpanan, alur event.
+\begin{tikzpicture}[
+  >=Latex,
+  card/.style={draw=metafg!45,rounded corners=3pt,fill=white,minimum width=2.75cm,
+    minimum height=1.0cm,align=center,font=\sffamily\scriptsize,inner sep=2.5pt},
+  service/.style={card,fill=metablue!7,draw=metablue!55},
+  core/.style={card,fill=metablue!20,draw=metablue!75},
+  state/.style={card,fill=fairamber!18,draw=fairamber!90!black},
+  ext/.style={card,dashed,fill=metabg},
+  flow/.style={->,line width=0.8pt,draw=metafg!75},
+  ev/.style={->,line width=0.8pt,draw=metafg!75,densely dashed},
+  w/.style={font=\sffamily\tiny,text=metafg!85,fill=white,inner sep=1pt},
+]
+% baris sumber
+\node[ext] (feed) at (0.5,8.0) {\textbf{Feed Satelit}\\milik asisten (luar cluster)};
+\node[service] (sat) at (4.6,8.0) {\textbf{satellite-ingestor} $\times$2\\aktif/siaga; state: satellite\_db*};
+\node[service] (mock) at (8.7,8.0) {\textbf{BMKG, PVMBG}\\mock REST};
+\node[service] (coast) at (12.8,8.0) {\textbf{coastal-ingestor} $\times$2\\aktif/siaga; state: coastal\_db*};
+\node[ext] (sensor) at (16.9,8.0) {\textbf{sensor-pantai}\\image asisten};
+
+% baris inti
+\node[card] (client) at (0.5,5.3) {\textbf{Klien}\\Media, Tim Lapangan,\\BNPB Ops};
+\node[service] (api) at (4.6,5.3) {\textbf{Client API} $\times$2\\HTTP :8080 / NodePort 30080};
+\node[core,minimum height=1.25cm] (agg) at (8.7,5.3) {\textbf{Aggregator} $\times$3\\gRPC :9090; Audit/Ops :8090\\satu \textit{leader} polling};
+\node[state,minimum width=3.9cm,minimum height=1.45cm] (crdb) at (14.9,5.3) {\textbf{CockroachDB} 4 node, RF=3, TLS\\aggregator\_db (Canonical Store,\\outbox, inbox, lease)\\{*}satellite\_db, coastal\_db};
+
+% baris bawah
+\node[state] (pg) at (0.5,3.1) {\textbf{PostgreSQL}\\auth\_db};
+\node[service] (auth) at (4.6,3.1) {\textbf{Auth Service} $\times$2\\gRPC :9091};
+\node[state] (rmq) at (8.7,3.1) {\textbf{RabbitMQ}\\hazard.events,\\hazard.events.critical};
+\node[ext] (auditor) at (12.9,3.1) {\textbf{Auditor / BNPB Ops}\\token Audit, token Ops};
+\node[service,minimum width=4.6cm] (cons) at (8.7,1.2) {\textbf{Konsumen} ($\times$2 masing-masing)\\dashboard, notifier, portal, critical-notifier};
+\node[card,minimum width=3.9cm,fill=metabg] (obs) at (14.9,1.2) {\textbf{Observabilitas}\\Prometheus, OTel Collector,\\Tempo, Grafana};
+
+\draw[flow] (feed) -- node[w,above]{SSE} (sat);
+\draw[flow] (sat.south) -- node[w,pos=0.4,left]{gRPC SubmitHazard} (agg.north west);
+\draw[flow] (agg) -- node[w,right]{REST polling} (mock);
+\draw[flow] (coast.south west) -- node[w,pos=0.4,right,xshift=2pt]{gRPC SubmitHazard} (agg.north east);
+\draw[flow] (coast) -- node[w,above]{REST} (sensor);
+\draw[flow] (13.7,0 |- coast.south) -- node[w,right,pos=0.45]{SQL} (13.7,0 |- crdb.north);
+
+\draw[flow] (client) -- node[w,above]{HTTP} (api);
+\draw[flow] (api) -- node[w,above]{gRPC} (agg);
+\draw[flow] (agg) -- node[w,above]{SQL/TLS} (crdb);
+\draw[flow] (api) -- node[w,right]{gRPC} (auth);
+\draw[flow] (auth) -- node[w,above]{SQL} (pg);
+\draw[ev] (agg) -- node[w,right]{outbox, AMQP} (rmq);
+\draw[ev] (rmq) -- node[w,right]{antrean \textit{durable} per konsumen} (cons);
+\draw[flow] (auditor.north west) -- node[w,pos=0.5,right,xshift=3pt]{HTTP :8090} (agg.south east);
+\end{tikzpicture}

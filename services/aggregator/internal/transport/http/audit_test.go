@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/audit"
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/failures"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 )
 
@@ -26,14 +28,124 @@ func (auditRepository) HazardLocations(context.Context, string) ([]audit.Locatio
 	return []audit.Location{{Node: "node-b", Unit: "shard-2", Role: "primary"}}, nil
 }
 
+func (auditRepository) HazardDistribution(context.Context) (audit.Distribution, error) {
+	return audit.Distribution{Ranges: 4, LogicalBytes: 400, Nodes: []audit.NodeShare{
+		{Node: "node-a", NodeID: 1, Live: true, Replicas: 3, Leaseholders: 1, ReplicaBytes: 300},
+		{Node: "node-b", NodeID: 2, Live: true, Replicas: 4, Leaseholders: 3, ReplicaBytes: 400},
+	}}, nil
+}
+
+func (auditRepository) FieldReportsByID(_ context.Context, ids []string) ([]domain.FieldReport, error) {
+	out := []domain.FieldReport{}
+	for _, id := range ids {
+		if id == "fr-1" {
+			out = append(out, domain.FieldReport{ReportID: id, Status: domain.FieldReportProcessed, Attempts: 1})
+		}
+	}
+	return out, nil
+}
+
 func (auditRepository) UnavailableUnits(context.Context) ([]string, error) { return nil, nil }
-func (auditRepository) ListIngestFailures(context.Context, domain.Source, int, time.Time, string) ([]domain.IngestFailure, error) {
-	return nil, nil
+func (auditRepository) ListIngestFailures(context.Context, domain.FailureFilter) ([]domain.IngestFailure, error) {
+	return []domain.IngestFailure{{MessageID: "msg-1", Source: domain.SourcePVMBG, Reason: "schema_incompatible", Status: domain.FailureParked, PayloadBytes: 16}}, nil
+}
+func (auditRepository) GetIngestFailure(_ context.Context, id string) (domain.IngestFailure, error) {
+	if id != "msg-1" {
+		return domain.IngestFailure{}, domain.ErrNotFound
+	}
+	return domain.IngestFailure{MessageID: "msg-1", Source: domain.SourcePVMBG, Status: domain.FailureParked, Payload: []byte("bad\xff"), PayloadBytes: 4}, nil
 }
 
 func auditTestServer(token string) *httptest.Server {
-	server := NewServer("0", audit.NewQueries(auditRepository{}), token, nil)
+	server := NewServer("0", audit.NewQueries(auditRepository{}), token, "", nil)
 	return httptest.NewServer(server.Handler)
+}
+
+type replayRepository struct{}
+
+func (replayRepository) ListIngestFailures(context.Context, domain.FailureFilter) ([]domain.IngestFailure, error) {
+	return nil, nil
+}
+func (replayRepository) GetIngestFailure(context.Context, string) (domain.IngestFailure, error) {
+	return domain.IngestFailure{}, domain.ErrNotFound
+}
+func (replayRepository) MarkIngestFailureRecovered(context.Context, string) error { return nil }
+
+type replaySubmitter struct{}
+
+func (replaySubmitter) Submit(context.Context, domain.HazardEvent, string) (string, error) {
+	return "", nil
+}
+
+func replayTestServer(t *testing.T, auditToken, opsToken string) *httptest.Server {
+	t.Helper()
+	replayer, err := failures.New(failures.Config{Repository: replayRepository{}, Submitter: replaySubmitter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer("0", audit.NewQueries(auditRepository{}), auditToken, opsToken, replayer)
+	return httptest.NewServer(server.Handler)
+}
+
+func postReplay(t *testing.T, server *httptest.Server, authorization string) int {
+	t.Helper()
+	request, _ := http.NewRequest(http.MethodPost, server.URL+"/internal/ops/replay?source=PVMBG", nil)
+	if authorization != "" {
+		request.Header.Set("Authorization", authorization)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	return response.StatusCode
+}
+
+func TestReplayRequiresOpsToken(t *testing.T) {
+	server := replayTestServer(t, "audit-secret", "ops-secret")
+	defer server.Close()
+
+	cases := []struct {
+		name          string
+		authorization string
+		want          int
+	}{
+		{"no token", "", http.StatusUnauthorized},
+		{"audit token is rejected", "Bearer audit-secret", http.StatusUnauthorized},
+		{"wrong token", "Bearer nope", http.StatusUnauthorized},
+		{"ops token", "Bearer ops-secret", http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := postReplay(t, server, tc.authorization); got != tc.want {
+				t.Fatalf("status = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReplayDisabledWithoutOpsToken(t *testing.T) {
+	server := replayTestServer(t, "audit-secret", "")
+	defer server.Close()
+	// Even a valid audit token must not unlock replay when no ops token is set.
+	if got := postReplay(t, server, "Bearer audit-secret"); got != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", got)
+	}
+}
+
+func TestOpsTokenDoesNotUnlockAudit(t *testing.T) {
+	server := replayTestServer(t, "audit-secret", "ops-secret")
+	defer server.Close()
+	request, _ := http.NewRequest(http.MethodGet, server.URL+"/internal/audit/events", nil)
+	request.Header.Set("Authorization", "Bearer ops-secret")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", response.StatusCode)
+	}
 }
 
 func TestAuditRequiresToken(t *testing.T) {
@@ -90,5 +202,125 @@ func TestAuditChecksumRequiresSource(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", response.StatusCode)
+	}
+}
+
+func TestOpsFailureInspectionRequiresOpsTokenAndReturnsPayload(t *testing.T) {
+	server := replayTestServer(t, "audit-secret", "ops-secret")
+	defer server.Close()
+	get := func(path, authorization string) (int, map[string]any) {
+		request, _ := http.NewRequest(http.MethodGet, server.URL+path, nil)
+		if authorization != "" {
+			request.Header.Set("Authorization", authorization)
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		body := map[string]any{}
+		_ = json.NewDecoder(response.Body).Decode(&body)
+		return response.StatusCode, body
+	}
+	if status, _ := get("/internal/ops/failures", "Bearer audit-secret"); status != http.StatusUnauthorized {
+		t.Fatalf("audit token status = %d, want 401", status)
+	}
+	status, body := get("/internal/ops/failures", "Bearer ops-secret")
+	if status != http.StatusOK {
+		t.Fatalf("ops list status = %d", status)
+	}
+	items, _ := body["items"].([]any)
+	// Listings carry the size only; bytes come from the single-message endpoint.
+	if len(items) != 1 || items[0].(map[string]any)["payload_bytes"] != float64(16) {
+		t.Fatalf("ops list body = %v", body)
+	}
+	if _, listed := items[0].(map[string]any)["payload"]; listed {
+		t.Fatal("ops list included payload bytes")
+	}
+	status, body = get("/internal/ops/failures/msg-1", "Bearer ops-secret")
+	if status != http.StatusOK || body["payload_base64"] != "YmFk/w==" || body["payload_bytes"] != float64(4) {
+		t.Fatalf("ops get status=%d body=%v", status, body)
+	}
+	if status, _ := get("/internal/ops/failures/nope", "Bearer ops-secret"); status != http.StatusNotFound {
+		t.Fatalf("missing failure status = %d, want 404", status)
+	}
+	// The audit listing must never leak raw payloads.
+	_, body = get("/internal/audit/unprocessed", "Bearer audit-secret")
+	auditItems, _ := body["items"].([]any)
+	if len(auditItems) != 1 {
+		t.Fatalf("audit unprocessed = %v", body)
+	}
+	if _, leaked := auditItems[0].(map[string]any)["payload"]; leaked {
+		t.Fatal("audit unprocessed exposed payload")
+	}
+}
+
+func TestAuditDistributionReportsPerNodeShare(t *testing.T) {
+	server := auditTestServer("secret")
+	defer server.Close()
+	request, _ := http.NewRequest(http.MethodGet, server.URL+"/internal/audit/distribution", nil)
+	request.Header.Set("Authorization", "Bearer secret")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var body struct {
+		Ranges int `json:"ranges"`
+		Nodes  []struct {
+			Node           string  `json:"node"`
+			Replicas       int     `json:"replicas"`
+			Leaseholders   int     `json:"leaseholders"`
+			ShareOfRanges  float64 `json:"share_of_ranges"`
+			HoldsAllRanges bool    `json:"holds_all_ranges"`
+		} `json:"nodes"`
+		Partial bool `json:"partial"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || body.Ranges != 4 || len(body.Nodes) != 2 || body.Partial {
+		t.Fatalf("status = %d body = %+v", response.StatusCode, body)
+	}
+	if body.Nodes[0].HoldsAllRanges || body.Nodes[0].ShareOfRanges != 0.75 || !body.Nodes[1].HoldsAllRanges {
+		t.Fatalf("nodes = %+v", body.Nodes)
+	}
+}
+
+func TestAuditDistributionRequiresToken(t *testing.T) {
+	server := auditTestServer("secret")
+	defer server.Close()
+	response, err := http.Get(server.URL + "/internal/audit/distribution")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d", response.StatusCode)
+	}
+}
+
+func TestOpsFieldReportLookupNeedsOpsToken(t *testing.T) {
+	server := NewServer("0", audit.NewQueries(auditRepository{}), "audit", "ops", nil)
+	ts := httptest.NewServer(server.Handler)
+	defer ts.Close()
+	call := func(token string) (*http.Response, map[string]any) {
+		request, _ := http.NewRequest(http.MethodPost, ts.URL+"/internal/ops/field-reports/lookup", strings.NewReader(`{"report_ids":["fr-1","fr-2"]}`))
+		request.Header.Set("Authorization", "Bearer "+token)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var body map[string]any
+		_ = json.NewDecoder(response.Body).Decode(&body)
+		return response, body
+	}
+	if response, _ := call("audit"); response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("audit token status = %d", response.StatusCode)
+	}
+	response, body := call("ops")
+	if response.StatusCode != http.StatusOK || body["found"] != 1.0 || len(body["missing"].([]any)) != 1 {
+		t.Fatalf("status = %d body = %v", response.StatusCode, body)
 	}
 }

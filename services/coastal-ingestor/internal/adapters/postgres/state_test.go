@@ -2,12 +2,49 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/fathurwithyou/microservices/services/coastal-ingestor/internal/domain"
 )
+
+func TestSaveQuarantineSpansChunks(t *testing.T) {
+	databaseURL := os.Getenv("COASTAL_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("COASTAL_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	state, err := New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(state.Close)
+	prefix := "chunks-" + time.Now().UTC().Format("20060102150405.000000000")
+	t.Cleanup(func() {
+		_, _ = state.pool.Exec(context.Background(), `DELETE FROM coastal_quarantine WHERE message_id LIKE $1`, prefix+"%")
+	})
+
+	// Two full chunks and a partial one.
+	records := make([]domain.QuarantineRecord, 2*quarantineChunk+203)
+	for i := range records {
+		records[i] = domain.QuarantineRecord{
+			MessageID: fmt.Sprintf("%s-%05d", prefix, i), Source: domain.SourceCoastalSensor,
+			ReceivedAt: time.Now().UTC(), Reason: domain.ReasonInvalidLatitude, Payload: []byte(`{}`),
+		}
+	}
+	if err := state.SaveQuarantine(ctx, records); err != nil {
+		t.Fatalf("save quarantine: %v", err)
+	}
+	var stored int
+	if err := state.pool.QueryRow(ctx, `SELECT count(DISTINCT message_id) FROM coastal_quarantine WHERE message_id LIKE $1`, prefix+"%").Scan(&stored); err != nil {
+		t.Fatalf("count quarantine: %v", err)
+	}
+	if stored != len(records) {
+		t.Fatalf("quarantine rows = %d, want %d", stored, len(records))
+	}
+}
 
 func TestStateRoundTrip(t *testing.T) {
 	databaseURL := os.Getenv("COASTAL_DATABASE_URL")

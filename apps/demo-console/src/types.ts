@@ -105,4 +105,6 @@ export type AnalyticsResponse = {
   time_buckets: AnalyticsBucket[];
   partial: boolean;
   unavailable_units: string[];
+  /** Snapshot store yang dibaca (RFC3339). Bisa tertinggal beberapa detik dari sekarang. */
+  as_of?: string;
 };

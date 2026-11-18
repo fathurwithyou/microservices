@@ -21,11 +21,25 @@ type Config struct {
 	StoreDriver          string
 	RabbitURL            string
 	AuditToken           string
+	OpsToken             string
 	PollInterval         time.Duration
-	OutboxPollInterval   time.Duration
-	RequestTimeout       time.Duration
-	LeaderTTL            time.Duration
-	LeaderRenew          time.Duration
+	// SchemaAdapters lists operator-enabled partner schema adapters
+	// (PVMBG_SCHEMA_ADAPTERS, e.g. "pvmbg-breaking-v3").
+	SchemaAdapters     string
+	OutboxPollInterval time.Duration
+	RequestTimeout     time.Duration
+	// ListCacheTTL is how long an identical hazard listing is reused; 0
+	// disables coalescing (LIST_CACHE_TTL).
+	ListCacheTTL time.Duration
+	// AnalyticsCacheTTL is how long the counts of an identical analytics
+	// window are reused; 0 disables it (ANALYTICS_CACHE_TTL).
+	AnalyticsCacheTTL time.Duration
+	LeaderTTL         time.Duration
+	LeaderRenew       time.Duration
+	// FailureRetryInterval spaces automatic retries of transient failures.
+	FailureRetryInterval time.Duration
+	// FailureRetryMaxAttempts parks a transient failure after this many tries.
+	FailureRetryMaxAttempts int
 }
 
 // Load reads configuration from the environment. Malformed values are
@@ -52,11 +66,27 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	listCacheTTL, err := env.Duration("LIST_CACHE_TTL", time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	analyticsCacheTTL, err := env.Duration("ANALYTICS_CACHE_TTL", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
 	leaderTTL, err := env.Duration("LEADER_TTL", 15*time.Second)
 	if err != nil {
 		return Config{}, err
 	}
 	leaderRenew, err := env.Duration("LEADER_RENEW", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	failureRetryInterval, err := env.Duration("FAILURE_RETRY_INTERVAL", 30*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	failureRetryMaxAttempts, err := env.Int("FAILURE_RETRY_MAX_ATTEMPTS", 5)
 	if err != nil {
 		return Config{}, err
 	}
@@ -72,11 +102,18 @@ func Load() (Config, error) {
 		StoreDriver:          env.String("STORE_DRIVER", "postgres"),
 		RabbitURL:            rabbitURL,
 		AuditToken:           env.String("AUDIT_TOKEN", ""),
+		OpsToken:             env.String("OPS_TOKEN", ""),
 		PollInterval:         pollInterval,
+		SchemaAdapters:       env.String("PVMBG_SCHEMA_ADAPTERS", ""),
 		OutboxPollInterval:   outboxPollInterval,
 		RequestTimeout:       requestTimeout,
+		ListCacheTTL:         listCacheTTL,
+		AnalyticsCacheTTL:    analyticsCacheTTL,
 		LeaderTTL:            leaderTTL,
 		LeaderRenew:          leaderRenew,
+
+		FailureRetryInterval:    failureRetryInterval,
+		FailureRetryMaxAttempts: failureRetryMaxAttempts,
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -100,6 +137,12 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.LeaderRenew <= 0 || cfg.LeaderRenew >= cfg.LeaderTTL {
 		return fmt.Errorf("LEADER_RENEW must be positive and less than LEADER_TTL, got %s/%s", cfg.LeaderRenew, cfg.LeaderTTL)
+	}
+	if cfg.FailureRetryInterval <= 0 {
+		return fmt.Errorf("FAILURE_RETRY_INTERVAL must be positive, got %s", cfg.FailureRetryInterval)
+	}
+	if cfg.FailureRetryMaxAttempts < 1 {
+		return fmt.Errorf("FAILURE_RETRY_MAX_ATTEMPTS must be at least 1, got %d", cfg.FailureRetryMaxAttempts)
 	}
 	switch cfg.StoreDriver {
 	case "postgres", "cockroach", "memory":

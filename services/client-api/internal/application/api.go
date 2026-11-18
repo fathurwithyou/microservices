@@ -28,6 +28,8 @@ type HazardList struct {
 	NextPageToken    string   `json:"next_page_token"`
 	Partial          bool     `json:"partial"`
 	UnavailableUnits []string `json:"unavailable_units"`
+	// StaleSince: see ports.HazardPage.StaleSince. Empty on a live answer.
+	StaleSince string `json:"stale_since,omitempty"`
 }
 
 // NewAPI returns the application service backed by the auth and aggregator
@@ -83,6 +85,7 @@ func (a *API) ListHazards(ctx context.Context, principal Principal, filter ports
 	return HazardList{
 		Hazards: hazards, NextPageToken: page.NextPageToken,
 		Partial: page.Partial, UnavailableUnits: page.UnavailableUnits,
+		StaleSince: page.StaleSince,
 	}, nil
 }
 
@@ -189,7 +192,7 @@ func authorize(principal Principal, raw bool) error {
 var ErrForbidden = errors.New("required scope is missing")
 
 func upstreamError(err error) error {
-	if errors.Is(err, ports.ErrInvalidCredentials) || errors.Is(err, ports.ErrInvalidToken) || errors.Is(err, ports.ErrNotFound) || errors.Is(err, ports.ErrUnavailable) || errors.Is(err, ports.ErrUpstreamFailure) {
+	if errors.Is(err, ports.ErrInvalidCredentials) || errors.Is(err, ports.ErrInvalidToken) || errors.Is(err, ports.ErrNotFound) || errors.Is(err, ports.ErrUnavailable) || errors.Is(err, ports.ErrUpstreamFailure) || errors.Is(err, ports.ErrInvalidArgument) {
 		return err
 	}
 	return errors.Join(ports.ErrUpstreamFailure, err)

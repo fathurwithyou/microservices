@@ -2,12 +2,13 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: { name: postgres-owner-only }
 spec:
+  # PostgreSQL holds auth_db only; the aggregator store is CockroachDB.
   podSelector: { matchLabels: { app: postgres } }
   policyTypes: [Ingress]
   ingress:
     - from:
-        - { podSelector: { matchLabels: { app: aggregator } } }
         - { podSelector: { matchLabels: { app: auth } } }
+        - { podSelector: { matchLabels: { app: auth-db-bootstrap } } }
       ports: [{ protocol: TCP, port: 5432 }]
 ---
 apiVersion: networking.k8s.io/v1
@@ -27,16 +28,24 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: cockroach-aggregator-only }
+metadata: { name: cockroach-store-owners }
 spec:
+  # Only the three store owners (each limited to its own database by SQL
+  # grants), the bootstrap Job, and the other CockroachDB nodes reach SQL.
   podSelector: { matchLabels: { app: cockroachdb } }
   policyTypes: [Ingress]
   ingress:
     - from:
+        - { podSelector: { matchLabels: { app: cockroachdb } } }
+        - { podSelector: { matchLabels: { app: cockroachdb-bootstrap } } }
         - { podSelector: { matchLabels: { app: aggregator } } }
         - { podSelector: { matchLabels: { app: satellite-ingestor } } }
         - { podSelector: { matchLabels: { app: coastal-ingestor } } }
       ports: [{ protocol: TCP, port: 26257 }]
+    # Admin UI and /_status/vars for Prometheus.
+    - from:
+        - { podSelector: { matchLabels: { app: prometheus } } }
+      ports: [{ protocol: TCP, port: 8080 }]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

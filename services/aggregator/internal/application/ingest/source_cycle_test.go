@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/adapters/memory"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
+	"github.com/google/uuid"
 )
 
 func TestWarningsByEventIDCorrelatesUsingRelatedEventID(t *testing.T) {
@@ -53,12 +56,30 @@ func testPoller(repository Repository) *Poller {
 type observingRepository struct {
 	*memory.Repository
 	advanced chan time.Time
+	// failed is signalled once per recorded failure so tests can wait for a
+	// park without racing the poller goroutine.
+	failed   chan struct{}
+	mu       sync.Mutex
 	failures []domain.IngestFailure
 }
 
 func (s *observingRepository) SaveIngestFailure(_ context.Context, failure domain.IngestFailure) error {
+	s.mu.Lock()
 	s.failures = append(s.failures, failure)
+	s.mu.Unlock()
+	if s.failed != nil {
+		select {
+		case s.failed <- struct{}{}:
+		default:
+		}
+	}
 	return nil
+}
+
+func (s *observingRepository) recordedFailures() []domain.IngestFailure {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]domain.IngestFailure(nil), s.failures...)
 }
 
 func (s *observingRepository) AdvancePollCursor(ctx context.Context, source domain.Source, cursor time.Time) error {
@@ -301,6 +322,65 @@ func TestRunSourceDoesNotPersistWithStaleLease(t *testing.T) {
 	}
 }
 
+func TestRunSourceDoesNotFetchWithStaleLease(t *testing.T) {
+	repository := &observingRepository{Repository: memory.NewRepository(), advanced: make(chan time.Time, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller := testPoller(repository)
+	poller.leadership = staleLeadership{}
+	poller.interval = 10 * time.Millisecond
+
+	called := make(chan struct{}, 1)
+	source := &fakeSource{name: domain.SourceBMKG, fetch: func(context.Context, time.Time, string) ([]domain.HazardEvent, error) {
+		select {
+		case called <- struct{}{}:
+		default:
+		}
+		return nil, nil
+	}}
+	go poller.runSource(ctx, source)
+
+	select {
+	case <-called:
+		t.Fatal("upstream was called by an instance whose lease is no longer valid")
+	case <-time.After(60 * time.Millisecond):
+	}
+}
+
+// lostTermLeadership passed the database check, but its lease term was
+// cleared before the write (the renew loop saw the lease lost in between).
+type lostTermLeadership struct{}
+
+func (lostTermLeadership) Allowed() bool { return true }
+
+func (lostTermLeadership) StillLeader(context.Context) (bool, error) { return true, nil }
+
+func (lostTermLeadership) Fence() (string, int64) { return "", 0 }
+
+func TestRunSourceDoesNotWriteUnfencedWhenTermVanishesBeforeWrite(t *testing.T) {
+	repository := &observingRepository{Repository: memory.NewRepository(), advanced: make(chan time.Time, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller := testPoller(repository)
+	poller.leadership = lostTermLeadership{}
+	poller.leaseName = "ingestion"
+	poller.interval = 10 * time.Millisecond
+
+	source := &fakeSource{name: domain.SourceBMKG, fetch: func(context.Context, time.Time, string) ([]domain.HazardEvent, error) {
+		return []domain.HazardEvent{testEvent("h-unfenced", domain.SourceBMKG)}, nil
+	}}
+	go poller.runSource(ctx, source)
+
+	select {
+	case <-repository.advanced:
+		t.Fatal("cursor advanced without a lease term")
+	case <-time.After(80 * time.Millisecond):
+	}
+	if _, err := repository.GetHazard(context.Background(), "h-unfenced"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("event persisted without a lease term: %v", err)
+	}
+}
+
 func TestRunSourcePersistsRejectedPayloadForReplay(t *testing.T) {
 	repository := &observingRepository{Repository: memory.NewRepository(), advanced: make(chan time.Time, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -318,11 +398,12 @@ func TestRunSourcePersistsRejectedPayloadForReplay(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("cursor did not advance after rejected payload")
 	}
-	if len(repository.failures) != 1 {
-		t.Fatalf("failures = %d, want 1", len(repository.failures))
+	failures := repository.recordedFailures()
+	if len(failures) != 1 {
+		t.Fatalf("failures = %d, want 1", len(failures))
 	}
-	if repository.failures[0].Status != domain.FailureParked || repository.failures[0].Retryable {
-		t.Fatalf("failure = %+v", repository.failures[0])
+	if failures[0].Status != domain.FailureParked || failures[0].Retryable {
+		t.Fatalf("failure = %+v", failures[0])
 	}
 }
 
@@ -341,7 +422,7 @@ func TestRecordFailuresMarksTransientAsRetrying(t *testing.T) {
 		}},
 	}, "correlation-1")
 
-	items, err := repository.ListIngestFailures(context.Background(), domain.SourceBMKG, 10, time.Time{}, "")
+	items, err := repository.ListIngestFailures(context.Background(), domain.FailureFilter{Source: domain.SourceBMKG, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,5 +442,104 @@ func TestMalformedPayloadKeepsRawBodyForParking(t *testing.T) {
 	}
 	if len(mapping.Rejected) != 1 || string(mapping.Rejected[0].Payload) != `{"broken"` {
 		t.Fatalf("rejected = %+v", mapping.Rejected)
+	}
+}
+
+func TestRunSourceParksUndecodableResponseWithoutAdvancingCursor(t *testing.T) {
+	repository := &observingRepository{Repository: memory.NewRepository(), advanced: make(chan time.Time, 1), failed: make(chan struct{}, 1)}
+	starting := time.Now().UTC().Add(-time.Hour)
+	if err := repository.Repository.AdvancePollCursor(context.Background(), domain.SourcePVMBG, starting); err != nil {
+		t.Fatal(err)
+	}
+	called := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poller := testPoller(repository)
+	source := &fakeSource{name: domain.SourcePVMBG, fetch: func(context.Context, time.Time, string) ([]domain.HazardEvent, error) {
+		bad := &domain.MalformedPayloadError{Body: []byte(`[{"report_id":`), Err: errors.New("invalid_json: unexpected end of JSON input")}
+		mapping, _ := malformedPayload(domain.SourcePVMBG, bad)
+		called <- struct{}{}
+		return nil, mapping
+	}}
+	go poller.runSource(ctx, source)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("poll did not start")
+	}
+	select {
+	case <-repository.failed:
+	case <-time.After(time.Second):
+		t.Fatal("undecodable response was not parked")
+	}
+	select {
+	case advanced := <-repository.advanced:
+		t.Fatalf("undecodable response advanced cursor to %s", advanced)
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	failures := repository.recordedFailures()
+	if len(failures) != 1 {
+		t.Fatalf("failures = %d, want 1", len(failures))
+	}
+	failure := failures[0]
+	if failure.Retryable || failure.Status != domain.FailureParked || string(failure.Payload) != `[{"report_id":` {
+		t.Fatalf("failure = %+v", failure)
+	}
+	if !strings.Contains(failure.Reason, "invalid_json") {
+		t.Fatalf("reason %q lost the decode detail", failure.Reason)
+	}
+}
+
+type stubClient struct {
+	records []map[string]json.RawMessage
+	err     error
+}
+
+func (c stubClient) Get(context.Context, string, string) ([]map[string]json.RawMessage, error) {
+	return c.records, c.err
+}
+
+// One persistently corrupt record must not block the window (P3.3): the valid
+// record is stored, the bad bytes are parked, and the cursor moves on.
+func TestRunSourceParksBadRecordAndAdvancesPastIt(t *testing.T) {
+	good := map[string]json.RawMessage{
+		"report_id":           json.RawMessage(`"pvmbg-ok"`),
+		"volcano_id":          json.RawMessage(`"merapi"`),
+		"alert_level":         json.RawMessage(`"Siaga"`),
+		"eruption_count_24h":  json.RawMessage(`3`),
+		"ash_column_height_m": json.RawMessage(`1200`),
+		"reported_at":         json.RawMessage(`"2026-11-15T01:00:00Z"`),
+	}
+	badBody := []byte("{\"report_id\":\"pvmbg-bad\",\"volcano_id\":\"merapi\xff\"}")
+	source, err := NewPVMBGSource(PVMBGSourceConfig{
+		Client:    stubClient{records: []map[string]json.RawMessage{good}, err: &domain.MalformedRecordsError{Records: []domain.MalformedRecord{{Body: badBody, Err: errors.New("invalid_utf8: record is not valid UTF-8")}}}},
+		Volcanoes: map[string]domain.VolcanoReference{"merapi": {Name: "Merapi", Latitude: -7.54, Longitude: 110.44}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &observingRepository{Repository: memory.NewRepository(), advanced: make(chan time.Time, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go testPoller(repository).runSource(ctx, source)
+
+	select {
+	case <-repository.advanced:
+	case <-time.After(time.Second):
+		t.Fatal("cursor did not advance past the bad record")
+	}
+	cancel()
+	if _, err := repository.Repository.GetHazard(context.Background(), uuid.NewSHA1(uuid.NameSpaceURL, []byte("PVMBG:pvmbg-ok")).String()); err != nil {
+		t.Fatalf("valid record not stored: %v", err)
+	}
+	failures := repository.recordedFailures()
+	if len(failures) != 1 {
+		t.Fatalf("failures = %d, want 1", len(failures))
+	}
+	failure := failures[0]
+	if failure.Retryable || failure.Status != domain.FailureParked || string(failure.Payload) != string(badBody) || !strings.Contains(failure.Reason, "invalid_utf8") {
+		t.Fatalf("failure = %+v", failure)
 	}
 }

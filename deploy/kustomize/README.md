@@ -40,11 +40,22 @@ kubectl kustomize deploy/kustomize/overlays/cluster
 
 The cluster overlay inherits the base namespace, tags application images `m2`, and scales Aggregator to 3, Client API to 2, and each consumer to 2. New M2 components are the CockroachDB StatefulSet, satellite/coastal ingestors, critical notifier, and a demo observability stack (Prometheus, Grafana, OTel Collector, Tempo). Observability and CockroachDB use no external managed services; CockroachDB persists 10Gi per replica on the `local-path` StorageClass.
 
-CockroachDB runs with TLS. The `cockroachdb-certs` Job generates the CA, node, and root client certificates and merges them into `bnpb-secrets` as `ca.crt`, `node.crt`, `node.key`, `client.root.crt`, and `client.root.key`. It assumes `bnpb-secrets` already exists (it creates an empty one if not) and never replaces the other secret keys, so run the normal secret creation step first:
+CockroachDB runs with TLS, and storage ownership is enforced by the database:
+
+| Database | SQL user | Client cert Secret | Mounted by |
+|---|---|---|---|
+| `aggregator_db` | `aggregator` | `cockroach-client-aggregator` | aggregator |
+| `satellite_db` | `satellite` | `cockroach-client-satellite` | satellite-ingestor |
+| `coastal_db` | `coastal` | `cockroach-client-coastal` | coastal-ingestor |
+
+- `cockroachdb-certs` Job: creates the CA (kept in Secret `cockroach-ca`), the node cert, `client.root`, and one client cert per user. Node and root material is merged into `bnpb-secrets`; each user cert goes into its own Secret. Re-running never replaces existing material.
+- `cockroachdb-bootstrap` Job: runs `cockroach init` once, then applies `base/cockroach/bootstrap.sql`: one database per owner, `GRANT ALL` to that owner only, `CONNECT` and public-schema `CREATE` revoked from `public`. Only this Job and the CockroachDB pods hold `client.root`.
+- NetworkPolicy `cockroach-store-owners` admits SQL only from CockroachDB peers, the bootstrap Job, and the three owners.
 
 ```sh
-kubectl -n sistem-informasi-kebencanaan-bnpb apply -k deploy/kustomize/base
-kubectl -n sistem-informasi-kebencanaan-bnpb wait --for=condition=complete job/cockroachdb-certs --timeout=120s
+kubectl -n sistem-informasi-kebencanaan-bnpb apply -k deploy/kustomize/overlays/cluster
+kubectl -n sistem-informasi-kebencanaan-bnpb wait --for=condition=complete job/cockroachdb-certs --timeout=180s
+kubectl -n sistem-informasi-kebencanaan-bnpb wait --for=condition=complete job/cockroachdb-bootstrap --timeout=300s
 ```
 
-The ingestors need `FEED_TOKEN` and `SENSOR_TOKEN` in `bnpb-secrets`. Re-running the Job is a no-op once `node.key` exists; certificate rotation is manual (delete those keys, re-run the Job, restart the StatefulSet).
+Store owners restart until the bootstrap Job has created their database and user; that is expected on a fresh cluster. The ingestors need `FEED_TOKEN` and `SENSOR_TOKEN` in `bnpb-secrets`. Certificate rotation is manual: delete `cockroach-ca`, the cert keys in `bnpb-secrets`, and the three `cockroach-client-*` Secrets, re-run the certs Job, then restart CockroachDB and the store owners.

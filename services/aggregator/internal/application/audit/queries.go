@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fathurwithyou/microservices/services/aggregator/internal/application/degraded"
 	"github.com/fathurwithyou/microservices/services/aggregator/internal/domain"
 )
 
@@ -24,6 +25,12 @@ type Filter struct {
 	Since  time.Time
 	Limit  int
 	Cursor string
+	// AsOf, when set, reads the listing from the store snapshot at that
+	// time instead of the present. Analytics answers carry their snapshot
+	// time (as_of); an auditor who lists the Audit API at the same snapshot
+	// sees exactly the events those counts were made of, whatever ingest
+	// committed since. Zero means the present.
+	AsOf time.Time
 }
 
 // Location is one physical copy of a hazard row.
@@ -33,24 +40,70 @@ type Location struct {
 	Role string
 }
 
+// NodeShare is one store node's share of the hazard_events ranges.
+type NodeShare struct {
+	Node         string
+	NodeID       int64
+	Live         bool
+	Replicas     int
+	Leaseholders int
+	ReplicaBytes int64
+}
+
+// Distribution describes where hazard_events is stored.
+type Distribution struct {
+	Ranges       int
+	LogicalBytes int64
+	Nodes        []NodeShare
+}
+
 // Repository is the storage capability required by audit queries.
 type Repository interface {
 	ListAuditEvents(context.Context, Filter) ([]domain.HazardEvent, error)
 	SourceRefIDs(context.Context, domain.Source) ([]string, error)
 	HazardExists(context.Context, string) (bool, error)
 	HazardLocations(context.Context, string) ([]Location, error)
+	HazardDistribution(context.Context) (Distribution, error)
+	FieldReportsByID(context.Context, []string) ([]domain.FieldReport, error)
 	UnavailableUnits(context.Context) ([]string, error)
-	ListIngestFailures(context.Context, domain.Source, int, time.Time, string) ([]domain.IngestFailure, error)
+	ListIngestFailures(context.Context, domain.FailureFilter) ([]domain.IngestFailure, error)
+	GetIngestFailure(context.Context, string) (domain.IngestFailure, error)
+}
+
+// Purger is the optional storage capability behind the Ops purge. It is not
+// part of Repository because the Audit API itself never deletes.
+type Purger interface {
+	PurgeSource(ctx context.Context, source domain.Source, refPrefix string) (int64, error)
+}
+
+// ErrPurgeUnsupported is returned when the store cannot purge.
+var ErrPurgeUnsupported = errors.New("purge is not supported by this store")
+
+// Purge deletes the HazardEvents of one source, optionally only those whose
+// source_ref_id starts with refPrefix, and returns how many went.
+//
+// It exists for rehearsals: a practice dataset, a practice feed session or a
+// replayed sensor stream must be removable before the graded run, so the
+// graded checksum covers the graded data only. It is reachable only with
+// the BNPB Ops credential.
+func (q *Queries) Purge(ctx context.Context, source domain.Source, refPrefix string) (int64, error) {
+	purger, ok := q.repository.(Purger)
+	if !ok {
+		return 0, ErrPurgeUnsupported
+	}
+	return purger.PurgeSource(ctx, source, refPrefix)
 }
 
 // Queries serves Audit API reads.
 type Queries struct {
-	repository Repository
+	repository   Repository
+	distribution distributionCache
+	checksums    checksumCache
 }
 
 // NewQueries returns audit queries backed by repository.
 func NewQueries(repository Repository) *Queries {
-	return &Queries{repository: repository}
+	return &Queries{repository: repository, distribution: distributionCache{now: time.Now}, checksums: checksumCache{now: time.Now}}
 }
 
 // List returns one page ordered by ingested_at then hazard_id.
@@ -84,13 +137,22 @@ func (q *Queries) List(ctx context.Context, filter Filter) ([]domain.HazardEvent
 }
 
 // Checksum returns the SHA-256 over source_ref_id values sorted byte-wise.
-func (q *Queries) Checksum(ctx context.Context, source domain.Source) (int, string, error) {
-	ids, err := q.repository.SourceRefIDs(ctx, source)
+// When the store does not answer it returns the last checksum of the source
+// with a degraded.Info saying since when; the error is returned only for a
+// source that has never been answered.
+func (q *Queries) Checksum(ctx context.Context, source domain.Source) (int, string, degraded.Info, error) {
+	value, stale, err := q.checksums.get(ctx, source, func(ctx context.Context) (checksumValue, error) {
+		ids, err := q.repository.SourceRefIDs(ctx, source)
+		if err != nil {
+			return checksumValue{}, fmt.Errorf("read source ref ids: %w", err)
+		}
+		sum := sha256.Sum256([]byte(strings.Join(ids, "\n")))
+		return checksumValue{count: len(ids), checksum: hex.EncodeToString(sum[:])}, nil
+	})
 	if err != nil {
-		return 0, "", fmt.Errorf("read source ref ids: %w", err)
+		return 0, "", degraded.Info{}, err
 	}
-	sum := sha256.Sum256([]byte(strings.Join(ids, "\n")))
-	return len(ids), hex.EncodeToString(sum[:]), nil
+	return value.count, value.checksum, stale, nil
 }
 
 // Exists reports whether a hazard_id exists. Location metadata is supplied by
@@ -104,12 +166,26 @@ func (q *Queries) Locations(ctx context.Context, hazardID string) ([]Location, e
 	return q.repository.HazardLocations(ctx, hazardID)
 }
 
-// Unavailable returns the storage units that cannot currently be reached.
-func (q *Queries) Unavailable(ctx context.Context) ([]string, error) {
-	return q.repository.UnavailableUnits(ctx)
+// FieldReports returns the stored state of the given field reports; ids that
+// were never stored are simply absent.
+func (q *Queries) FieldReports(ctx context.Context, ids []string) ([]domain.FieldReport, error) {
+	return q.repository.FieldReportsByID(ctx, ids)
 }
 
-// Unprocessed returns parked or retrying payloads for operators. The cursor
+// Distribution returns the per-node placement of hazard_events, or the last
+// known placement with a degraded.Info when the store does not answer.
+func (q *Queries) Distribution(ctx context.Context) (Distribution, degraded.Info, error) {
+	return q.distribution.get(ctx, q.repository.HazardDistribution)
+}
+
+// Completeness returns the partial / unavailable_units marker for an answer
+// that was produced with the given degradation (zero for a live answer). It
+// never fails: see degraded.Completeness.
+func (q *Queries) Completeness(ctx context.Context, answer degraded.Info) (bool, []string, degraded.Info) {
+	return degraded.Completeness(ctx, q.repository.UnavailableUnits, answer)
+}
+
+// Unprocessed returns parked or retrying messages (metadata only) for operators. The cursor
 // is the received_at and message_id of the last item on the previous page.
 func (q *Queries) Unprocessed(ctx context.Context, source domain.Source, limit int, cursorValue string) ([]domain.IngestFailure, string, error) {
 	if limit <= 0 || limit > 1000 {
@@ -126,9 +202,9 @@ func (q *Queries) Unprocessed(ctx context.Context, source domain.Source, limit i
 		}
 		after, afterID = decoded.ReceivedAt, decoded.MessageID
 	}
-	items, err := q.repository.ListIngestFailures(ctx, source, limit, after, afterID)
+	items, err := q.repository.ListIngestFailures(ctx, domain.FailureFilter{Source: source, Limit: limit, After: after, AfterID: afterID})
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("list ingest failures: %w", err)
 	}
 	next := ""
 	if len(items) == limit {
@@ -139,6 +215,12 @@ func (q *Queries) Unprocessed(ctx context.Context, source domain.Source, limit i
 		}
 	}
 	return items, next, nil
+}
+
+// Failure returns one stored failure with its raw payload. It backs the
+// Ops-only inspection endpoint; the audit listing never exposes payloads.
+func (q *Queries) Failure(ctx context.Context, messageID string) (domain.IngestFailure, error) {
+	return q.repository.GetIngestFailure(ctx, messageID)
 }
 
 type failureCursor struct {

@@ -52,7 +52,11 @@ func (p *Poller) runSource(ctx context.Context, source Source) {
 
 		correlationID := uuid.NewString()
 		batchUpperBound := time.Now().UTC()
-		if !p.leaderAllowed() {
+		// The local flag can be stale (a process frozen past its TTL still
+		// believes it leads until its renew loop runs again), so ownership is
+		// also checked against the database clock before calling upstream:
+		// a woken ex-leader must not poll, not only not write.
+		if !p.leaderAllowed() || !p.stillLeader(ctx) {
 			select {
 			case <-ticker.C:
 				continue
@@ -74,7 +78,28 @@ func (p *Poller) runSource(ctx context.Context, source Source) {
 				return
 			}
 		}
-		batchErr := p.persistBatch(ctx, events, correlationID)
+		// The lease term is read once here and attached to every write; a term
+		// that vanished since the check above (renew loop saw the lease lost)
+		// means no write at all, never an unfenced one.
+		var batchErr error
+		if writeCtx, ok := p.writeContext(ctx); ok {
+			batchErr = p.persistBatch(writeCtx, events, correlationID)
+		} else {
+			batchErr = domain.ErrFenced
+		}
+		if errors.Is(batchErr, domain.ErrFenced) {
+			// A newer lease term exists: this instance must not write anything,
+			// including source status or failure records, until it is leader
+			// again.
+			holder, fence := p.fence()
+			p.logger.Warn("batch fenced, not persisted", "component", "poller", "source", name, "correlation_id", correlationID, "events", len(events), "holder", holder, "fence", fence)
+			select {
+			case <-ticker.C:
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
 		if mappingErr, ok := fetchErr.(*MappingError); ok {
 			p.recordFailures(ctx, mappingErr, correlationID)
 		}
@@ -83,7 +108,9 @@ func (p *Poller) runSource(ctx context.Context, source Source) {
 			// Persistence is on the critical path: never advance past events
 			// that were not stored.
 			p.markStale(ctx, name, lastSuccess, time.Now().UTC(), correlationID, batchErr)
-		case fetchErr != nil && !isMappingError(fetchErr):
+		case fetchErr != nil && (!isMappingError(fetchErr) || isTransportError(fetchErr)):
+			// Undecodable responses are parked above, but the window they
+			// covered is re-polled so valid records in it are not lost.
 			p.markStale(ctx, name, lastSuccess, time.Now().UTC(), correlationID, fetchErr)
 		default:
 			if err := p.repository.AdvancePollCursor(ctx, name, batchUpperBound); err != nil {
@@ -99,6 +126,9 @@ func (p *Poller) runSource(ctx context.Context, source Source) {
 			cursor = batchUpperBound
 			lastSuccess = batchUpperBound
 			p.markHealthy(ctx, name, batchUpperBound)
+			holder, fence := p.fence()
+			p.logger.Info("poll batch persisted", "component", "poller", "source", name, "correlation_id", correlationID,
+				"events", len(events), "window_until", batchUpperBound, "holder", holder, "fence", fence)
 			if fetchErr != nil {
 				// Events were ingested; only some payloads were rejected and
 				// the source already logged each rejection. Advancing the
@@ -130,6 +160,35 @@ func (p *Poller) persistBatch(ctx context.Context, events []domain.HazardEvent, 
 func isMappingError(err error) bool {
 	var mappingErr *MappingError
 	return errors.As(err, &mappingErr)
+}
+
+func isTransportError(err error) bool {
+	var mappingErr *MappingError
+	return errors.As(err, &mappingErr) && mappingErr.Transport
+}
+
+// writeContext attaches the current lease term so the store refuses the
+// writes atomically once the term is over. With a lease configured it fails
+// closed: when this instance no longer holds a term (the renew loop has just
+// seen the lease lost, e.g. after a VM freeze), ok is false and nothing may be
+// written. Without a lease (memory driver, tests) writes are not fenced.
+func (p *Poller) writeContext(ctx context.Context) (context.Context, bool) {
+	if p.leaseName == "" {
+		return ctx, true
+	}
+	holder, fence := p.fence()
+	if holder == "" {
+		return ctx, false
+	}
+	return domain.WithWriteFence(ctx, domain.WriteFence{Lease: p.leaseName, Holder: holder, Fence: fence}), true
+}
+
+// fence reports the lease term this poller writes under, when known.
+func (p *Poller) fence() (string, int64) {
+	if fenced, ok := p.leadership.(interface{ Fence() (string, int64) }); ok {
+		return fenced.Fence()
+	}
+	return "", 0
 }
 
 func (p *Poller) leaderAllowed() bool {

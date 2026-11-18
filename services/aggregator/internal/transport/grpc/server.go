@@ -4,6 +4,7 @@ package grpctransport
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	aggregatorpb "github.com/fathurwithyou/microservices/contracts/gen/go/aggregator"
 	"github.com/fathurwithyou/microservices/pkg/grpckit"
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -53,7 +55,14 @@ func NewServer(cfg ServerConfig) *grpc.Server {
 		grpckit.UnaryMetrics("aggregator"),
 		grpckit.UnaryObservability(grpckit.Config{Service: "aggregator", Logger: logger}),
 		grpckit.UnaryAuth(grpckit.AuthConfig{Token: cfg.ServiceToken, PublicMethods: []string{HealthMethod}}),
-	), grpc.StatsHandler(otelgrpc.NewServerHandler()))
+	), grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		// Clients balance per request over every ready instance (headless
+		// Service + round_robin). Recycling connections makes them re-resolve,
+		// so instances added by a scale-up receive traffic within a minute.
+		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: 30 * time.Second, MaxConnectionAgeGrace: 10 * time.Second}),
+		// Allow the client keepalive pings that detect a powered-off peer.
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 5 * time.Second, PermitWithoutStream: true}),
+	)
 	aggregatorpb.RegisterAggregatorServer(server, newQueryHandler(cfg.Queries, cfg.FieldReports, cfg.Analytics, cfg.Submitter, cfg.Health))
 	registerHealth(server)
 	reflection.Register(server)

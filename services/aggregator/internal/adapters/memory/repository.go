@@ -1,11 +1,13 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -113,18 +115,18 @@ func (s *Repository) ListAcceptedFieldReports(_ context.Context, limit int) ([]d
 }
 
 // MarkFieldReport records the terminal state of one accepted report.
-func (s *Repository) MarkFieldReport(_ context.Context, reportID string, status domain.FieldReportStatus, processedAt time.Time) error {
+func (s *Repository) MarkFieldReport(_ context.Context, reportID string, status domain.FieldReportStatus, processedAt time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	report, ok := s.fieldReports[reportID]
 	if !ok || report.Status != domain.FieldReportAccepted {
-		return nil
+		return false, nil
 	}
 	report.Status = status
 	report.Attempts++
 	report.ProcessedAt = &processedAt
 	s.fieldReports[reportID] = report
-	return nil
+	return true, nil
 }
 
 // ListAuditEvents returns events ordered by ingested_at then hazard_id.
@@ -156,6 +158,20 @@ func (s *Repository) ListAuditEvents(_ context.Context, filter audit.Filter) ([]
 		items = items[:filter.Limit]
 	}
 	return items, nil
+}
+
+// PurgeSource deletes the events of one source, optionally by id prefix.
+func (s *Repository) PurgeSource(_ context.Context, source domain.Source, refPrefix string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var deleted int64
+	for id, event := range s.events {
+		if event.Source == source && strings.HasPrefix(event.SourceRefID, refPrefix) {
+			delete(s.events, id)
+			deleted++
+		}
+	}
+	return deleted, nil
 }
 
 // SourceRefIDs returns sorted source_ref_id values for checksum.
@@ -197,22 +213,58 @@ func (s *Repository) MarkIngestFailureRecovered(_ context.Context, messageID str
 	return nil
 }
 
-// ListIngestFailures returns parked/retrying payloads for audit.
-func (s *Repository) ListIngestFailures(_ context.Context, source domain.Source, limit int, after time.Time, afterID string) ([]domain.IngestFailure, error) {
+// RecordIngestFailureAttempt counts one failed automatic retry.
+func (s *Repository) RecordIngestFailureAttempt(_ context.Context, messageID, lastError string, retryable, park bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	failure, ok := s.failures[messageID]
+	if !ok || failure.Status != domain.FailureRetrying {
+		return nil
+	}
+	failure.Attempts++
+	failure.LastError = lastError
+	failure.Retryable = retryable
+	if park {
+		failure.Status = domain.FailureParked
+	}
+	s.failures[messageID] = failure
+	return nil
+}
+
+// GetIngestFailure returns one stored failure, including recovered ones.
+func (s *Repository) GetIngestFailure(_ context.Context, messageID string) (domain.IngestFailure, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	failure, ok := s.failures[messageID]
+	if !ok {
+		return domain.IngestFailure{}, domain.ErrNotFound
+	}
+	failure.Payload = bytes.Clone(failure.Payload)
+	failure.PayloadBytes = len(failure.Payload)
+	return failure, nil
+}
+
+// ListIngestFailures returns failure metadata without payload bytes.
+func (s *Repository) ListIngestFailures(_ context.Context, filter domain.FailureFilter) ([]domain.IngestFailure, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	items := make([]domain.IngestFailure, 0)
 	for _, failure := range s.failures {
-		if source != "" && failure.Source != source {
+		if filter.Source != "" && failure.Source != filter.Source {
 			continue
 		}
-		if failure.Status != domain.FailureParked && failure.Status != domain.FailureRetrying {
+		if filter.Status != "" && failure.Status != filter.Status {
 			continue
 		}
-		if afterID != "" && (failure.ReceivedAt.Before(after) ||
-			(failure.ReceivedAt.Equal(after) && failure.MessageID <= afterID)) {
+		if filter.Status == "" && failure.Status != domain.FailureParked && failure.Status != domain.FailureRetrying {
 			continue
 		}
+		if filter.AfterID != "" && (failure.ReceivedAt.Before(filter.After) ||
+			(failure.ReceivedAt.Equal(filter.After) && failure.MessageID <= filter.AfterID)) {
+			continue
+		}
+		failure.PayloadBytes = len(failure.Payload)
+		failure.Payload = nil
 		items = append(items, failure)
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -221,8 +273,8 @@ func (s *Repository) ListIngestFailures(_ context.Context, source domain.Source,
 		}
 		return items[i].MessageID < items[j].MessageID
 	})
-	if limit > 0 && len(items) > limit {
-		items = items[:limit]
+	if filter.Limit > 0 && len(items) > filter.Limit {
+		items = items[:filter.Limit]
 	}
 	return items, nil
 }
@@ -235,86 +287,40 @@ func (s *Repository) HazardExists(_ context.Context, hazardID string) (bool, err
 	return ok, nil
 }
 
-func (s *Repository) CountByHazardType(_ context.Context, filter analytics.Filter) ([]analytics.TypeCount, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	counts := map[domain.HazardType]int64{}
-	for _, event := range s.events {
-		if inWindow(event, filter) {
-			counts[event.HazardType]++
-		}
-	}
-	result := make([]analytics.TypeCount, 0, len(counts))
-	for kind, count := range counts {
-		result = append(result, analytics.TypeCount{HazardType: kind, Count: count})
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].HazardType < result[j].HazardType })
-	return result, nil
-}
-
-func (s *Repository) CountBySeverity(_ context.Context, filter analytics.Filter) ([]analytics.SeverityCount, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	counts := map[domain.Severity]int64{}
-	for _, event := range s.events {
-		if inWindow(event, filter) {
-			counts[event.Severity]++
-		}
-	}
-	result := make([]analytics.SeverityCount, 0, len(counts))
-	for severity, count := range counts {
-		result = append(result, analytics.SeverityCount{Severity: severity, Count: count})
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Severity < result[j].Severity })
-	return result, nil
-}
-
-func (s *Repository) CountByArea(_ context.Context, filter analytics.Filter) ([]analytics.AreaCount, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	counts := map[string]int64{}
-	for _, event := range s.events {
-		if inWindow(event, filter) {
-			counts[event.AreaName]++
-		}
-	}
-	result := make([]analytics.AreaCount, 0, len(counts))
-	for area, count := range counts {
-		result = append(result, analytics.AreaCount{AreaName: area, Count: count})
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Count != result[j].Count {
-			return result[i].Count > result[j].Count
-		}
-		return result[i].AreaName < result[j].AreaName
-	})
-	return result, nil
-}
-
-func (s *Repository) CountByTimeBucket(_ context.Context, filter analytics.Filter) ([]analytics.TimeBucket, error) {
+// Aggregate counts the window per (bucket, category, severity, area), as the
+// store does in one scan. Memory has no snapshots: AsOf is now.
+func (s *Repository) Aggregate(_ context.Context, filter analytics.Filter) (analytics.Snapshot, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	type key struct {
-		start time.Time
-		kind  domain.HazardType
+		start    time.Time
+		category domain.HazardType
+		severity domain.Severity
+		area     string
 	}
 	counts := map[key]int64{}
 	for _, event := range s.events {
 		if inWindow(event, filter) {
-			counts[key{start: bucketStart(event.OccurredAt, filter.Bucket), kind: event.HazardType}]++
+			counts[key{start: bucketStart(event.OccurredAt, filter.Bucket), category: analytics.Category(event), severity: event.Severity, area: event.AreaName}]++
 		}
 	}
-	result := make([]analytics.TimeBucket, 0, len(counts))
+	rows := make([]analytics.Row, 0, len(counts))
 	for k, count := range counts {
-		result = append(result, analytics.TimeBucket{Start: k.start, HazardType: k.kind, Count: count})
+		rows = append(rows, analytics.Row{Bucket: k.start, Category: k.category, Severity: k.severity, AreaName: k.area, Count: count})
 	}
-	sort.Slice(result, func(i, j int) bool {
-		if !result[i].Start.Equal(result[j].Start) {
-			return result[i].Start.Before(result[j].Start)
+	sort.Slice(rows, func(i, j int) bool {
+		if !rows[i].Bucket.Equal(rows[j].Bucket) {
+			return rows[i].Bucket.Before(rows[j].Bucket)
 		}
-		return result[i].HazardType < result[j].HazardType
+		if rows[i].Category != rows[j].Category {
+			return rows[i].Category < rows[j].Category
+		}
+		if rows[i].Severity != rows[j].Severity {
+			return rows[i].Severity < rows[j].Severity
+		}
+		return rows[i].AreaName < rows[j].AreaName
 	})
-	return result, nil
+	return analytics.Snapshot{Rows: rows, AsOf: time.Now().UTC()}, nil
 }
 
 func inWindow(event domain.HazardEvent, filter analytics.Filter) bool {
@@ -348,22 +354,23 @@ func (s *Repository) ListHazards(_ context.Context, filter hazards.ListFilter) (
 		}
 		items = append(items, clone(event))
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].OccurredAt.After(items[j].OccurredAt) })
-	start := 0
-	if filter.PageToken != "" {
-		for i := range items {
-			if items[i].HazardID == filter.PageToken {
-				start = i + 1
-				break
-			}
+	sort.Slice(items, func(i, j int) bool {
+		if !items[i].OccurredAt.Equal(items[j].OccurredAt) {
+			return items[i].OccurredAt.After(items[j].OccurredAt)
 		}
+		return items[i].HazardID > items[j].HazardID
+	})
+	cursor, after, err := hazards.DecodePageToken(filter.PageToken)
+	if err != nil {
+		return nil, err
+	}
+	start := 0
+	if after {
+		start = sort.Search(len(items), func(i int) bool { return cursor.Before(items[i]) })
 	}
 	end := len(items)
 	if filter.PageSize > 0 && start+filter.PageSize < end {
 		end = start + filter.PageSize
-	}
-	if start > len(items) {
-		start = len(items)
 	}
 	return items[start:end], nil
 }
@@ -480,6 +487,26 @@ func cloneVolcanoes(input map[string]domain.VolcanoReference) map[string]domain.
 // HazardLocations returns the single in-memory unit for a hazard.
 func (r *Repository) HazardLocations(_ context.Context, _ string) ([]audit.Location, error) {
 	return nil, nil
+}
+
+// FieldReportsByID returns the stored reports for ids.
+func (r *Repository) FieldReportsByID(_ context.Context, ids []string) ([]domain.FieldReport, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	reports := make([]domain.FieldReport, 0, len(ids))
+	for _, id := range ids {
+		if report, ok := r.fieldReports[id]; ok {
+			reports = append(reports, report)
+		}
+	}
+	return reports, nil
+}
+
+// HazardDistribution reports one unit holding everything in memory.
+func (r *Repository) HazardDistribution(context.Context) (audit.Distribution, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return audit.Distribution{Ranges: 1, Nodes: []audit.NodeShare{{Node: "memory", NodeID: 1, Live: true, Replicas: 1, Leaseholders: 1}}}, nil
 }
 
 // UnavailableUnits is always empty for the in-memory store.

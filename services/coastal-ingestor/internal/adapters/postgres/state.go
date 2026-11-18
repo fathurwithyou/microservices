@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fathurwithyou/microservices/services/coastal-ingestor/internal/domain"
@@ -37,15 +38,31 @@ func New(ctx context.Context, databaseURL string) (*State, error) {
 // Close releases the connection pool.
 func (s *State) Close() { s.pool.Close() }
 
-// SaveQuarantine inserts one row per rejected reading.
+// quarantineChunk bounds one multi-row INSERT (6 parameters per row, far
+// below the 65535-parameter limit).
+const quarantineChunk = 500
+
+// SaveQuarantine stores one row per rejected reading. Rows go in multi-row
+// INSERTs of quarantineChunk: a stale sensor replay quarantines thousands of
+// readings per cycle, and one statement per row kept the poll loop busy for
+// ~40 s per cycle while loading the store with ~160 statements per second.
 func (s *State) SaveQuarantine(ctx context.Context, records []domain.QuarantineRecord) error {
-	for _, record := range records {
-		if _, err := s.pool.Exec(ctx,
-			`INSERT INTO coastal_quarantine (message_id, source, received_at, reason, retryable, payload)
-VALUES ($1,$2,$3,$4,$5,$6)`,
-			record.MessageID, record.Source, record.ReceivedAt, record.Reason, record.Retryable, record.Payload,
-		); err != nil {
-			return fmt.Errorf("insert quarantine record %s: %w", record.MessageID, err)
+	for start := 0; start < len(records); start += quarantineChunk {
+		end := min(start+quarantineChunk, len(records))
+		chunk := records[start:end]
+		var query strings.Builder
+		query.WriteString(`INSERT INTO coastal_quarantine (message_id, source, received_at, reason, retryable, payload) VALUES `)
+		args := make([]any, 0, len(chunk)*6)
+		for i, record := range chunk {
+			if i > 0 {
+				query.WriteString(",")
+			}
+			n := i * 6
+			fmt.Fprintf(&query, "($%d,$%d,$%d,$%d,$%d,$%d)", n+1, n+2, n+3, n+4, n+5, n+6)
+			args = append(args, record.MessageID, record.Source, record.ReceivedAt, record.Reason, record.Retryable, record.Payload)
+		}
+		if _, err := s.pool.Exec(ctx, query.String(), args...); err != nil {
+			return fmt.Errorf("insert quarantine records %s..%s: %w", chunk[0].MessageID, chunk[len(chunk)-1].MessageID, err)
 		}
 	}
 	return nil

@@ -3,8 +3,10 @@ package fieldreports
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,16 +38,16 @@ func (f *fakeRepository) ListAcceptedFieldReports(_ context.Context, limit int) 
 	return reports, nil
 }
 
-func (f *fakeRepository) MarkFieldReport(_ context.Context, reportID string, status domain.FieldReportStatus, processedAt time.Time) error {
+func (f *fakeRepository) MarkFieldReport(_ context.Context, reportID string, status domain.FieldReportStatus, processedAt time.Time) (bool, error) {
 	report, ok := f.reports[reportID]
-	if !ok {
-		return nil
+	if !ok || report.Status != domain.FieldReportAccepted {
+		return false, nil
 	}
 	report.Status = status
 	report.Attempts++
 	report.ProcessedAt = &processedAt
 	f.reports[reportID] = report
-	return nil
+	return true, nil
 }
 
 func testService() (*Service, *fakeRepository) {
@@ -147,7 +149,7 @@ func TestWorkerMarksAcceptedReportProcessed(t *testing.T) {
 	}
 }
 
-func TestWorkerMarksProcessingFailure(t *testing.T) {
+func TestWorkerProcessingErrorKeepsReportProcessedOnce(t *testing.T) {
 	service, repository := testService()
 	if _, err := service.Submit(context.Background(), validReport()); err != nil {
 		t.Fatal(err)
@@ -157,8 +159,77 @@ func TestWorkerMarksProcessingFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker.dispatch(context.Background())
+	worker.dispatch(context.Background())
 	report := repository.reports["report-1"]
-	if report.Status != domain.FieldReportFailed || report.Attempts != 1 {
+	if report.Status != domain.FieldReportProcessed || report.Attempts != 1 {
 		t.Fatalf("report = %+v", report)
+	}
+}
+
+type countingProcessor struct {
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func (p *countingProcessor) Process(_ context.Context, report domain.FieldReport) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls[report.ReportID]++
+	return nil
+}
+
+// lockedRepository serialises the fake so several workers can share it, as
+// several Aggregator instances share one store.
+type lockedRepository struct {
+	mu   sync.Mutex
+	next *fakeRepository
+}
+
+func (r *lockedRepository) SaveFieldReport(ctx context.Context, report domain.FieldReport) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.next.SaveFieldReport(ctx, report)
+}
+
+func (r *lockedRepository) ListAcceptedFieldReports(ctx context.Context, limit int) ([]domain.FieldReport, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.next.ListAcceptedFieldReports(ctx, limit)
+}
+
+func (r *lockedRepository) MarkFieldReport(ctx context.Context, id string, status domain.FieldReportStatus, at time.Time) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.next.MarkFieldReport(ctx, id, status, at)
+}
+
+func TestConcurrentWorkersProcessEachReportOnce(t *testing.T) {
+	service, fake := testService()
+	for i := 0; i < 50; i++ {
+		report := validReport()
+		report.ReportID = fmt.Sprintf("report-%02d", i)
+		if _, err := service.Submit(context.Background(), report); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repository := &lockedRepository{next: fake}
+	processor := &countingProcessor{calls: map[string]int{}}
+	var wg sync.WaitGroup
+	for w := 0; w < 3; w++ {
+		worker, err := NewWorker(WorkerConfig{Repository: repository, Processor: processor, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wg.Add(1)
+		go func() { defer wg.Done(); worker.dispatch(context.Background()) }()
+	}
+	wg.Wait()
+	if len(processor.calls) != 50 {
+		t.Fatalf("processed %d reports, want 50", len(processor.calls))
+	}
+	for id, calls := range processor.calls {
+		if calls != 1 {
+			t.Fatalf("%s processed %d times", id, calls)
+		}
 	}
 }

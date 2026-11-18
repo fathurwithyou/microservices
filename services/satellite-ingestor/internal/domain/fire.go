@@ -13,6 +13,11 @@ const (
 const (
 	StatusActive    = "active"
 	StatusRetracted = "retracted"
+	// StatusClosed marks a fire whose detections are all older than the
+	// accepted lateness plus the linking window, so no admitted detection
+	// can change it any more. It is a state of the ingestor only: the
+	// HazardEvent keeps the last active content.
+	StatusClosed = "closed"
 )
 
 // Fire is a cluster of at least two connected detections.

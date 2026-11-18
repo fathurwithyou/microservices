@@ -60,11 +60,17 @@ message AnalyticsResponse {
   repeated TimeBucket time_buckets = 4;
   bool partial = 5;
   repeated string unavailable_units = 6;
+  // as_of is the store snapshot (RFC3339, UTC) the counts were read from. The
+  // store reads a few seconds behind now and the aggregator may serve a cached
+  // window, so the answer states its age instead of pretending to be live.
+  string as_of = 7;
 }
-message HazardTypeCount { bnpb.events.HazardType hazard_type = 1; int64 count = 2; }
+// category is the dashboard bucket: the hazard_type name, or TSUNAMI for a
+// SEISMIC event that carries a correlated tsunami warning.
+message HazardTypeCount { bnpb.events.HazardType hazard_type = 1; int64 count = 2; string category = 3; }
 message SeverityCount { bnpb.events.Severity severity = 1; int64 count = 2; }
 message AreaCount { string area_name = 1; int64 count = 2; }
-message TimeBucket { string bucket_start = 1; bnpb.events.HazardType hazard_type = 2; int64 count = 3; }
+message TimeBucket { string bucket_start = 1; bnpb.events.HazardType hazard_type = 2; int64 count = 3; string category = 4; }
 message SubmitHazardRequest {
   bnpb.events.HazardEvent event = 1;
   string correlation_id = 2;

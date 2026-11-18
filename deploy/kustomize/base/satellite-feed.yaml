@@ -1,0 +1,42 @@
+# Local stand-in for the assistants' Satellite Feed (M2 Problem 4). Point the
+# ingestor at it with FEED_URL=http://satellite-feed:8088 (same FEED_TOKEN Secret key,
+# so only the URL changes between the stand-in and the assistants' feed).
+# One replica on purpose: the session (virtual clock, offsets) lives in memory.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: satellite-feed
+  labels: { app: satellite-feed, role: mock }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: satellite-feed } }
+  template:
+    metadata:
+      labels: { app: satellite-feed, role: mock }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: satellite-feed
+          image: bnpb-m1/satellite-feed:local
+          ports: [{ name: http, containerPort: 8088 }]
+          env:
+            - { name: FEED_ADDR, value: ":8088" }
+            - { name: FEED_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: FEED_TOKEN } } }
+            - { name: FEED_GROUP, value: sidequestproxy }
+            - { name: FEED_ADMIN_TOKEN, valueFrom: { secretKeyRef: { name: bnpb-secrets, key: FEED_MOCK_ADMIN_TOKEN } } }
+          readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 2 }
+          livenessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 10 }
+          resources:
+            requests: { memory: 64Mi }
+            limits: { memory: 128Mi }
+          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: satellite-feed
+  labels: { app: satellite-feed }
+spec:
+  selector: { app: satellite-feed }
+  ports: [{ name: http, port: 8088, targetPort: http }]

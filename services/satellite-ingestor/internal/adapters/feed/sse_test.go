@@ -3,132 +3,141 @@ package feed
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/fathurwithyou/microservices/services/satellite-ingestor/internal/domain"
 	"github.com/fathurwithyou/microservices/services/satellite-ingestor/internal/ports"
 )
 
-const retractKey = "NOAA-20|2026-11-04|1230|-6.2|106.8"
-
-func TestStreamParsesEvents(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/stream" {
-			t.Errorf("path = %q, want /v1/stream", r.URL.Path)
-		}
-		if got := r.URL.Query().Get("from"); got != "0" {
-			t.Errorf("from = %q, want 0", got)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
-			t.Errorf("Authorization = %q, want bearer token", got)
-		}
-		if got := r.Header.Get("Last-Event-ID"); got != "" {
-			t.Errorf("Last-Event-ID = %q, want empty at offset 0", got)
-		}
-
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, ": keepalive comment\n\n")
-		_, _ = io.WriteString(w, "event: detection\nid: 1\n"+
-			"data: {\"satellite\":\"NOAA-20\",\"acq_date\":\"2026-11-04\",\"acq_time\":\"1230\","+
-			"\"latitude\":-6.20,\"longitude\":106.80,\"confidence\":\"h\",\"frp\":12.5}\n\n")
-		_, _ = io.WriteString(w, "event: heartbeat\nid: 2\n\n")
-		_, _ = io.WriteString(w, "event: update\nid: 3\n"+
-			"data: {\"satellite\":\"NOAA-20\",\"acq_date\":\"2026-11-04\",\"acq_time\":\"1230\","+
-			"\"latitude\":-6.2,\"longitude\":106.8,\"confidence\":\"n\",\"frp\":10}\n\n")
-		_, _ = io.WriteString(w, fmt.Sprintf("event: retract\nid: 4\ndata: {\"key\":%q}\n\n", retractKey))
-		_, _ = io.WriteString(w, "event: future-kind\nid: 5\ndata: ignored\n\n")
-	}))
-	defer server.Close()
-
-	client := New(Config{URL: server.URL, Token: "secret", Timeout: 5 * time.Second})
+func collect(t *testing.T, body string) []ports.Event {
+	t.Helper()
 	var events []ports.Event
-	err := client.Stream(context.Background(), 0, func(_ context.Context, event ports.Event) error {
+	err := readEvents(context.Background(), strings.NewReader(body), func(_ context.Context, event ports.Event) error {
 		events = append(events, event)
 		return nil
-	})
-	if err != nil {
-		t.Fatalf("Stream() error = %v, want nil", err)
-	}
-
-	if len(events) != 4 {
-		t.Fatalf("got %d events, want 4: %+v", len(events), events)
-	}
-	if events[0].Kind != ports.KindDetection || events[0].Offset != 1 {
-		t.Errorf("event 0 = %+v, want detection at offset 1", events[0])
-	}
-	wantDetection := domain.Detection{
-		Satellite:    "NOAA-20",
-		AcqDate:      "2026-11-04",
-		AcqTime:      "1230",
-		Latitude:     -6.2,
-		Longitude:    106.8,
-		RawLatitude:  "-6.20",
-		RawLongitude: "106.80",
-		Confidence:   domain.ConfidenceHigh,
-		FRP:          12.5,
-	}
-	if events[0].Detection != wantDetection {
-		t.Errorf("detection = %+v, want %+v", events[0].Detection, wantDetection)
-	}
-	if events[1].Kind != ports.KindHeartbeat || events[1].Offset != 2 {
-		t.Errorf("event 1 = %+v, want heartbeat at offset 2", events[1])
-	}
-	if events[2].Kind != ports.KindUpdate || events[2].Detection.FRP != 10 {
-		t.Errorf("event 2 = %+v, want update with FRP 10", events[2])
-	}
-	if events[3].Kind != ports.KindRetract || events[3].DetectionKey != retractKey {
-		t.Errorf("event 3 = %+v, want retract of %q", events[3], retractKey)
-	}
-}
-
-func TestStreamResumesWithLastEventID(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("from"); got != "9" {
-			t.Errorf("from = %q, want 9", got)
-		}
-		if got := r.Header.Get("Last-Event-ID"); got != "9" {
-			t.Errorf("Last-Event-ID = %q, want 9", got)
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "event: heartbeat\nid: 10\n\n")
-	}))
-	defer server.Close()
-
-	client := New(Config{URL: server.URL, Token: "secret", Timeout: 5 * time.Second})
-	var offsets []int64
-	err := client.Stream(context.Background(), 9, func(_ context.Context, event ports.Event) error {
-		offsets = append(offsets, event.Offset)
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("Stream() error = %v, want nil", err)
-	}
-	if len(offsets) != 1 || offsets[0] != 10 {
-		t.Fatalf("offsets = %v, want [10]", offsets)
-	}
-}
-
-func TestSessionReportsLatestOffset(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/session" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
-			t.Errorf("Authorization = %q", got)
-		}
-		_, _ = io.WriteString(w, `{"group":"sidequestproxy","profile":"practice","speed":60,"virtual_now":"2026-11-12T03:00:00Z","latest_offset":4096}`)
-	}))
-	defer server.Close()
-
-	session, err := New(Config{URL: server.URL, Token: "secret", Timeout: 5 * time.Second}).Session(context.Background())
+	}, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.LatestOffset != 4096 || session.Speed != 60 || session.Profile != "practice" {
-		t.Fatalf("session = %+v", session)
+	return events
+}
+
+func TestFramesKeepTheFeedsOwnTextInDetectionKeys(t *testing.T) {
+	events := collect(t, strings.Join([]string{
+		`id: 1`, `event: detection`,
+		`data: {"satellite":"N20","acq_date":"2026-11-12","acq_time":"243","latitude":-2.51230,"longitude":113.80440,"confidence":"n","frp":12.4}`, ``,
+		`id: 2`, `event: update`,
+		`data: {"satellite":"N20","acq_date":"2026-11-12","acq_time":243,"latitude":"-2.51230","longitude":"113.80440","confidence":"high","frp":"20.5"}`, ``,
+		`event: heartbeat`, `data: {"virtual_now":"2026-11-12T02:50:00Z","latest_offset":2}`, ``,
+		`: keep-alive comment`, ``,
+		`id: 3`, `event: retract`, `data: {"key":"N20|2026-11-12|243|-2.51230|113.80440"}`, ``,
+		`id: 4`, `event: retract`, `data: {"satellite":"N21","acq_date":"2026-11-12","acq_time":"5","latitude":-2.50000,"longitude":113.80000}`, ``,
+		`id: 5`, `event: detection`, `data: {"detection":{"satellite":"N","acq_date":"2026-11-12","acq_time":"1312","latitude":1.5,"longitude":101.25,"confidence":"l","frp":1}}`, ``, ``,
+	}, "\n"))
+	if len(events) != 6 {
+		t.Fatalf("got %d events: %+v", len(events), events)
+	}
+	const key = "N20|2026-11-12|243|-2.51230|113.80440"
+	if got := events[0].Detection.Key(); got != key || events[0].Detection.Confidence != "n" || events[0].Detection.FRP != 12.4 {
+		t.Errorf("detection = %+v key %s", events[0].Detection, got)
+	}
+	if at, err := events[0].Detection.Time(); err != nil || at.Format(time.RFC3339) != "2026-11-12T02:43:00Z" {
+		t.Errorf("detection time = %v, %v", at, err)
+	}
+	if got := events[1].Detection.Key(); got != key || events[1].Detection.Confidence != "h" || events[1].Detection.FRP != 20.5 {
+		t.Errorf("update with number time and string numbers = %+v key %s", events[1].Detection, got)
+	}
+	if events[2].Kind != ports.KindHeartbeat || events[2].Offset != 0 {
+		t.Errorf("heartbeat without id = %+v", events[2])
+	}
+	if events[3].Kind != ports.KindRetract || events[3].DetectionKey != key {
+		t.Errorf("retract by key = %+v", events[3])
+	}
+	if events[4].DetectionKey != "N21|2026-11-12|5|-2.50000|113.80000" {
+		t.Errorf("retract by fields = %+v", events[4])
+	}
+	if events[5].Detection.Satellite != "N" || !events[5].Detection.Ignored() {
+		t.Errorf("wrapped detection = %+v", events[5])
+	}
+}
+
+func TestBrokenFramesAdvanceTheOffsetInsteadOfWedgingTheStream(t *testing.T) {
+	events := collect(t, strings.Join([]string{
+		`id: 7`, `event: detection`, `data: {"satellite":"N20","acq_date":`, ``,
+		`id: 8`, `event: detection`, `data: {"satellite":"N20","acq_date":"2026-11-12","acq_time":"243","latitude":"north","longitude":1}`, ``,
+		`id: 9`, `event: reprocess`, `data: {}`, ``,
+		`id: 10`, `event: retract`, `data: {}`, ``,
+		`event: detection`, `data: {"satellite":"N20","acq_date":"2026-11-12","acq_time":"243","latitude":1,"longitude":1}`, ``,
+		`id: 11`, `event: detection`, `data: ` + strings.Repeat("[", 5000), ``, ``,
+	}, "\n"))
+	want := []struct {
+		offset int64
+		reason string
+	}{{7, "undecodable"}, {8, "undecodable"}, {9, "unknown_kind"}, {10, "undecodable"}, {0, "missing_offset"}, {11, "undecodable"}}
+	if len(events) != len(want) {
+		t.Fatalf("got %d events: %+v", len(events), events)
+	}
+	for index, expect := range want {
+		if events[index].Offset != expect.offset || events[index].Skipped != expect.reason {
+			t.Errorf("event %d = offset %d %q, want %d %q", index, events[index].Offset, events[index].Skipped, expect.offset, expect.reason)
+		}
+	}
+}
+
+func TestStreamSendsBothResumeConventionsAndReportsStatus(t *testing.T) {
+	var from, lastID, auth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/session":
+			fmt.Fprint(w, `{"group":"g7","profile":"practice","speed":"60x","virtual_now":"2026-11-12T02:43:05Z","latest_offset":42,"extra":true}`)
+		case "/v1/stream":
+			if r.Header.Get("Authorization") != "Bearer good" {
+				w.WriteHeader(http.StatusUnauthorized)
+				fmt.Fprint(w, `{"error":{"code":"unauthorized","message":"token tidak valid"}}`)
+				return
+			}
+			from, lastID, auth = r.URL.Query().Get("from"), r.Header.Get("Last-Event-ID"), r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "id: 18\nevent: heartbeat\ndata: {}\n\n")
+		}
+	}))
+	defer server.Close()
+
+	client := New(Config{URL: server.URL, Token: "good"})
+	var got []ports.Event
+	if err := client.Stream(context.Background(), 17, func(_ context.Context, event ports.Event) error {
+		got = append(got, event)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if from != "17" || lastID != "17" || auth != "Bearer good" || len(got) != 1 || got[0].ReceivedAt.IsZero() {
+		t.Fatalf("from=%q last=%q events=%+v", from, lastID, got)
+	}
+	session, err := client.Session(context.Background())
+	if err != nil || session.Speed != 60 || session.LatestOffset != 42 || session.Profile != "practice" || session.VirtualNow.IsZero() {
+		t.Fatalf("session = %+v, %v", session, err)
+	}
+	err = New(Config{URL: server.URL, Token: "bad"}).Stream(context.Background(), 0, func(context.Context, ports.Event) error { return nil })
+	if status, ok := err.(*StatusError); !ok || status.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized stream = %v", err)
+	}
+}
+
+func TestSilentConnectionIsDroppedByTheIdleWatchdog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	started := time.Now()
+	err := New(Config{URL: server.URL, Token: "t", IdleTimeout: 150 * time.Millisecond}).
+		Stream(context.Background(), 0, func(context.Context, ports.Event) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "idle") || time.Since(started) > 3*time.Second {
+		t.Fatalf("idle stream returned %v after %s", err, time.Since(started))
 	}
 }

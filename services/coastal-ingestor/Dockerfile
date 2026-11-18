@@ -1,5 +1,6 @@
 FROM golang:1.26-alpine AS build
 WORKDIR /src
+COPY contracts ./contracts
 COPY pkg ./pkg
 COPY services/coastal-ingestor ./services/coastal-ingestor
 RUN cd services/coastal-ingestor && go build -trimpath -ldflags='-s -w' -o /out/coastal-ingestor ./cmd/server
